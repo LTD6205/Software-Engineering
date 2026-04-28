@@ -1,0 +1,59 @@
+export interface User {
+  user_id: string
+  name: string
+  email: string
+  role: 'manager' | 'staff' | 'admin'
+  created_at: string
+}
+
+export interface Event {
+  event_id: string
+  event_name: string
+  description: string
+  start_time: string
+  end_time: string
+  created_by: string
+  status: 'pending' | 'in_progress' | 'completed'
+  created_at: string
+}
+
+export interface Task {
+  task_id: string
+  event_id: string
+  task_name: string
+  description: string
+  priority_label: 'low' | 'medium' | 'high'
+  priority_score: number
+  priority_source: 'user' | 'ai'
+  status: 'pending' | 'in_progress' | 'completed' | 'overdue'
+  start_time: string
+  deadline: string
+  created_by: string
+  created_at: string
+}
+
+export interface Milestone {
+  milestone_id: string
+  task_id: string
+  title: string
+  percentage: number
+  due_time: string
+  is_completed: boolean
+  created_at: string
+}
+
+export interface Notification {
+  notification_id: string
+  user_id: string
+  task_id: string
+  type: 'reminder' | 'alert' | 'overdue'
+  message: string
+  is_read: boolean
+  created_at: string
+}
+
+export interface AiCommandResult {
+  status: 'success' | 'rejected'
+  tasks_created?: Task[]
+  reason?: object
+}
