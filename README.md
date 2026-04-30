@@ -1,6 +1,6 @@
 # Intelligent Event Operations and Task Management System
 
-> A full-stack web platform for event planning companies to manage events, assign tasks, monitor deadlines in real time, and leverage AI-powered natural language commands to dynamically update workflows.
+> A full-stack web platform for event planning companies to manage events, assign tasks to personnel, monitor deadlines in real time, and leverage AI-powered natural language commands to dynamically update workflows.
 
 ---
 
@@ -12,6 +12,7 @@
 | Backend | NestJS v11 (Node.js, TypeScript) |
 | Database | PostgreSQL 13 |
 | ORM | TypeORM 0.3.20 |
+| Authentication | JWT (JSON Web Tokens) + Passport.js |
 | Real-time | Socket.io (WebSocket) |
 | Job Queue | BullMQ + Redis (Upstash) |
 | AI Provider | DeepSeek Chat API |
@@ -23,42 +24,62 @@
 
 ```
 Software_Engineering/
-├── event-ops-backend/         ← NestJS REST API + WebSocket + AI
+├── event-ops-backend/              ← NestJS REST API + WebSocket + AI
 │   ├── src/
-│   │   ├── entities/          ← TypeORM entities (10 tables)
-│   │   ├── events/            ← Events CRUD module
-│   │   ├── tasks/             ← Tasks, assignments, milestones
-│   │   ├── notifications/     ← Cron job + deadline monitoring
-│   │   ├── websocket/         ← Socket.io gateway
-│   │   ├── ai/                ← DeepSeek AI command handler
-│   │   ├── app.module.ts      ← Root module
-│   │   └── main.ts            ← Entry point (port 3000)
-│   ├── .env                   ← Environment variables (not committed)
-│   ├── .env.example           ← Template for environment variables
+│   │   ├── auth/                   ← JWT authentication module
+│   │   │   ├── auth.module.ts
+│   │   │   ├── auth.service.ts
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── jwt.strategy.ts
+│   │   │   ├── jwt-auth.guard.ts
+│   │   │   ├── roles.guard.ts
+│   │   │   └── roles.decorator.ts
+│   │   ├── users/                  ← User management (manager only)
+│   │   │   ├── users.module.ts
+│   │   │   ├── users.service.ts
+│   │   │   └── users.controller.ts
+│   │   ├── entities/               ← TypeORM entities (10 tables)
+│   │   ├── events/                 ← Events CRUD module
+│   │   ├── tasks/                  ← Tasks, assignments, milestones
+│   │   ├── notifications/          ← Cron job + deadline monitoring
+│   │   ├── websocket/              ← Socket.io gateway
+│   │   ├── ai/                     ← DeepSeek AI command handler
+│   │   ├── app.module.ts           ← Root module
+│   │   └── main.ts                 ← Entry point (port 3000)
+│   ├── .env                        ← Environment variables (NOT committed)
+│   ├── .env.example                ← Template for environment variables
+│   ├── event_ops_schema.sql        ← Database schema (run this first)
+│   ├── auth_migration.sql          ← Auth migration (run this second)
 │   └── package.json
 │
-└── event-ops-frontend/        ← Next.js dashboard UI
+└── event-ops-frontend/             ← Next.js dashboard UI
     ├── src/
-    │   ├── app/               ← Pages (App Router)
-    │   │   ├── page.tsx       ← Dashboard
-    │   │   ├── events/        ← Event management
-    │   │   ├── tasks/         ← Task management
-    │   │   ├── notifications/ ← Notification center
-    │   │   └── ai/            ← AI assistant chat
-    │   ├── components/        ← Reusable UI components
-    │   │   ├── Sidebar.tsx
-    │   │   ├── TopBar.tsx
+    │   ├── app/                    ← Pages (Next.js App Router)
+    │   │   ├── layout.tsx          ← Root layout with AuthProvider
+    │   │   ├── page.tsx            ← Dashboard
+    │   │   ├── login/              ← Login page
+    │   │   ├── events/             ← Event management
+    │   │   ├── tasks/              ← Task management + assignment
+    │   │   ├── notifications/      ← Notification center
+    │   │   ├── ai/                 ← AI assistant chat
+    │   │   └── users/              ← Team management (manager only)
+    │   ├── components/             ← Reusable UI components
+    │   │   ├── AppShell.tsx        ← Auth guard + layout wrapper
+    │   │   ├── Sidebar.tsx         ← Role-aware navigation
+    │   │   ├── TopBar.tsx          ← Header with notification bell
     │   │   ├── EventCard.tsx
     │   │   ├── TaskCard.tsx
     │   │   ├── StatCard.tsx
     │   │   ├── Modal.tsx
     │   │   └── StatusBadge.tsx
-    │   └── lib/               ← API calls, types, hooks
-    │       ├── api.ts
+    │   ├── context/
+    │   │   └── AuthContext.tsx     ← Global auth state + JWT storage
+    │   └── lib/                    ← API calls, types, hooks
+    │       ├── api.ts              ← Axios with JWT interceptor
     │       ├── types.ts
     │       ├── useSocket.ts
     │       └── useNotifications.ts
-    ├── .env.local             ← Frontend environment variables
+    ├── .env.local                  ← Frontend environment variables (NOT committed)
     └── package.json
 ```
 
@@ -70,9 +91,9 @@ The system uses **10 PostgreSQL tables**:
 
 | Table | Purpose |
 |---|---|
-| `users` | System users (admin, manager, staff) |
+| `users` | System users with roles (admin, manager, staff) and bcrypt passwords |
 | `events` | Events with lifecycle status |
-| `tasks` | Task checklists per event |
+| `tasks` | Task checklists per event with priority and deadlines |
 | `task_logs` | Audit trail of every task change |
 | `task_assignments` | Many-to-many: users assigned to tasks |
 | `task_dependencies` | Task chain dependencies |
@@ -83,63 +104,107 @@ The system uses **10 PostgreSQL tables**:
 
 ---
 
-## Getting Started
+## User Roles and Permissions
 
-### Prerequisites
+| Feature | Manager | Staff |
+|---|---|---|
+| View dashboard | ✅ | ✅ |
+| View events | ✅ | ✅ |
+| Create / delete events | ✅ | ❌ |
+| View all tasks | ✅ | ❌ |
+| View assigned tasks only | ✅ | ✅ |
+| Create / delete tasks | ✅ | ❌ |
+| Update task status | ✅ | ✅ (own tasks) |
+| Assign tasks to staff | ✅ | ❌ |
+| View own notifications | ✅ | ✅ |
+| AI Assistant | ✅ | ❌ |
+| Team management | ✅ | ❌ |
+
+---
+
+## Setting Up for a New Team Member
+
+This guide is for someone joining the project for the first time.
+
+### What you need to install first
 
 | Tool | Version | Download |
 |---|---|---|
-| Node.js | v20.19.0 LTS or higher | nodejs.org |
-| PostgreSQL | v13 or higher | postgresql.org |
+| Node.js | v20.19.0 LTS | nodejs.org — download Windows installer |
+| PostgreSQL | v13 | postgresql.org — install with pgAdmin 4 included |
 | Git | Latest | git-scm.com |
+| VS Code | Latest | code.visualstudio.com |
 
-### 1. Clone the repository
+After installing Node.js, open a terminal and install the NestJS CLI:
 
 ```bash
+npm install -g @nestjs/cli
+```
+
+---
+
+### Step 1 — Clone both repositories
+
+Open PowerShell or Command Prompt and run:
+
+```bash
+cd D:\
+mkdir Software_Engineering
+cd Software_Engineering
+
 git clone https://github.com/your-username/event-ops-backend.git
-cd event-ops-backend
+git clone https://github.com/your-username/event-ops-frontend.git
 ```
 
-### 2. Set up the database
+> Replace `your-username` with the actual GitHub username shared by your team lead.
 
-- Open pgAdmin 4
-- Create a database called `event_ops`
-- Open the Query Tool and run the full schema:
+---
+
+### Step 2 — Set up the database
+
+1. Open **pgAdmin 4**
+2. Right-click **Databases** → **Create** → **Database** → name it `event_ops` → Save
+3. Click on `event_ops` to select it → click the **Query Tool** button (⚡)
+4. Open `event_ops_schema.sql` → paste all content → press **F5** to run
+5. Open `auth_migration.sql` → paste all content → press **F5** to run
+
+You should see **10 tables** created under `event_ops → Schemas → public → Tables`.
+
+---
+
+### Step 3 — Set up the backend
 
 ```bash
-# Run the schema file in pgAdmin Query Tool
-event_ops_schema.sql
+cd D:\Software_Engineering\event-ops-backend
+npm install --legacy-peer-deps
 ```
 
-### 3. Set up the backend
-
-```bash
-cd event-ops-backend
-npm install
-```
-
-Copy the environment template and fill in your values:
+Create your `.env` file by copying the example:
 
 ```bash
 copy .env.example .env
 ```
 
-Edit `.env`:
+Open `.env` in VS Code and fill in your values:
 
 ```
 DB_HOST=localhost
 DB_PORT=5432
 DB_USERNAME=postgres
-DB_PASSWORD=your_postgresql_password
+DB_PASSWORD=your_postgresql_password_here
 DB_NAME=event_ops
 
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_API_KEY=your_deepseek_key_here
+
+JWT_SECRET=eventops_super_secret_jwt_key_2026
 
 PORT=3000
 ```
+
+> ⚠️ Ask your team lead for the correct JWT_SECRET value. It must match across all team members.
 
 Start the backend:
 
@@ -147,20 +212,23 @@ Start the backend:
 npm run start:dev
 ```
 
-You should see:
+Wait until you see:
+
 ```
 Nest application successfully started
 Backend running on http://localhost:3000/api
 ```
 
-### 4. Set up the frontend
+---
+
+### Step 4 — Set up the frontend
 
 ```bash
-cd event-ops-frontend
-npm install
+cd D:\Software_Engineering\event-ops-frontend
+npm install --legacy-peer-deps
 ```
 
-Create `.env.local`:
+Create a `.env.local` file in the root of the frontend folder (same level as `package.json`):
 
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3000/api
@@ -173,13 +241,59 @@ Start the frontend:
 npm run dev -- --port 3001
 ```
 
-Open your browser at `http://localhost:3001`
+Wait until you see:
+
+```
+✓ Ready
+```
+
+---
+
+### Step 5 — Open the app
+
+Go to `http://localhost:3001` in your browser.
+
+Log in with the default manager account:
+
+| Field | Value |
+|---|---|
+| Email | manager@eventops.com |
+| Password | password |
+
+The manager can then create your personal staff account from the **Team** page (sidebar → Team → Add Member).
+
+---
+
+### Step 6 — Stay up to date with your team
+
+Every time you start working, pull the latest code first:
+
+```bash
+cd D:\Software_Engineering\event-ops-backend
+git pull
+
+cd D:\Software_Engineering\event-ops-frontend
+git pull
+```
+
+Then restart both servers.
+
+---
+
+### Files you must create manually (NOT in GitHub for security)
+
+| File | Location | What to do |
+|---|---|---|
+| `.env` | `event-ops-backend/` | Copy `.env.example` → rename to `.env` → fill in values |
+| `.env.local` | `event-ops-frontend/` | Create manually with the two lines shown in Step 4 |
+
+The database also needs to be set up manually on each person's machine by running the two SQL files.
 
 ---
 
 ## How to Start the System Every Time
 
-Always start in this order:
+Always start in this order — **backend first, frontend second**:
 
 **Terminal 1 — Backend:**
 ```bash
@@ -197,11 +311,13 @@ Wait for: `✓ Ready`
 
 Then open: `http://localhost:3001`
 
+---
+
 ## How to Stop the System
 
-In each terminal press `Ctrl+C` then type `Y` and press `Enter`.
+In each terminal press **Ctrl+C** then type **Y** and press **Enter**.
 
-> ⚠️ Always stop properly with Ctrl+C. Never just close the terminal — it leaves port 3000 or 3001 occupied and causes errors on next startup.
+> ⚠️ Always stop properly with Ctrl+C. Never just close the terminal window — it leaves port 3000 or 3001 occupied and causes an error on next startup.
 
 If you get a port already in use error:
 ```powershell
@@ -211,7 +327,40 @@ taskkill /PID <pid_number> /F
 
 ---
 
+## Daily Workflow
+
+```
+Every time you start working:
+1. git pull (in both folders)
+2. Terminal 1: cd event-ops-backend  → npm run start:dev
+3. Terminal 2: cd event-ops-frontend → npm run dev -- --port 3001
+4. Open http://localhost:3001
+
+When you finish working:
+1. Ctrl+C in both terminals (type Y to confirm each)
+2. cd event-ops-backend  → git add . → git commit -m "message" → git push
+3. cd event-ops-frontend → git add . → git commit -m "message" → git push
+```
+
+---
+
 ## API Endpoints
+
+All endpoints require a JWT Bearer token in the Authorization header except `/api/auth/login`.
+
+### Authentication
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| POST | /api/auth/login | Public | Login, returns JWT token + user info |
+| GET | /api/auth/me | All roles | Get current logged-in user |
+
+### Users (Manager only)
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | /api/users | Get all team members |
+| POST | /api/users | Create new staff account |
+| PUT | /api/users/:id | Update user info or password |
+| PUT | /api/users/:id/deactivate | Deactivate user account |
 
 ### Events
 | Method | Endpoint | Description |
@@ -246,7 +395,7 @@ taskkill /PID <pid_number> /F
 |---|---|---|
 | POST | /api/ai/command | Send natural language command |
 
-**AI command example:**
+**AI command body example:**
 ```json
 {
   "userId": "your-user-uuid",
@@ -259,20 +408,26 @@ taskkill /PID <pid_number> /F
 
 ## Features
 
+### Authentication and Role-Based Access
+JWT-based login system. The manager account is created during database setup. Managers can add staff accounts directly from the Team page. Staff see a restricted UI with no create/delete buttons and no access to AI or Team pages. All API routes are protected with JWT guards and role guards.
+
 ### Event Management
-Create and manage events with full lifecycle tracking. Each event has a name, description, start and end time, and status (pending, in progress, completed).
+Create and manage events with full lifecycle tracking (pending, in progress, completed). Each event has a name, description, start and end time.
 
 ### Task Management
-Build detailed task checklists per event. Assign tasks to specific staff members, set priorities (low, medium, high), deadlines, and dependencies between tasks. Tasks are displayed in a Kanban-style board grouped by status.
+Build detailed task checklists per event displayed in a Kanban board (Pending, In Progress, Completed, Overdue). Managers assign tasks to specific staff with start time, deadline, and priority. Staff can update the status of their own assigned tasks.
 
 ### Real-time Deadline Monitoring
-An automated cron job runs every 30 minutes and checks for tasks approaching their deadline (within 24 hours) or already overdue. Notifications are pushed in real time to assigned users via WebSocket and stored in the database.
+Automated cron job runs every 30 minutes. Tasks due within 24 hours receive reminder notifications. Tasks past their deadline are automatically marked overdue and trigger alert notifications pushed in real time via WebSocket to all assigned users.
 
 ### AI Natural Language Commands
-Managers can type plain English or Vietnamese commands to create or update tasks automatically. The AI parses the command and returns a structured JSON action plan which the system executes. Every AI request and response is saved for auditing.
+Managers type plain English or Vietnamese commands to create tasks automatically. The AI parses the command via DeepSeek API and returns structured task data which the system saves directly to the database. Every request and response is saved for auditing.
 
 ### Notification Center
-A notification bell in the top bar shows live unread counts. The notifications page lists all alerts with type indicators (reminder, alert, overdue) and allows marking them as read.
+Live notification bell in the top bar shows unread count. The notifications page lists all alerts with time indicators (reminder, alert, overdue) and allows marking them as read.
+
+### Team Management
+Managers can add staff accounts (name, email, password, role), view all team members, and activate or deactivate accounts.
 
 ---
 
@@ -282,13 +437,14 @@ A notification bell in the top bar shows live unread counts. The notifications p
 | Variable | Description |
 |---|---|
 | DB_HOST | PostgreSQL host (localhost) |
-| DB_PORT | PostgreSQL port (5432) |
+| DB_PORT | PostgreSQL port (5432 for PostgreSQL 13) |
 | DB_USERNAME | PostgreSQL username (postgres) |
-| DB_PASSWORD | PostgreSQL password |
+| DB_PASSWORD | Your PostgreSQL password |
 | DB_NAME | Database name (event_ops) |
-| REDIS_HOST | Redis host |
+| REDIS_HOST | Redis host (localhost or Upstash URL) |
 | REDIS_PORT | Redis port (6379) |
 | DEEPSEEK_API_KEY | DeepSeek API key from platform.deepseek.com |
+| JWT_SECRET | Secret key for signing JWT tokens (keep this consistent across team) |
 | PORT | Backend port (3000) |
 
 ### Frontend (`.env.local`)
@@ -307,31 +463,37 @@ A notification bell in the top bar shows live unread counts. The notifications p
 @nestjs/typeorm:  11.0.0
 typeorm:          0.3.20
 @nestjs/schedule: 4.1.0
+@nestjs/jwt:      latest
+@nestjs/passport: latest
+bcrypt:           latest
 ```
 
 ### Frontend
 ```
-next:     15+
-react:    18+
-axios:    1.x
+next:             15+
+react:            18+
+axios:            1.x
 socket.io-client: 4.x
 ```
 
 ---
 
-## Known Issues and Fixes
+## Known Issues and Fixes Applied
 
 | Issue | Fix Applied |
 |---|---|
 | TypeORM incompatible with NestJS 11 | Pinned typeorm@0.3.20 + @nestjs/typeorm@11.0.0 |
-| ScheduleModule incompatible | Pinned @nestjs/schedule@4.1.0 |
-| WebSocket server not initialized | Added ! assertion to server property in gateway |
+| ScheduleModule incompatible with NestJS 11 | Pinned @nestjs/schedule@4.1.0 |
+| WebSocket server not initialized error | Added ! assertion to server property in gateway |
 | Node.js crash on Windows (Turbopack) | Added --no-turbo flag to dev script |
 | Node.js version instability | Upgraded to Node.js v20.19.0 LTS |
-| tsconfig baseUrl deprecated warning | Removed ignoreDeprecations — warning is harmless |
-| PostgreSQL not found | Updated .env port and credentials to match PostgreSQL 13 |
+| tsconfig baseUrl deprecated warning | Warning is harmless, left as is |
+| PostgreSQL database not found | Updated .env port and credentials to match PostgreSQL 13 |
 | @/ path alias not resolving | Added paths config to tsconfig.json |
-| Components in wrong folder | Moved components/ and lib/ into src/ |
+| components/ and lib/ in wrong folder | Moved both folders into src/ |
+| Invalid Date sent to database | Added conditional ISO conversion before API call |
+| JWT token not attached to API requests | Added axios interceptor in api.ts |
+| npm peer dependency conflicts | Added --legacy-peer-deps flag to all installs |
 
 ---
 
@@ -339,9 +501,9 @@ socket.io-client: 4.x
 
 This system uses an **Agile-influenced Layered Modular architecture**:
 
-- **Layer 1 — Frontend (Next.js, port 3001):** Dashboard UI with dark theme, bilingual EN/VI labels, real-time notification bell, AI chat interface.
-- **Layer 2 — Backend API (NestJS, port 3000):** REST endpoints, WebSocket gateway, cron scheduler, AI command handler. Organized into independent feature modules.
-- **Layer 3 — Database (PostgreSQL 13, port 5432):** 10-table relational schema with UUID keys, JSONB columns, CHECK constraints, and performance indexes.
+- **Layer 1 — Frontend (Next.js, port 3001):** Dark-themed dashboard with bilingual EN/VI labels, JWT auth context, role-aware sidebar, real-time notification bell, AI chat interface.
+- **Layer 2 — Backend API (NestJS, port 3000):** REST endpoints with JWT guards and role guards, WebSocket gateway, cron scheduler, AI command handler. Organized into independent feature modules.
+- **Layer 3 — Database (PostgreSQL 13, port 5432):** 10-table relational schema with UUID primary keys, bcrypt password hashing, JSONB columns, CHECK constraints, and performance indexes.
 - **External — DeepSeek AI API:** Natural language processing via HTTPS.
 - **External — Redis (Upstash):** Job queue for BullMQ background jobs.
 
@@ -349,36 +511,46 @@ This system uses an **Agile-influenced Layered Modular architecture**:
 
 ## Development Roadmap
 
-### Version 1.0 (Current)
+### Version 1.0 (Current) ✅
 - [x] PostgreSQL schema (10 tables)
 - [x] NestJS backend with all modules
+- [x] JWT authentication + role-based access control
+- [x] Manager and staff user roles
 - [x] Next.js frontend with dark theme
-- [x] Event and task management
+- [x] Event and task management with assignment
 - [x] Real-time notifications via WebSocket
 - [x] Cron-based deadline monitoring
 - [x] AI natural language task creation
 - [x] Bilingual EN/VI interface
+- [x] Team management page
 
 ### Version 2.0 (Planned)
-- [ ] JWT authentication and login page
-- [ ] Role-based access control (RBAC) at API level
 - [ ] Email notifications (in addition to in-app)
 - [ ] Mobile responsive UI
 - [ ] Language toggle (EN/VI)
-- [ ] User self-registration and password reset
-- [ ] Production deployment (cloud)
-- [ ] Full calendar view with FullCalendar integration
+- [ ] Production cloud deployment
+- [ ] Password change from UI
+- [ ] Task comments and file attachments
+- [ ] Full calendar view with FullCalendar
 
 ---
 
 ## Contributing
 
-1. Clone the repository
-2. Create a new branch: `git checkout -b feature/your-feature-name`
-3. Make your changes
-4. Commit: `git commit -m "Add: description of change"`
-5. Push: `git push origin feature/your-feature-name`
-6. Open a Pull Request on GitHub
+```bash
+# Always pull latest before starting work
+git pull
+
+# Create a new branch for your feature
+git checkout -b feature/your-feature-name
+
+# Make your changes, then stage and commit
+git add .
+git commit -m "Add: description of what you changed"
+
+# Push your branch and open a Pull Request on GitHub
+git push origin feature/your-feature-name
+```
 
 ---
 
