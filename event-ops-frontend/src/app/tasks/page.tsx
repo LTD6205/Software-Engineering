@@ -2,33 +2,45 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
+import axios from 'axios'
 import { tasksApi, eventsApi } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
-
-const DEMO_USER_ID = '5f592659-2ecd-4eb1-a288-b45184bc73f1'
+import { useAuth } from '@/context/AuthContext'
 
 const emptyTask = {
   task_name: '', description: '',
   priority_label: 'medium', deadline: '', start_time: '',
+  assigned_to: '',
 }
 
 function TasksContent() {
   const searchParams = useSearchParams()
   const eventId      = searchParams.get('eventId') || ''
+  const { user, isManager } = useAuth()
 
-  const [events, setEvents]           = useState<Event[]>([])
+  const [events, setEvents]               = useState<Event[]>([])
   const [selectedEvent, setSelectedEvent] = useState(eventId)
-  const [tasks, setTasks]             = useState<Task[]>([])
-  const [loading, setLoading]         = useState(false)
-  const [showModal, setShowModal]     = useState(false)
-  const [form, setForm]               = useState({ ...emptyTask })
-  const [saving, setSaving]           = useState(false)
-  const [error, setError]             = useState('')
+  const [tasks, setTasks]                 = useState<Task[]>([])
+  const [loading, setLoading]             = useState(false)
+  const [showModal, setShowModal]         = useState(false)
+  const [form, setForm]                   = useState({ ...emptyTask })
+  const [saving, setSaving]               = useState(false)
+  const [error, setError]                 = useState('')
+  const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string }[]>([])
 
-  useEffect(() => { eventsApi.getAll().then(setEvents) }, [])
+  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api'
+
+  useEffect(() => {
+    eventsApi.getAll().then(setEvents)
+    if (isManager) {
+      axios.get(`${API}/users`)
+        .then(r => setTeamMembers(r.data))
+        .catch(() => {})
+    }
+  }, [isManager])
 
   useEffect(() => {
     if (!selectedEvent) return
@@ -45,12 +57,21 @@ function TasksContent() {
     }
     setSaving(true); setError('')
     try {
-      await tasksApi.create({
-        ...form,
-        event_id: selectedEvent,
-        created_by: DEMO_USER_ID,
+      const task = await tasksApi.create({
+        task_name:      form.task_name,
+        description:    form.description,
+        priority_label: form.priority_label,
         priority_score: form.priority_label === 'high' ? 90 : form.priority_label === 'medium' ? 50 : 10,
+        event_id:       selectedEvent,
+        created_by:     user?.user_id || '',
+        ...(form.deadline   ? { deadline:   new Date(form.deadline).toISOString() }   : {}),
+        ...(form.start_time ? { start_time: new Date(form.start_time).toISOString() } : {}),
       })
+
+      if (form.assigned_to) {
+        await tasksApi.assign(task.task_id, form.assigned_to)
+      }
+
       setShowModal(false)
       setForm({ ...emptyTask })
       setTasks(await tasksApi.getByEvent(selectedEvent))
@@ -60,7 +81,7 @@ function TasksContent() {
   }
 
   const handleStatusChange = async (id: string, status: string) => {
-    await tasksApi.update(id, { status, actor_user_id: DEMO_USER_ID })
+    await tasksApi.update(id, { status, actor_user_id: user?.user_id || '' })
     setTasks(prev => prev.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
   }
 
@@ -106,7 +127,7 @@ function TasksContent() {
               ))}
             </select>
           </div>
-          {selectedEvent && (
+          {selectedEvent && isManager && (
             <button
               onClick={() => setShowModal(true)}
               style={{
@@ -157,6 +178,7 @@ function TasksContent() {
               placeholder="Enter task name..."
             />
           </div>
+
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
               Description / Mô tả
@@ -165,6 +187,7 @@ function TasksContent() {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               style={{ resize: 'vertical' }} />
           </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
@@ -178,12 +201,34 @@ function TasksContent() {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                Assign To / Giao cho
+              </label>
+              <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
+                <option value="">— Select member —</option>
+                {teamMembers.map(m => (
+                  <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                Start Time / Bắt đầu
+              </label>
+              <input type="datetime-local" value={form.start_time}
+                onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                 Deadline / Hạn chót
               </label>
               <input type="datetime-local" value={form.deadline}
                 onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))} />
             </div>
           </div>
+
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button onClick={() => { setShowModal(false); setError('') }}
@@ -198,9 +243,7 @@ function TasksContent() {
                 border: 'none', borderRadius: '8px',
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,
                 opacity: saving ? 0.6 : 1,
-              }}>
-              {saving ? 'Creating...' : 'Create Task'}
-            </button>
+              }}>{saving ? 'Creating...' : 'Create Task'}</button>
           </div>
         </Modal>
       )}
