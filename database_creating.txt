@@ -1,0 +1,212 @@
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. US
+
+CREATE TABLE Users (
+    user_id     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(100)        NOT NULL,
+    email       VARCHAR(255)        NOT NULL UNIQUE,
+    role        VARCHAR(20)         NOT NULL DEFAULT 'staff'
+                    CHECK (role IN ('manager', 'staff', 'admin')),
+    created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+--  2. EVENTS
+
+CREATE TABLE Events (
+    event_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_name  VARCHAR(255)        NOT NULL,
+    description TEXT,
+    start_time  TIMESTAMP           NOT NULL,
+    end_time    TIMESTAMP           NOT NULL,
+    created_by  UUID                NOT NULL REFERENCES Users(user_id),
+    status      VARCHAR(20)         NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'in_progress', 'completed')),
+    created_at  TIMESTAMP           NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT events_time_check CHECK (end_time > start_time)
+);
+
+
+--  3. AI_REQUESTS
+--  Must be defined BEFORE Task_Logs (Task_Logs references it)
+
+CREATE TABLE AI_Requests (
+    request_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID                NOT NULL REFERENCES Users(user_id),
+    prompt      TEXT                NOT NULL,
+    response    JSONB,                          -- structured JSON output from AI
+    status      VARCHAR(20)         NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'success', 'rejected')),
+    created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+--  4. TASKS
+CREATE TABLE Tasks (
+    task_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id        UUID                NOT NULL REFERENCES Events(event_id),
+    task_name       VARCHAR(255)        NOT NULL,
+    description     TEXT,
+    priority_label  VARCHAR(10)         NOT NULL DEFAULT 'medium'
+                        CHECK (priority_label IN ('low', 'medium', 'high')),
+    priority_score  INT                 NOT NULL DEFAULT 0,  -- calculated & sorted by backend
+    priority_source VARCHAR(10)         NOT NULL DEFAULT 'user'
+                        CHECK (priority_source IN ('user', 'ai')),
+    status          VARCHAR(20)         NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'in_progress', 'completed', 'overdue')),
+    start_time      TIMESTAMP,
+    deadline        TIMESTAMP,
+    created_by      UUID                NOT NULL REFERENCES Users(user_id),
+    created_at      TIMESTAMP           NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT tasks_time_check CHECK (deadline IS NULL OR start_time IS NULL OR deadline > start_time)
+);
+
+
+--  5. TASK_LOGS
+--  Tracks every change to a task (by a user OR by AI)
+CREATE TABLE Task_Logs (
+    log_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    action_type     VARCHAR(50)         NOT NULL,   -- e.g. 'status_change', 'reassign', 'deadline_update'
+    old_value       JSONB,
+    new_value       JSONB,
+    actor_type      VARCHAR(10)         NOT NULL
+                        CHECK (actor_type IN ('user', 'ai')),
+    actor_user_id   UUID                REFERENCES Users(user_id),      -- only when actor_type = 'user'
+    ai_request_id   UUID                REFERENCES AI_Requests(request_id), -- only when actor_type = 'ai'
+    created_at      TIMESTAMP           NOT NULL DEFAULT NOW(),
+
+    -- Enforce: exactly one actor must be set
+    CONSTRAINT task_logs_actor_check CHECK (
+        (actor_type = 'user'  AND actor_user_id IS NOT NULL AND ai_request_id IS NULL) OR
+        (actor_type = 'ai'    AND ai_request_id IS NOT NULL AND actor_user_id IS NULL)
+    )
+);
+
+
+--  6. TASK_ASSIGNMENTS
+--  Links one or more users to a task
+CREATE TABLE Task_Assignments (
+    assignment_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    user_id         UUID                NOT NULL REFERENCES Users(user_id),
+    assigned_at     TIMESTAMP           NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT task_assignments_unique UNIQUE (task_id, user_id)
+);
+
+
+--  7. TASK_DEPENDENCIES
+--  "task_id cannot start until depends_on_task is completed"
+CREATE TABLE Task_Dependencies (
+    dependency_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    depends_on_task UUID                NOT NULL REFERENCES Tasks(task_id),
+
+    CONSTRAINT task_dependencies_no_self CHECK (task_id <> depends_on_task),
+    CONSTRAINT task_dependencies_unique  UNIQUE (task_id, depends_on_task)
+);
+
+
+--  8. MILESTONES
+--  Percentage checkpoints for a task (must sum to 100)
+CREATE TABLE Milestones (
+    milestone_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    title           VARCHAR(255),                   -- e.g. "Setup done", "Draft submitted"
+    percentage      INT                 NOT NULL
+                        CHECK (percentage > 0 AND percentage <= 100),
+    due_time        TIMESTAMP,
+    is_completed    BOOLEAN             NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+--  9. NOTIFICATIONS
+CREATE TABLE Notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID                NOT NULL REFERENCES Users(user_id),
+    task_id         UUID                REFERENCES Tasks(task_id),
+    type            VARCHAR(20)         NOT NULL
+                        CHECK (type IN ('reminder', 'alert', 'overdue')),
+    message         TEXT                NOT NULL,
+    is_read         BOOLEAN             NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+--  10. AI_TASK_MAP
+--  Links an AI request to the tasks it created or modified
+CREATE TABLE AI_Task_Map (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    request_id  UUID    NOT NULL REFERENCES AI_Requests(request_id),
+    task_id     UUID    NOT NULL REFERENCES Tasks(task_id),
+
+    CONSTRAINT ai_task_map_unique UNIQUE (request_id, task_id)
+);
+
+
+--  INDEXES (speeds up common queries)
+
+-- Look up tasks by event
+CREATE INDEX idx_tasks_event_id      ON Tasks(event_id);
+
+-- Look up tasks by status (e.g. find all overdue)
+CREATE INDEX idx_tasks_status        ON Tasks(status);
+
+-- Look up tasks by deadline (used by cron job for notifications)
+CREATE INDEX idx_tasks_deadline      ON Tasks(deadline);
+
+-- Look up logs by task
+CREATE INDEX idx_task_logs_task_id   ON Task_Logs(task_id);
+
+-- Look up assignments by user or task
+CREATE INDEX idx_assignments_user    ON Task_Assignments(user_id);
+CREATE INDEX idx_assignments_task    ON Task_Assignments(task_id);
+
+-- Look up unread notifications per user
+CREATE INDEX idx_notif_user_unread   ON Notifications(user_id, is_read);
+
+-- Look up dependencies by task
+CREATE INDEX idx_deps_task_id        ON Task_Dependencies(task_id);
+
+--  SAMPLE DATA
+
+/*
+INSERT INTO Users (name, email, role) VALUES
+    ('Alice Manager',  'alice@example.com',  'manager'),
+    ('Bob Staff',      'bob@example.com',    'staff'),
+    ('Carol Staff',    'carol@example.com',  'staff');
+
+INSERT INTO Events (event_name, description, start_time, end_time, created_by)
+SELECT
+    'Annual Conference 2025',
+    'Full-day company conference with multiple sessions.',
+    '2025-09-01 08:00:00',
+    '2025-09-01 18:00:00',
+    user_id
+FROM Users WHERE email = 'alice@example.com';
+
+INSERT INTO Tasks (event_id, task_name, priority_label, priority_score, status, deadline, created_by)
+SELECT
+    e.event_id,
+    'Set up registration desk',
+    'high',
+    90,
+    'pending',
+    '2025-08-28 17:00:00',
+    u.user_id
+FROM Events e, Users u
+WHERE e.event_name = 'Annual Conference 2025'
+  AND u.email = 'alice@example.com';
+*/
+
+-- 1. Add password_hash column to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+ 
+-- 2. Add refresh_token column (optional but useful)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
