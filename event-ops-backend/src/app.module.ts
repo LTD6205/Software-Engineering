@@ -3,22 +3,24 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 
-import { User }             from './entities/user.entity';
-import { Event }            from './entities/event.entity';
-import { Task }             from './entities/task.entity';
-import { TaskLog }          from './entities/task-log.entity';
-import { TaskAssignment }   from './entities/task-assignment.entity';
-import { TaskDependency }   from './entities/task-dependency.entity';
-import { Milestone }        from './entities/milestone.entity';
-import { Notification }     from './entities/notification.entity';
-import { AiRequest }        from './entities/ai-request.entity';
-import { AiTaskMap }        from './entities/ai-task-map.entity';
+import { User }           from './entities/user.entity';
+import { Event }          from './entities/event.entity';
+import { Task }           from './entities/task.entity';
+import { TaskLog }        from './entities/task-log.entity';
+import { TaskAssignment } from './entities/task-assignment.entity';
+import { TaskDependency } from './entities/task-dependency.entity';
+import { Milestone }      from './entities/milestone.entity';
+import { Notification }   from './entities/notification.entity';
+import { AiRequest }      from './entities/ai-request.entity';
+import { AiTaskMap }      from './entities/ai-task-map.entity';
 
-import { EventsModule }         from './events/events.module';
-import { TasksModule }          from './tasks/tasks.module';
-import { NotificationsModule }  from './notifications/notifications.module';
-import { AiModule }             from './ai/ai.module';
-import { WebsocketModule }      from './websocket/websocket.module';
+import { AuthModule }          from './auth/auth.module';
+import { UsersModule }         from './users/users.module';
+import { EventsModule }        from './events/events.module';
+import { TasksModule }         from './tasks/tasks.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AiModule }            from './ai/ai.module';
+import { WebsocketModule }     from './websocket/websocket.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { WebsocketModule }      from './websocket/websocket.module';
 
     ScheduleModule.forRoot(),
 
+    AuthModule,
+    UsersModule,
     EventsModule,
     TasksModule,
     NotificationsModule,
