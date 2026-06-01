@@ -10,6 +10,15 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Allow the dev server to serve assets when the app is opened from a tunnel
+  // domain (e.g. ngrok) instead of localhost. Without this, Next.js 16 blocks
+  // cross-origin dev requests and the page is stuck on "Loading...".
+  allowedDevOrigins: [
+    '*.ngrok-free.dev',
+    '*.ngrok-free.app',
+    '*.ngrok.app',
+    '*.ngrok.io',
+  ],
   async rewrites() {
     return [
       { source: '/api/:path*', destination: `${BACKEND}/api/:path*` },
