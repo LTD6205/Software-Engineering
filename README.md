@@ -98,11 +98,13 @@ Next's dev server can't proxy WebSockets, so `share-proxy.js` fronts both server
 
 One-time: `ngrok config add-authtoken <your-token>` (treat the token like a password).
 
-Run four terminals — backend, frontend, then:
+With the backend and frontend already running, in a third terminal:
 ```bash
-cd event-ops-frontend && npm run share     # proxy on http://localhost:8080
-ngrok http 8080                            # share the printed https URL (NOT :3001)
+cd event-ops-frontend
+npm run share:web      # starts the proxy + ngrok and prints the public link
 ```
+This starts the proxy **and** ngrok on port 8080 and prints the link to share. (Or run them separately: `npm run share` then `ngrok http 8080` — always tunnel **8080**, never 3001, or real-time won't reach the backend.)
+
 Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use is unchanged — `http://localhost:3001` still works directly (the socket URL auto-detects).
 
 ## API Overview
