@@ -40,6 +40,9 @@ coverage/
 !.vscode/launch.json
 !.vscode/extensions.json
 
+# Database backups (local snapshots — never commit data dumps)
+backups/
+
 # Environment variables
 .env
 .env*.local

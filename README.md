@@ -80,6 +80,14 @@ Open **http://localhost:3001** and log in.
 
 > Stop everything: `Ctrl+C` in each terminal. Stop the DB with `docker compose stop` (keeps data) or `docker compose down -v` (deletes data — re-run step 1 + `npm run seed` to restore).
 
+### Back up / restore the database
+Snapshots are written to `event-ops-backend/backups/` (git-ignored). From `event-ops-backend`:
+```bash
+npm run db:backup                 # dump to backups/event_ops_<timestamp>.sql
+npm run db:restore                # restore the most recent backup
+npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specific file
+```
+
 ## Roles & Permissions (Admin > Manager > Staff)
 
 | Action | Admin | Manager | Staff |
