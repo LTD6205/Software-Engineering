@@ -30,8 +30,13 @@ const roleColor: Record<string, string> = {
 }
 const OFFLINE = 'var(--text-muted)'
 
+// Ordering of the "everyone else" section: Staff first, then Manager, then Admin.
+const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, admin: 2 }
+
+type RoleFilter = 'all' | 'staff' | 'manager' | 'admin'
+
 export default function UsersPage() {
-  const { isManager, isAdmin } = useAuth()
+  const { user, isManager, isAdmin } = useAuth()
   const { t, tError } = useLang()
   const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
@@ -40,6 +45,21 @@ export default function UsersPage() {
   const [form, setForm]           = useState({ ...empty })
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
+
+  // Current user first, then Staff > Manager > Admin (then by name), with the
+  // optional role filter applied.
+  const visibleUsers = users
+    .filter(u => roleFilter === 'all' || u.role === roleFilter)
+    .sort((a, b) => {
+      const aMe = a.user_id === user?.user_id ? 0 : 1
+      const bMe = b.user_id === user?.user_id ? 0 : 1
+      if (aMe !== bMe) return aMe - bMe
+      const ar = ROLE_RANK[a.role] ?? 99
+      const br = ROLE_RANK[b.role] ?? 99
+      if (ar !== br) return ar - br
+      return a.name.localeCompare(b.name)
+    })
 
   // Everyone can see the presence board. Managers/admins get the full roster
   // (with emails + management); staff get the minimal directory.
@@ -76,7 +96,7 @@ export default function UsersPage() {
     setUsers(prev => prev.map(x => x.user_id === u.user_id ? { ...x, is_active: !u.is_active } : x))
   }
 
-  const onlineCount = users.filter(u => online.has(u.user_id)).length
+  const onlineCount = visibleUsers.filter(u => online.has(u.user_id)).length
 
   const legendItem = (label: string, color: string) => (
     <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -91,7 +111,7 @@ export default function UsersPage() {
       <div style={{ padding: '28px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} {t('members', 'thành viên')}</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{visibleUsers.length} {t('members', 'thành viên')}</p>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--accent-green)', fontWeight: 600 }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-green)' }} />
               {onlineCount} {t('online', 'trực tuyến')}
@@ -109,18 +129,38 @@ export default function UsersPage() {
         </div>
 
         {/* Role colour legend */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', flexWrap: 'wrap' }}>
           {legendItem(t('Admin', 'Quản trị viên'), roleColor.admin)}
           {legendItem(t('Manager', 'Quản lý'), roleColor.manager)}
           {legendItem(t('Staff', 'Nhân viên'), roleColor.staff)}
           {legendItem(t('Offline', 'Ngoại tuyến'), OFFLINE)}
         </div>
 
+        {/* Role filter */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {([
+            ['all', t('All', 'Tất cả')],
+            ['staff', t('Staff', 'Nhân viên')],
+            ['manager', t('Manager', 'Quản lý')],
+            ['admin', t('Admin', 'Quản trị viên')],
+          ] as [RoleFilter, string][]).map(([key, lbl]) => {
+            const active = roleFilter === key
+            return (
+              <button key={key} onClick={() => setRoleFilter(key)} style={{
+                fontSize: '12px', fontWeight: 600, padding: '6px 13px', borderRadius: '8px',
+                background: active ? 'var(--accent-blue)' : 'var(--bg-card)',
+                color: active ? 'white' : 'var(--text-secondary)',
+                border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border)'}`,
+              }}>{lbl}</button>
+            )
+          })}
+        </div>
+
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '8px' }}>
-            {users.map(u => {
+            {visibleUsers.map(u => {
               const isOnline = online.has(u.user_id)
               // Role colour when online; grey when offline.
               const dColor = isOnline ? (roleColor[u.role] || 'var(--accent-teal)') : OFFLINE
