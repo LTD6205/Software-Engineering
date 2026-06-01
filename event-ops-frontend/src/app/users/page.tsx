@@ -33,7 +33,7 @@ interface ReassignRequest {
 
 const empty = { name: '', email: '', phone: '', password: '', role: 'staff' }
 
-// Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
+// Role colour by level: Admin (red) > Event Manager (purple) > Manager (amber) > Staff (green).
 const roleColor: Record<string, string> = {
   admin:        'var(--accent-red)',
   eventmanager: 'var(--accent-purple)',
@@ -45,7 +45,7 @@ const OFFLINE = 'var(--text-muted)'
 // Ordering: Staff first, then Manager, Event Manager, then Admin.
 const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, eventmanager: 2, admin: 3 }
 
-type RoleFilter = 'all' | 'staff' | 'manager' | 'admin'
+type RoleFilter = 'all' | 'staff' | 'manager' | 'eventmanager' | 'admin'
 
 export default function UsersPage() {
   const { user, isManager, isAdmin, isEventManager } = useAuth()
@@ -200,6 +200,7 @@ export default function UsersPage() {
         {/* Role colour legend */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', flexWrap: 'wrap' }}>
           {legendItem(t('Admin', 'Quản trị viên'), roleColor.admin)}
+          {legendItem(t('Event Manager', 'Quản lý sự kiện'), roleColor.eventmanager)}
           {legendItem(t('Manager', 'Quản lý'), roleColor.manager)}
           {legendItem(t('Staff', 'Nhân viên'), roleColor.staff)}
           {legendItem(t('Offline', 'Ngoại tuyến'), OFFLINE)}
@@ -211,6 +212,7 @@ export default function UsersPage() {
             ['all', t('All', 'Tất cả')],
             ['staff', t('Staff', 'Nhân viên')],
             ['manager', t('Manager', 'Quản lý')],
+            ['eventmanager', t('Event Manager', 'Quản lý sự kiện')],
             ['admin', t('Admin', 'Quản trị viên')],
           ] as [RoleFilter, string][]).map(([key, lbl]) => {
             const active = roleFilter === key
