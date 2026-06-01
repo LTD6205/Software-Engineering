@@ -31,11 +31,37 @@ export class TasksService {
 
   // ── Tasks ──────────────────────────────────────────────────
 
-  findAllByEvent(eventId: string) {
-    return this.taskRepo.find({
+  async findAllByEvent(eventId: string) {
+    const tasks = await this.taskRepo.find({
       where: { event_id: eventId },
       order: { priority_score: 'DESC', deadline: 'ASC' },
     });
+    if (tasks.length === 0) return tasks;
+    // Attach each task's assignees (id, name, avatar) so the UI can show
+    // avatars without a request per task.
+    const ids = tasks.map((tk) => tk.task_id);
+    const rows: Array<{
+      task_id: string;
+      user_id: string;
+      name: string;
+      avatar: string | null;
+    }> = await this.assignRepo.manager.query(
+      `SELECT ta.task_id, u.user_id, u.name, u.avatar
+       FROM task_assignments ta JOIN users u ON u.user_id = ta.user_id
+       WHERE ta.task_id = ANY($1::uuid[])
+       ORDER BY u.name ASC`,
+      [ids],
+    );
+    const byTask = new Map<string, Array<Record<string, unknown>>>();
+    for (const r of rows) {
+      const list = byTask.get(r.task_id) ?? [];
+      list.push({ user_id: r.user_id, name: r.name, avatar: r.avatar });
+      byTask.set(r.task_id, list);
+    }
+    return tasks.map((tk) => ({
+      ...tk,
+      assignees: byTask.get(tk.task_id) ?? [],
+    }));
   }
 
   async findOne(id: string) {
@@ -211,17 +237,45 @@ export class TasksService {
     return this.assignRepo.find({ where: { task_id: taskId } });
   }
 
-  async assignUser(taskId: string, userId: string) {
+  // Assignees with their display details (for avatars / the re-select picker).
+  getAssigneesDetailed(taskId: string): Promise<unknown[]> {
+    return this.assignRepo.manager.query(
+      `SELECT u.user_id, u.name, u.avatar
+       FROM task_assignments ta JOIN users u ON u.user_id = ta.user_id
+       WHERE ta.task_id = $1
+       ORDER BY u.name ASC`,
+      [taskId],
+    );
+  }
+
+  // A task may only be assigned to staff members. A manager may only assign
+  // their own staff; admins/eventmanagers may assign any staff member.
+  private async assertAssignable(
+    userId: string,
+    actor?: { sub: string; role: string },
+  ) {
     const u = await this.userRepo.findOne({ where: { user_id: userId } });
     if (!u) {
       throw new NotFoundException('User not found / Không tìm thấy người dùng');
     }
-    // Tasks may only be assigned to staff and managers, never admins.
-    if (u.role === 'admin') {
+    if (u.role !== 'staff') {
       throw new BadRequestException(
-        'Tasks cannot be assigned to an admin / Không thể giao công việc cho quản trị viên',
+        'Tasks can only be assigned to staff members / Chỉ có thể giao công việc cho nhân viên',
       );
     }
+    if (actor && actor.role === 'manager' && u.manager_id !== actor.sub) {
+      throw new BadRequestException(
+        'You can only assign your own staff / Bạn chỉ có thể giao cho nhân viên của mình',
+      );
+    }
+  }
+
+  async assignUser(
+    taskId: string,
+    userId: string,
+    actor?: { sub: string; role: string },
+  ) {
+    await this.assertAssignable(userId, actor);
     const assignment = this.assignRepo.create({
       task_id: taskId,
       user_id: userId,
@@ -231,6 +285,25 @@ export class TasksService {
 
   unassignUser(taskId: string, userId: string) {
     return this.assignRepo.delete({ task_id: taskId, user_id: userId });
+  }
+
+  // Replace a task's entire assignee set in one call (used by create and the
+  // avatar re-select picker). Validates every target before changing anything.
+  async setAssignees(
+    taskId: string,
+    userIds: string[],
+    actor?: { sub: string; role: string },
+  ) {
+    await this.findOne(taskId);
+    const ids = Array.from(new Set(userIds ?? []));
+    for (const uid of ids) await this.assertAssignable(uid, actor);
+    await this.assignRepo.delete({ task_id: taskId });
+    for (const uid of ids) {
+      await this.assignRepo.save(
+        this.assignRepo.create({ task_id: taskId, user_id: uid }),
+      );
+    }
+    return this.getAssigneesDetailed(taskId);
   }
 
   // ── Milestones ─────────────────────────────────────────────

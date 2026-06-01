@@ -68,8 +68,29 @@ export class TasksController {
 
   @Post(':id/assign')
   @Roles('manager')
-  assign(@Param('id') id: string, @Body() body: { user_id: string }) {
-    return this.tasksService.assignUser(id, body.user_id);
+  assign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+    @Body() body: { user_id: string },
+  ) {
+    return this.tasksService.assignUser(id, body.user_id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
+  }
+
+  // Replace the whole assignee set (one or many staff) in a single call.
+  @Put(':id/assignments')
+  @Roles('manager')
+  setAssignees(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+    @Body() body: { user_ids: string[] },
+  ) {
+    return this.tasksService.setAssignees(id, body.user_ids ?? [], {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Delete(':id/assign/:userId')

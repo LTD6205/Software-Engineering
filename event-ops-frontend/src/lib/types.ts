@@ -26,6 +26,12 @@ export interface ManagerOption {
   team_count: number
 }
 
+export interface Assignee {
+  user_id: string
+  name: string
+  avatar?: string | null
+}
+
 export interface Task {
   task_id: string
   event_id: string
@@ -39,6 +45,7 @@ export interface Task {
   deadline: string
   created_by: string
   created_at: string
+  assignees?: Assignee[]
 }
 
 export interface Milestone {

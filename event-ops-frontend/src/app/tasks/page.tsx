@@ -7,6 +7,7 @@ import { Task, Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
+import Avatar from '@/components/Avatar'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
@@ -15,7 +16,7 @@ const emptyTask = {
   task_name: '', description: '',
   priority_label: 'medium',
   startDate: '', startTime: '', deadlineDate: '', deadlineTime: '',
-  assigned_to: '',
+  assigned_to: [] as string[],
 }
 
 // Format a stored timestamp to a local "YYYY-MM-DDTHH:mm" string.
@@ -30,7 +31,7 @@ function toLocalDateTime(v?: string) {
 function TasksContent() {
   const searchParams = useSearchParams()
   const eventId      = searchParams.get('eventId') || ''
-  const { user, isManager } = useAuth()
+  const { user, isManager, isAdmin } = useAuth()
   const { t, tError } = useLang()
 
   const [events, setEvents]               = useState<Event[]>([])
@@ -41,9 +42,19 @@ function TasksContent() {
   const [form, setForm]                   = useState({ ...emptyTask })
   const [saving, setSaving]               = useState(false)
   const [error, setError]                 = useState('')
-  const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string }[]>([])
+  const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string; manager_id?: string | null; avatar?: string | null }[]>([])
   const [pendingReopen, setPendingReopen] = useState<{ id: string; status: string } | null>(null)
   const [pendingTaskDelete, setPendingTaskDelete] = useState<string | null>(null)
+  // Avatar re-select picker: the task whose assignees are being edited.
+  const [editingAssignees, setEditingAssignees] = useState<Task | null>(null)
+  const [pickedStaff, setPickedStaff] = useState<string[]>([])
+
+  // Staff this manager may assign: their own team (admins may assign any staff).
+  const assignableStaff = teamMembers.filter(
+    m => m.role === 'staff' && (isAdmin || m.manager_id === user?.user_id),
+  )
+  const toggle = (list: string[], id: string) =>
+    list.includes(id) ? list.filter(x => x !== id) : [...list, id]
 
   useEffect(() => {
     eventsApi.getAll().then(setEvents).catch(() => {})
@@ -76,8 +87,8 @@ function TasksContent() {
       setError(t('Please select an event', 'Vui lòng chọn sự kiện'))
       return
     }
-    // Every field is required.
-    if (!form.task_name || !form.description || !form.assigned_to ||
+    // Every field is required (at least one assignee).
+    if (!form.task_name || !form.description || form.assigned_to.length === 0 ||
         !form.startDate || !form.startTime || !form.deadlineDate || !form.deadlineTime) {
       setError(t('Please fill in every field', 'Vui lòng điền tất cả các trường'))
       return
@@ -109,8 +120,8 @@ function TasksContent() {
         ...(start    ? { start_time: new Date(start).toISOString() } : {}),
       })
 
-      if (form.assigned_to) {
-        await tasksApi.assign(task.task_id, form.assigned_to)
+      if (form.assigned_to.length > 0) {
+        await tasksApi.setAssignees(task.task_id, form.assigned_to)
       }
 
       setShowModal(false)
@@ -196,6 +207,23 @@ function TasksContent() {
     }
   }
 
+  // Open the avatar re-select picker for a task, prefilled with its assignees.
+  const openAssignees = (task: Task) => {
+    setEditingAssignees(task)
+    setPickedStaff((task.assignees ?? []).map(a => a.user_id))
+  }
+  const saveAssignees = async () => {
+    if (!editingAssignees) return
+    const id = editingAssignees.task_id
+    try {
+      const updated = await tasksApi.setAssignees(id, pickedStaff)
+      setTasks(p => p.map(t => t.task_id === id ? { ...t, assignees: updated } : t))
+      setEditingAssignees(null)
+    } catch (e) {
+      alert(tError(getErrorMessage(e, 'Could not update assignees / Không thể cập nhật người được giao')))
+    }
+  }
+
   const pending    = tasks.filter(t => t.status === 'pending')
   const inProgress = tasks.filter(t => t.status === 'in_progress')
   const completed  = tasks.filter(t => t.status === 'completed')
@@ -222,6 +250,7 @@ function TasksContent() {
             canManage={isManager}
             onDelete={setPendingTaskDelete}
             onDeadlineChange={handleDeadlineChange}
+            onEditAssignees={openAssignees}
           />
         ))}
         {items.length === 0 && (
@@ -303,28 +332,44 @@ function TasksContent() {
               style={{ resize: 'vertical' }} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {t('Priority', 'Ưu tiên')}
-              </label>
-              <select value={form.priority_label} onChange={e => setForm(f => ({ ...f, priority_label: e.target.value }))}>
-                <option value="low">{t('Low', 'Thấp')}</option>
-                <option value="medium">{t('Medium', 'Trung bình')}</option>
-                <option value="high">{t('High', 'Cao')}</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {t('Assign To', 'Giao cho')}
-              </label>
-              <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
-                <option value="">{t('— Select member —', '— Chọn thành viên —')}</option>
-                {/* Tasks can only be assigned to staff and managers, not admins. */}
-                {teamMembers.filter(m => m.role !== 'admin').map(m => (
-                  <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
-                ))}
-              </select>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              {t('Priority', 'Ưu tiên')}
+            </label>
+            <select value={form.priority_label} onChange={e => setForm(f => ({ ...f, priority_label: e.target.value }))}>
+              <option value="low">{t('Low', 'Thấp')}</option>
+              <option value="medium">{t('Medium', 'Trung bình')}</option>
+              <option value="high">{t('High', 'Cao')}</option>
+            </select>
+          </div>
+
+          {/* Assign to one or many of the manager's own staff. */}
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              {t('Assign To', 'Giao cho')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('your staff', 'nhân viên của bạn')})</span>
+            </label>
+            <div style={{
+              maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px',
+              border: '1px solid var(--border)', borderRadius: '8px', padding: '8px',
+            }}>
+              {assignableStaff.length === 0 ? (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px' }}>
+                  {t('You have no staff to assign', 'Bạn chưa có nhân viên để giao')}
+                </span>
+              ) : assignableStaff.map(m => {
+                const checked = form.assigned_to.includes(m.user_id)
+                return (
+                  <label key={m.user_id} style={{
+                    display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 9px', borderRadius: '7px',
+                    cursor: 'pointer', background: checked ? 'var(--bg-hover)' : 'transparent', fontSize: '13px',
+                  }}>
+                    <input type="checkbox" checked={checked}
+                      onChange={() => setForm(f => ({ ...f, assigned_to: toggle(f.assigned_to, m.user_id) }))}
+                      style={{ width: 'auto', margin: 0 }} />
+                    <span style={{ color: 'var(--text-primary)' }}>{m.name}</span>
+                  </label>
+                )
+              })}
             </div>
           </div>
 
@@ -353,6 +398,52 @@ function TasksContent() {
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,
                 opacity: saving ? 0.6 : 1,
               }}>{saving ? t('Creating...', 'Đang tạo...') : t('Create Task', 'Tạo công việc')}</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Re-select a task's assignees (clicked from its avatars). */}
+      {editingAssignees && (
+        <Modal
+          title={t('Assignees', 'Người được giao') + ' — ' + editingAssignees.task_name}
+          onClose={() => setEditingAssignees(null)}
+        >
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            {t('Select one or more of your staff for this task.', 'Chọn một hoặc nhiều nhân viên của bạn cho công việc này.')}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflowY: 'auto' }}>
+            {assignableStaff.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px' }}>
+                {t('You have no staff to assign', 'Bạn chưa có nhân viên để giao')}
+              </span>
+            ) : assignableStaff.map(m => {
+              const checked = pickedStaff.includes(m.user_id)
+              return (
+                <label key={m.user_id} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px',
+                  cursor: 'pointer', background: checked ? 'var(--bg-hover)' : 'transparent',
+                  border: '1px solid var(--border)', fontSize: '13px',
+                }}>
+                  <input type="checkbox" checked={checked}
+                    onChange={() => setPickedStaff(prev => toggle(prev, m.user_id))}
+                    style={{ width: 'auto', margin: 0 }} />
+                  <Avatar src={m.avatar} size={28} radius={14} iconColor="var(--accent-blue)" bg="rgba(59,130,246,0.16)" />
+                  <span style={{ color: 'var(--text-primary)' }}>{m.name}</span>
+                </label>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+            <button onClick={() => setEditingAssignees(null)} style={{
+              background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: '8px',
+              padding: '9px 18px', fontSize: '13px',
+            }}>{t('Cancel', 'Hủy')}</button>
+            <button onClick={saveAssignees} style={{
+              background: 'var(--accent-blue)', color: 'white',
+              border: 'none', borderRadius: '8px',
+              padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+            }}>{t('Save', 'Lưu')}</button>
           </div>
         </Modal>
       )}

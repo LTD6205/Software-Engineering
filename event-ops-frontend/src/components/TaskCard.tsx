@@ -1,9 +1,10 @@
 'use client'
 import { useState } from 'react'
-import { Clock, Bot, Trash2, Pencil } from 'lucide-react'
+import { Clock, Bot, Trash2, Pencil, UserPlus } from 'lucide-react'
 import { Task } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
+import Avatar from './Avatar'
 
 interface Props {
   task: Task
@@ -12,6 +13,7 @@ interface Props {
   canManage?: boolean
   onDelete?: (id: string) => void
   onDeadlineChange?: (id: string, isoDeadline: string) => void
+  onEditAssignees?: (task: Task) => void
 }
 
 // Per-status accent colour + soft glow.
@@ -31,9 +33,11 @@ const toLocalInput = (iso?: string) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-export default function TaskCard({ task, onStatusChange, isCreator, canManage, onDelete, onDeadlineChange }: Props) {
+export default function TaskCard({ task, onStatusChange, isCreator, canManage, onDelete, onDeadlineChange, onEditAssignees }: Props) {
   const { t, lang } = useLang()
   const [editingDeadline, setEditingDeadline] = useState(false)
+  const assignees = task.assignees ?? []
+  const canEditAssignees = canManage && !!onEditAssignees
   const fmt = (d: string) =>
     !d ? '—' : new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
@@ -68,6 +72,39 @@ export default function TaskCard({ task, onStatusChange, isCreator, canManage, o
         boxShadow: isOverdue || isCompleted ? undefined : `0 0 14px ${s.glow}`,
         transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s',
       }}>
+      {/* Assignee avatars, shown above the task. Clickable (for managers) to
+          re-select who the task is assigned to. */}
+      {(assignees.length > 0 || canEditAssignees) && (
+        <div
+          onClick={canEditAssignees ? () => onEditAssignees!(task) : undefined}
+          title={canEditAssignees ? t('Change assignees', 'Đổi người được giao') : assignees.map(a => a.name).join(', ')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px',
+            cursor: canEditAssignees ? 'pointer' : 'default', width: 'fit-content',
+          }}>
+          {assignees.length > 0 ? (
+            <>
+              <div style={{ display: 'flex' }}>
+                {assignees.slice(0, 5).map((a, i) => (
+                  <div key={a.user_id} title={a.name}
+                    style={{ marginLeft: i === 0 ? 0 : '-8px', border: '2px solid var(--bg-card)', borderRadius: '50%', display: 'flex' }}>
+                    <Avatar src={a.avatar} size={26} radius={13} iconColor="var(--accent-blue)" bg="rgba(59,130,246,0.16)" />
+                  </div>
+                ))}
+              </div>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                {assignees.length === 1
+                  ? assignees[0].name
+                  : t(`${assignees.length} assignees`, `${assignees.length} người`)}
+              </span>
+            </>
+          ) : (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--accent-blue)', fontWeight: 600 }}>
+              <UserPlus size={14} /> {t('Assign staff', 'Giao nhân viên')}
+            </span>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
