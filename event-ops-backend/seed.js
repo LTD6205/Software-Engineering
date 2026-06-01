@@ -36,6 +36,11 @@ for (let i = 1; i <= 10; i++) {
   });
 }
 
+// Every account needs a 10-digit phone. Assign deterministic ones (0900000001…).
+accounts.forEach((a, i) => {
+  a.phone = '09' + String(i + 1).padStart(8, '0');
+});
+
 async function main() {
   const client = new Client({
     host: process.env.DB_HOST || 'localhost',
@@ -50,14 +55,15 @@ async function main() {
   for (const a of accounts) {
     const hash = await bcrypt.hash(a.password, 10);
     await client.query(
-      `INSERT INTO users (name, email, role, password_hash, is_active)
-       VALUES ($1, $2, $3, $4, true)
+      `INSERT INTO users (name, email, role, phone, password_hash, is_active)
+       VALUES ($1, $2, $3, $4, $5, true)
        ON CONFLICT (email)
        DO UPDATE SET name = EXCLUDED.name,
                      role = EXCLUDED.role,
+                     phone = EXCLUDED.phone,
                      password_hash = EXCLUDED.password_hash,
                      is_active = true`,
-      [a.name, a.email, a.role, hash],
+      [a.name, a.email, a.role, a.phone, hash],
     );
   }
 

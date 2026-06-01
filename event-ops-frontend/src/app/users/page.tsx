@@ -20,7 +20,7 @@ interface TeamUser {
   created_at?: string
 }
 
-const empty = { name: '', email: '', password: '', role: 'staff' }
+const empty = { name: '', email: '', phone: '', password: '', role: 'staff' }
 
 // Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
 const roleColor: Record<string, string> = {
@@ -74,8 +74,14 @@ export default function UsersPage() {
     : t('Staff', 'Nhân viên')
 
   const handleCreate = async () => {
-    if (!form.name || !form.email || !form.password) {
-      setError(t('Name, email and password are required', 'Vui lòng nhập tên, email và mật khẩu')); return
+    if (!form.name || !form.email || !form.phone || !form.password) {
+      setError(t('Name, email, phone and password are required', 'Vui lòng nhập tên, email, số điện thoại và mật khẩu')); return
+    }
+    if (!form.email.includes('@') || form.email.length > 50) {
+      setError(t('Email must contain "@" and be at most 50 characters', 'Email phải chứa "@" và không quá 50 ký tự')); return
+    }
+    if (!/^\d{10}$/.test(form.phone)) {
+      setError(t('Phone number must be exactly 10 digits', 'Số điện thoại phải gồm đúng 10 chữ số')); return
     }
     setSaving(true); setError('')
     try {
@@ -238,6 +244,7 @@ export default function UsersPage() {
           {[
             { label: 'Full Name', vi: 'Họ và tên', key: 'name', type: 'text' },
             { label: 'Email',     vi: 'Email',     key: 'email', type: 'email' },
+            { label: 'Phone Number', vi: 'Số điện thoại', key: 'phone', type: 'tel' },
             { label: 'Password',  vi: 'Mật khẩu', key: 'password', type: 'password' },
           ].map(f => (
             <div key={f.key} style={{ marginBottom: '16px' }}>

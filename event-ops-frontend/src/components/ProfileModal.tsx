@@ -65,6 +65,18 @@ export default function ProfileModal({ onClose }: { onClose: () => void }) {
   }
 
   const save = async () => {
+    if (!name || !email || !phone) {
+      setError(t('Name, email and phone are required', 'Vui lòng nhập tên, email và số điện thoại'))
+      return
+    }
+    if (!email.includes('@') || email.length > 50) {
+      setError(t('Email must contain "@" and be at most 50 characters', 'Email phải chứa "@" và không quá 50 ký tự'))
+      return
+    }
+    if (!/^\d{10}$/.test(phone)) {
+      setError(t('Phone number must be exactly 10 digits', 'Số điện thoại phải gồm đúng 10 chữ số'))
+      return
+    }
     if (!currentPassword) {
       setError(t('Enter your current password to save changes', 'Nhập mật khẩu hiện tại để lưu thay đổi'))
       return
@@ -128,7 +140,7 @@ export default function ProfileModal({ onClose }: { onClose: () => void }) {
       </div>
       <div style={{ marginBottom: '14px' }}>
         {label('Phone Number', 'Số điện thoại')}
-        <input value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('Optional', 'Không bắt buộc')} />
+        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('10 digits', '10 chữ số')} />
       </div>
       <div style={{ marginBottom: '18px' }}>
         {label('New Password', 'Mật khẩu mới')}

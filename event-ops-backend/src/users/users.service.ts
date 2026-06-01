@@ -33,13 +33,28 @@ export class UsersService {
     });
   }
 
-  // Roster any signed-in user may see (for the online/presence + contact board).
+  // Roster any signed-in user may see. Staff use this and may only see emails
+  // (not phone numbers) of others — so phone is intentionally excluded here.
   directory() {
     return this.userRepo.find({
-      select: ['user_id', 'name', 'role', 'email', 'phone', 'avatar'],
+      select: ['user_id', 'name', 'role', 'email', 'avatar'],
       where: { is_active: true },
       order: { role: 'ASC', name: 'ASC' },
     });
+  }
+
+  // Email must contain "@" and be <= 50 chars; phone must be exactly 10 digits.
+  private validateContact(email?: string, phone?: string) {
+    if (email !== undefined && (!email.includes('@') || email.length > 50)) {
+      throw new BadRequestException(
+        'Email must contain "@" and be at most 50 characters / Email phải chứa "@" và không quá 50 ký tự',
+      );
+    }
+    if (phone !== undefined && !/^\d{10}$/.test(phone)) {
+      throw new BadRequestException(
+        'Phone number must be exactly 10 digits / Số điện thoại phải gồm đúng 10 chữ số',
+      );
+    }
   }
 
   // A user updates their OWN profile. Requires the current password.
@@ -66,6 +81,8 @@ export class UsersService {
         'Current password is incorrect / Mật khẩu hiện tại không đúng',
       );
     }
+
+    this.validateContact(data.email, data.phone);
 
     if (data.email && data.email !== user.email) {
       const exists = await this.userRepo.findOne({
@@ -114,13 +131,15 @@ export class UsersService {
     name: string;
     email: string;
     password: string;
+    phone?: string;
     role?: string;
   }) {
-    if (!data.name || !data.email || !data.password) {
+    if (!data.name || !data.email || !data.password || !data.phone) {
       throw new BadRequestException(
-        'Name, email and password are required / Vui lòng nhập tên, email và mật khẩu',
+        'Name, email, phone and password are required / Vui lòng nhập tên, email, số điện thoại và mật khẩu',
       );
     }
+    this.validateContact(data.email, data.phone);
     const exists = await this.userRepo.findOne({
       where: { email: data.email },
     });
@@ -134,6 +153,7 @@ export class UsersService {
     const user = this.userRepo.create({
       name: data.name,
       email: data.email,
+      phone: data.phone,
       role: data.role || 'staff',
       password_hash,
     });
