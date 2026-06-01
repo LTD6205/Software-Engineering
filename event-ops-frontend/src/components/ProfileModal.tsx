@@ -1,11 +1,11 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
 import Modal from './Modal'
 import Avatar from './Avatar'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
-import { usersApi, getErrorMessage } from '@/lib/api'
+import api, { usersApi, getErrorMessage } from '@/lib/api'
 
 // Downscale an uploaded image to a small square JPEG data URL so it stays
 // lightweight in the database and in API responses.
@@ -48,6 +48,43 @@ export default function ProfileModal({ onClose }: { onClose: () => void }) {
   const [currentPassword, setCurrentPassword] = useState('')
   const [saving, setSaving]     = useState(false)
   const [error, setError]       = useState('')
+  const [confirmClose, setConfirmClose] = useState(false)
+  // Snapshot of the loaded values, to detect unsaved edits.
+  const [initial, setInitial] = useState({
+    name: user?.name ?? '', email: user?.email ?? '',
+    phone: user?.phone ?? '', avatar: user?.avatar as string | undefined,
+  })
+
+  // Load the latest profile when the modal opens so the current phone/email/
+  // avatar always show, even if the cached session is older.
+  useEffect(() => {
+    let active = true
+    api.get('/auth/me').then((r) => {
+      if (!active || !r.data) return
+      const u = r.data
+      setName(u.name ?? '')
+      setEmail(u.email ?? '')
+      setPhone(u.phone ?? '')
+      setAvatar(u.avatar || undefined)
+      setInitial({ name: u.name ?? '', email: u.email ?? '', phone: u.phone ?? '', avatar: u.avatar || undefined })
+      updateUser({ name: u.name, email: u.email, phone: u.phone, avatar: u.avatar })
+    }).catch(() => {})
+    return () => { active = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const dirty =
+    name !== initial.name ||
+    email !== initial.email ||
+    phone !== initial.phone ||
+    avatar !== initial.avatar ||
+    newPassword.length > 0
+
+  // Close attempt (X / outside / Cancel): confirm if there are unsaved edits.
+  const attemptClose = () => {
+    if (dirty) setConfirmClose(true)
+    else onClose()
+  }
 
   const pickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -105,70 +142,106 @@ export default function ProfileModal({ onClose }: { onClose: () => void }) {
   )
 
   return (
-    <Modal title={t('My Profile', 'Hồ sơ của tôi')} onClose={onClose}>
-      {/* Avatar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px' }}>
-        <Avatar src={avatar} size={64} radius={14} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <button onClick={() => fileRef.current?.click()} style={{
-            display: 'flex', alignItems: 'center', gap: '6px',
+    <>
+      <Modal title={t('My Profile', 'Hồ sơ của tôi')} onClose={attemptClose}>
+        {/* Avatar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px' }}>
+          <Avatar src={avatar} size={64} radius={14} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <button onClick={() => fileRef.current?.click()} style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: '8px',
+              padding: '7px 12px', fontSize: '12px', fontWeight: 600,
+            }}>
+              <Upload size={13} /> {t('Upload photo', 'Tải ảnh lên')}
+            </button>
+            {avatar && (
+              <button onClick={() => setAvatar(undefined)} style={{
+                background: 'none', border: 'none', color: 'var(--accent-red)',
+                fontSize: '11px', textAlign: 'left',
+              }}>
+                {t('Remove photo', 'Xóa ảnh')}
+              </button>
+            )}
+            <input ref={fileRef} type="file" accept="image/*" onChange={pickFile} style={{ display: 'none' }} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '14px' }}>
+          {label('Full Name', 'Họ và tên')}
+          <input value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: '14px' }}>
+          {label('Email', 'Email')}
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: '14px' }}>
+          {label('Phone Number', 'Số điện thoại')}
+          <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('10 digits', '10 chữ số')} />
+        </div>
+        <div style={{ marginBottom: '18px' }}>
+          {label('New Password', 'Mật khẩu mới')}
+          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+            placeholder={t('Leave blank to keep current', 'Để trống nếu giữ nguyên')} />
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginBottom: '16px' }}>
+          {label('Current Password (required to save)', 'Mật khẩu hiện tại (bắt buộc để lưu)')}
+          <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
+            placeholder="••••••••" />
+        </div>
+
+        {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
+
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button onClick={attemptClose} style={{
             background: 'var(--bg-hover)', color: 'var(--text-secondary)',
             border: '1px solid var(--border)', borderRadius: '8px',
-            padding: '7px 12px', fontSize: '12px', fontWeight: 600,
-          }}>
-            <Upload size={13} /> {t('Upload photo', 'Tải ảnh lên')}
-          </button>
-          {avatar && (
-            <button onClick={() => setAvatar(undefined)} style={{
-              background: 'none', border: 'none', color: 'var(--accent-red)',
-              fontSize: '11px', textAlign: 'left',
-            }}>
-              {t('Remove photo', 'Xóa ảnh')}
-            </button>
-          )}
-          <input ref={fileRef} type="file" accept="image/*" onChange={pickFile} style={{ display: 'none' }} />
+            padding: '9px 18px', fontSize: '13px',
+          }}>{t('Cancel', 'Hủy')}</button>
+          <button onClick={save} disabled={saving} style={{
+            background: 'var(--accent-blue)', color: 'white',
+            border: 'none', borderRadius: '8px',
+            padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+            opacity: saving ? 0.6 : 1,
+          }}>{saving ? t('Saving...', 'Đang lưu...') : t('Save Changes', 'Lưu thay đổi')}</button>
         </div>
-      </div>
+      </Modal>
 
-      <div style={{ marginBottom: '14px' }}>
-        {label('Full Name', 'Họ và tên')}
-        <input value={name} onChange={e => setName(e.target.value)} />
-      </div>
-      <div style={{ marginBottom: '14px' }}>
-        {label('Email', 'Email')}
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
-      </div>
-      <div style={{ marginBottom: '14px' }}>
-        {label('Phone Number', 'Số điện thoại')}
-        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder={t('10 digits', '10 chữ số')} />
-      </div>
-      <div style={{ marginBottom: '18px' }}>
-        {label('New Password', 'Mật khẩu mới')}
-        <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-          placeholder={t('Leave blank to keep current', 'Để trống nếu giữ nguyên')} />
-      </div>
-
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginBottom: '16px' }}>
-        {label('Current Password (required to save)', 'Mật khẩu hiện tại (bắt buộc để lưu)')}
-        <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
-          placeholder="••••••••" />
-      </div>
-
-      {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
-
-      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-        <button onClick={onClose} style={{
-          background: 'var(--bg-hover)', color: 'var(--text-secondary)',
-          border: '1px solid var(--border)', borderRadius: '8px',
-          padding: '9px 18px', fontSize: '13px',
-        }}>{t('Cancel', 'Hủy')}</button>
-        <button onClick={save} disabled={saving} style={{
-          background: 'var(--accent-blue)', color: 'white',
-          border: 'none', borderRadius: '8px',
-          padding: '9px 18px', fontSize: '13px', fontWeight: 600,
-          opacity: saving ? 0.6 : 1,
-        }}>{saving ? t('Saving...', 'Đang lưu...') : t('Save Changes', 'Lưu thay đổi')}</button>
-      </div>
-    </Modal>
+      {/* Unsaved-changes confirmation */}
+      {confirmClose && (
+        <div
+          onClick={() => setConfirmClose(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px',
+          }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--bg-card)', border: '1px solid var(--border-light)',
+            borderRadius: '14px', width: '100%', maxWidth: '380px', padding: '24px',
+          }}>
+            <p style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+              {t('Unsaved changes', 'Thay đổi chưa lưu')}
+            </p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '20px' }}>
+              {t('You have unsaved changes. Keep editing or discard them?',
+                 'Bạn có thay đổi chưa lưu. Tiếp tục chỉnh sửa hay hủy bỏ?')}
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmClose(false)} style={{
+                background: 'var(--accent-blue)', color: 'white',
+                border: 'none', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 600,
+              }}>{t('Keep editing', 'Tiếp tục chỉnh sửa')}</button>
+              <button onClick={() => { setConfirmClose(false); onClose() }} style={{
+                background: 'var(--bg-hover)', color: 'var(--accent-red)',
+                border: '1px solid var(--border)', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 600,
+              }}>{t('Discard changes', 'Hủy thay đổi')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
