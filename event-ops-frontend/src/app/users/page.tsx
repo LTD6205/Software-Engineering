@@ -168,11 +168,15 @@ export default function UsersPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '8px' }}>
             {visibleUsers.map(u => {
               const isOnline = online.has(u.user_id)
+              const isMe = u.user_id === user?.user_id
               // Role colour when online; grey when offline.
               const dColor = isOnline ? (roleColor[u.role] || 'var(--accent-teal)') : OFFLINE
               return (
               <div key={u.user_id} style={{
-                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                background: isMe ? 'rgba(34,197,94,0.06)' : 'var(--bg-card)',
+                // The current user's own row glows green so it's easy to spot.
+                border: `1px solid ${isMe ? 'var(--accent-green)' : 'var(--border)'}`,
+                boxShadow: isMe ? '0 0 0 1px var(--accent-green), 0 0 18px rgba(34,197,94,0.35)' : 'none',
                 borderRadius: '10px', padding: '14px 18px',
                 display: 'flex', alignItems: 'center', gap: '14px',
                 // Only dim genuinely deactivated accounts. The staff directory
@@ -190,7 +194,16 @@ export default function UsersPage() {
                   }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
+                  <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="selectable">{u.name}</span>
+                    {isMe && (
+                      <span style={{
+                        fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                        padding: '2px 7px', borderRadius: '10px',
+                        background: 'rgba(34,197,94,0.18)', color: 'var(--accent-green)',
+                      }}>{t('You', 'Bạn')}</span>
+                    )}
+                  </p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: '2px' }}>
                     {u.email && (
                       <span className="selectable" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
