@@ -88,7 +88,7 @@ export default function UsersPage() {
   return (
     <div>
       <TopBar title="Team" titleVi="Nhân viên" />
-      <div style={{ padding: '28px', maxWidth: '820px' }}>
+      <div style={{ padding: '28px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} {t('members', 'thành viên')}</p>
@@ -119,7 +119,7 @@ export default function UsersPage() {
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '8px' }}>
             {users.map(u => {
               const isOnline = online.has(u.user_id)
               // Role colour when online; grey when offline.

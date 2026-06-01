@@ -80,8 +80,8 @@ export default function DashboardPage() {
             </p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {events.slice(0, 5).map(event => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '12px' }}>
+            {events.slice(0, 6).map(event => (
               <EventCard
                 key={event.event_id}
                 event={event}
