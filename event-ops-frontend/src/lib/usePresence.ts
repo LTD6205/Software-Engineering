@@ -2,7 +2,9 @@
 import { useState, useEffect } from 'react'
 import { io } from 'socket.io-client'
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
+// Connect straight to the backend — the Next.js dev server doesn't proxy
+// WebSockets. Override with NEXT_PUBLIC_WS_URL for a remote/ngrok backend.
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3000'
 
 /**
  * Tracks which users are currently online (have a live socket connection).

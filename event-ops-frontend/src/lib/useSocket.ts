@@ -2,7 +2,10 @@
 import { useEffect } from 'react'
 import { io } from 'socket.io-client'
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
+// Connect straight to the backend. The Next.js dev server does not proxy
+// WebSocket/socket.io traffic, so same-origin would never connect. For a
+// remote (e.g. ngrok) setup, set NEXT_PUBLIC_WS_URL to the backend's URL.
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3000'
 
 export function useSocket(userId: string | null, onNotification: (data: object) => void) {
   useEffect(() => {
