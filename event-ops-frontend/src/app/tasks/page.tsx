@@ -46,7 +46,7 @@ function TasksContent() {
   const [pendingTaskDelete, setPendingTaskDelete] = useState<string | null>(null)
 
   useEffect(() => {
-    eventsApi.getAll().then(setEvents)
+    eventsApi.getAll().then(setEvents).catch(() => {})
     if (isManager) {
       usersApi.getAll()
         .then(setTeamMembers)
@@ -62,6 +62,7 @@ function TasksContent() {
     setLoading(true)
     tasksApi.getByEvent(selectedEvent)
       .then(setTasks)
+      .catch(() => {})
       .finally(() => setLoading(false))
   }, [selectedEvent])
 

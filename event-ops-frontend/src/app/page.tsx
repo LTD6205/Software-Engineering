@@ -22,6 +22,7 @@ export default function DashboardPage() {
   useEffect(() => {
     eventsApi.getAll()
       .then(setEvents)
+      .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 

@@ -31,11 +31,11 @@ export default function EventsPage() {
 
   const load = async () => {
     setLoading(true)
-    try { setEvents(await eventsApi.getAll()) } finally { setLoading(false) }
+    try { setEvents(await eventsApi.getAll()) } catch { /* backend down */ } finally { setLoading(false) }
   }
 
   useEffect(() => {
-    eventsApi.getAll().then(setEvents).finally(() => setLoading(false))
+    eventsApi.getAll().then(setEvents).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   const handleCreate = async () => {
