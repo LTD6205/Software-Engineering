@@ -92,6 +92,12 @@ export class UsersController {
     },
   ) {
     this.assertCanAssignRole(req.user.role, body.role);
+    // Activating/deactivating an account is admin-only.
+    if (body.is_active !== undefined && req.user.role !== 'admin') {
+      throw new ForbiddenException(
+        'Only an admin can activate or deactivate accounts / Chỉ quản trị viên mới có thể kích hoạt hoặc vô hiệu hóa tài khoản',
+      );
+    }
     return this.usersService.update(id, body);
   }
 
@@ -104,9 +110,9 @@ export class UsersController {
     }
   }
 
-  // PUT /api/users/:id/deactivate — manager deactivates staff
+  // PUT /api/users/:id/deactivate — admin only
   @Put(':id/deactivate')
-  @Roles('manager', 'admin')
+  @Roles('admin')
   deactivate(@Param('id') id: string) {
     return this.usersService.deactivate(id);
   }

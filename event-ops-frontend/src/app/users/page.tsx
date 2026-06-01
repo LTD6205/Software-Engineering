@@ -220,7 +220,7 @@ export default function UsersPage() {
                     {u.is_active ? t('Active', 'Hoạt động') : t('Inactive', 'Ngừng')}
                   </span>
                 )}
-                {isManager && (
+                {isAdmin && (
                   <button onClick={() => toggleActive(u)} style={{
                     background: 'none', border: '1px solid var(--border)',
                     borderRadius: '6px', padding: '5px 8px', cursor: 'pointer',
