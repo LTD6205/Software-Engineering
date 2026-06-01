@@ -191,7 +191,7 @@ export default function EventsPage() {
             <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
               <option value="pending">{t('Pending', 'Chờ xử lý')}</option>
               <option value="in_progress">{t('In Progress', 'Đang làm')}</option>
-              <option value="completed">{t('Completed', 'Hoàn thành')}</option>
+              {/* A new event can't be created already 'completed'. */}
             </select>
           </div>
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}

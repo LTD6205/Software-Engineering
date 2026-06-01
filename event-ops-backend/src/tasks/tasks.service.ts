@@ -64,23 +64,75 @@ export class TasksService {
     return this.taskRepo.save(task);
   }
 
-  async update(id: string, data: Partial<Task>, actorUserId?: string) {
+  async update(
+    id: string,
+    data: Partial<Task>,
+    actor?: { sub: string; role: string },
+  ) {
     const old = await this.findOne(id);
+
+    // Enforce who may change a task's status, and which transitions are allowed.
+    if (data.status !== undefined && data.status !== old.status && actor) {
+      await this.assertStatusChangeAllowed(old, data.status, actor);
+    }
+
     await this.taskRepo.update(id, data);
-    // Only write an audit log when we know who made the change. The DB CHECK
-    // constraint requires actor_user_id to be set when actor_type = 'user',
-    // so logging without an actor would throw and abort the update.
-    if (actorUserId) {
+    // The DB CHECK requires actor_user_id when actor_type = 'user', so only log
+    // when we know who made the change.
+    if (actor?.sub) {
       await this.logRepo.save({
         task_id: id,
         action_type: 'task_update',
         old_value: old,
         new_value: data,
         actor_type: 'user',
-        actor_user_id: actorUserId,
+        actor_user_id: actor.sub,
       });
     }
     return this.findOne(id);
+  }
+
+  private async assertStatusChangeAllowed(
+    task: Task,
+    next: string,
+    actor: { sub: string; role: string },
+  ) {
+    const assignments = await this.assignRepo.find({
+      where: { task_id: task.task_id },
+    });
+    const isCreator = task.created_by === actor.sub;
+    const isAssigned = assignments.some((a) => a.user_id === actor.sub);
+
+    // Only the creator or an assigned member may change the status.
+    if (!isCreator && !isAssigned) {
+      throw new BadRequestException(
+        'You are not allowed to change this task / Bạn không có quyền thay đổi công việc này',
+      );
+    }
+
+    // Reopening a completed task (completed -> anything else) is creator-only.
+    if (task.status === 'completed' && next !== 'completed' && !isCreator) {
+      throw new BadRequestException(
+        'Only the creator can reopen a completed task / Chỉ người tạo mới có thể mở lại công việc đã hoàn thành',
+      );
+    }
+
+    // Assigned staff (not the creator) may only move forward to in_progress or
+    // completed — never backwards.
+    if (isAssigned && !isCreator) {
+      const order: Record<string, number> = {
+        pending: 0,
+        in_progress: 1,
+        completed: 2,
+      };
+      const allowed = next === 'in_progress' || next === 'completed';
+      const notBackwards = (order[next] ?? -1) >= (order[task.status] ?? 0);
+      if (!allowed || !notBackwards) {
+        throw new BadRequestException(
+          'Assigned staff can only move a task forward to In Progress or Completed / Nhân viên được giao chỉ có thể chuyển công việc tiến tới Đang làm hoặc Hoàn thành',
+        );
+      }
+    }
   }
 
   findOverdue() {

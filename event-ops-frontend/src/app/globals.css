@@ -72,3 +72,10 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 select { cursor: pointer; }
 
 button { cursor: pointer; font-family: inherit; transition: all 0.15s; }
+
+/* Attention pulse for overdue items. */
+@keyframes overduePulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.45), 0 0 8px rgba(239,68,68,0.12); }
+  50%      { box-shadow: 0 0 0 1px rgba(239,68,68,0.75), 0 0 18px rgba(239,68,68,0.40); }
+}
+.overdue-glow { animation: overduePulse 2s ease-in-out infinite; }

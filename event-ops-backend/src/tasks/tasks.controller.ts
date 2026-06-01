@@ -7,6 +7,7 @@ import {
   Param,
   Body,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { Task } from '../entities/task.entity';
@@ -14,6 +15,7 @@ import { Milestone } from '../entities/milestone.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { JwtPayload } from '../auth/jwt.strategy';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,13 +40,18 @@ export class TasksController {
 
   @Put(':id')
   update(
+    @Request() req: { user: JwtPayload },
     @Param('id') id: string,
     @Body() body: Partial<Task> & { actor_user_id?: string },
   ) {
-    // actor_user_id is for the audit log, not a Task column — keep it out of
-    // the data passed to the update (otherwise TypeORM errors).
-    const { actor_user_id, ...data } = body;
-    return this.tasksService.update(id, data, actor_user_id);
+    // The actor is taken from the verified JWT (not the spoofable body field);
+    // actor_user_id isn't a Task column so it's dropped from the update data.
+    const data: Partial<Task> & { actor_user_id?: string } = { ...body };
+    delete data.actor_user_id;
+    return this.tasksService.update(id, data, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // Assignments

@@ -142,8 +142,21 @@ function TasksContent() {
   )
 
   const handleStatusChange = async (id: string, status: string) => {
-    await tasksApi.update(id, { status, actor_user_id: user?.user_id || '' })
-    setTasks(prev => prev.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
+    const task = tasks.find(t => t.task_id === id)
+    if (!task || task.status === status) return
+    // Reopening a completed task asks for confirmation (creator-only on server).
+    if (task.status === 'completed' && status !== 'completed') {
+      if (!confirm(t('Reopen this completed task?', 'Mở lại công việc đã hoàn thành này?'))) return
+    }
+    const prev = task.status
+    // Optimistic update, revert if the server rejects it.
+    setTasks(p => p.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
+    try {
+      await tasksApi.update(id, { status })
+    } catch (e) {
+      setTasks(p => p.map(t => t.task_id === id ? { ...t, status: prev } : t))
+      alert(tError(getErrorMessage(e, 'Could not update status / Không thể cập nhật trạng thái')))
+    }
   }
 
   const pending    = tasks.filter(t => t.status === 'pending')
@@ -164,7 +177,7 @@ function TasksContent() {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {items.map(t => (
-          <TaskCard key={t.task_id} task={t} onStatusChange={handleStatusChange} />
+          <TaskCard key={t.task_id} task={t} onStatusChange={handleStatusChange} isCreator={t.created_by === user?.user_id} />
         ))}
         {items.length === 0 && (
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '12px 0' }}>{t('No tasks', 'Không có công việc')}</p>

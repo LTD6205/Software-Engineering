@@ -11,13 +11,22 @@ interface Props {
   canDelete?: boolean
 }
 
+// Status accent: pending=yellow, in_progress=blue, completed=green.
+const STATUS_COLOR: Record<string, string> = {
+  pending: 'var(--accent-amber)',
+  in_progress: 'var(--accent-blue)',
+  completed: 'var(--accent-green)',
+}
+
 export default function EventCard({ event, onDelete, onClick, canDelete = true }: Props) {
   const { lang } = useLang()
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
   return (
     <div onClick={() => onClick(event)} style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',
+      borderLeft: `3px solid ${accent}`,
       borderRadius: '12px', padding: '16px 20px',
       display: 'flex', alignItems: 'center', gap: '16px',
       cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s',
@@ -32,9 +41,9 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true }
     }}>
       <div style={{
         width: '40px', height: '40px', borderRadius: '10px',
-        background: '#1e2d4a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        background: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
       }}>
-        <Calendar size={18} color="var(--accent-blue)" />
+        <Calendar size={18} color={accent} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
