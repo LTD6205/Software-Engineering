@@ -35,7 +35,7 @@ export default function UsersPage() {
 
   const handleCreate = async () => {
     if (!form.name || !form.email || !form.password) {
-      setError('Name, email and password are required.'); return
+      setError('Name, email and password are required / Vui lòng nhập tên, email và mật khẩu'); return
     }
     setSaving(true); setError('')
     try {
@@ -43,7 +43,7 @@ export default function UsersPage() {
       setUsers(prev => [...prev, created])
       setShowModal(false); setForm({ ...empty })
     } catch (e) {
-      setError(getErrorMessage(e, 'Failed to create user.'))
+      setError(getErrorMessage(e, 'Could not create the member / Không thể tạo thành viên'))
     } finally { setSaving(false) }
   }
 

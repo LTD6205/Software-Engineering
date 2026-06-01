@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -40,10 +41,19 @@ export class UsersService {
     password: string;
     role?: string;
   }) {
+    if (!data.name || !data.email || !data.password) {
+      throw new BadRequestException(
+        'Name, email and password are required / Vui lòng nhập tên, email và mật khẩu',
+      );
+    }
     const exists = await this.userRepo.findOne({
       where: { email: data.email },
     });
-    if (exists) throw new ConflictException('Email already in use');
+    if (exists) {
+      throw new ConflictException(
+        'Email already in use / Email đã được sử dụng',
+      );
+    }
 
     const password_hash = await bcrypt.hash(data.password, 10);
     const user = this.userRepo.create({

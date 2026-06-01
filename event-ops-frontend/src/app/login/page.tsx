@@ -13,12 +13,12 @@ export default function LoginPage() {
   const [loading, setLoading]   = useState(false)
 
   const handleLogin = async () => {
-    if (!email || !password) { setError('Please enter email and password.'); return }
+    if (!email || !password) { setError('Please enter email and password / Vui lòng nhập email và mật khẩu'); return }
     setLoading(true); setError('')
     try {
       await login(email, password)
     } catch (e) {
-      setError(getErrorMessage(e, 'Invalid email or password.'))
+      setError(getErrorMessage(e, 'Invalid email or password / Email hoặc mật khẩu không đúng'))
     } finally { setLoading(false) }
   }
 

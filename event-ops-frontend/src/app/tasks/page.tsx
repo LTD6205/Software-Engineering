@@ -52,7 +52,11 @@ function TasksContent() {
 
   const handleCreate = async () => {
     if (!form.task_name || !selectedEvent) {
-      setError('Task name and event are required.')
+      setError('Task name and event are required / Vui lòng nhập tên công việc và chọn sự kiện')
+      return
+    }
+    if (form.start_time && form.deadline && new Date(form.deadline) <= new Date(form.start_time)) {
+      setError('Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu')
       return
     }
     setSaving(true); setError('')
@@ -76,7 +80,7 @@ function TasksContent() {
       setForm({ ...emptyTask })
       setTasks(await tasksApi.getByEvent(selectedEvent))
     } catch (e) {
-      setError(getErrorMessage(e, 'Failed to create task.'))
+      setError(getErrorMessage(e, 'Could not create the task / Không thể tạo công việc'))
     } finally { setSaving(false) }
   }
 

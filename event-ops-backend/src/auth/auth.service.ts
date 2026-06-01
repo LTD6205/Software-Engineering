@@ -19,11 +19,15 @@ export class AuthService {
       where: { email, is_active: true },
     });
     if (!user || !user.password_hash) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(
+        'Invalid email or password / Email hoặc mật khẩu không đúng',
+      );
     }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(
+        'Invalid email or password / Email hoặc mật khẩu không đúng',
+      );
     }
     return user;
   }

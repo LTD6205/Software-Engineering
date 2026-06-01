@@ -35,7 +35,11 @@ export default function EventsPage() {
 
   const handleCreate = async () => {
     if (!form.event_name || !form.start_time || !form.end_time) {
-      setError('Name, start time and end time are required.')
+      setError('Event name, start time and end time are required / Vui lòng nhập tên sự kiện, thời gian bắt đầu và kết thúc')
+      return
+    }
+    if (new Date(form.end_time) <= new Date(form.start_time)) {
+      setError('End time must be after start time / Thời gian kết thúc phải sau thời gian bắt đầu')
       return
     }
     setSaving(true); setError('')
@@ -45,7 +49,7 @@ export default function EventsPage() {
       setForm({ ...empty })
       load()
     } catch (e) {
-      setError(getErrorMessage(e, 'Failed to create event.'))
+      setError(getErrorMessage(e, 'Could not create the event / Không thể tạo sự kiện'))
     } finally { setSaving(false) }
   }
 

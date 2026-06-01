@@ -58,7 +58,7 @@ export default function AiPage() {
     } catch {
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id
-          ? { ...m, status: 'rejected', text: 'Error connecting to AI. Check your DeepSeek API key in .env' }
+          ? { ...m, status: 'rejected', text: 'Could not reach the AI service. Check your DeepSeek API key in .env / Không thể kết nối dịch vụ AI. Kiểm tra khóa API DeepSeek trong .env' }
           : m
       ))
     } finally { setLoading(false) }

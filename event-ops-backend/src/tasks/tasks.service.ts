@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan, Not, In } from 'typeorm';
 import { Task } from '../entities/task.entity';
@@ -35,6 +39,25 @@ export class TasksService {
   }
 
   create(data: Partial<Task>) {
+    if (!data.task_name) {
+      throw new BadRequestException(
+        'Task name is required / Vui lòng nhập tên công việc',
+      );
+    }
+    if (!data.event_id) {
+      throw new BadRequestException(
+        'An event is required / Vui lòng chọn sự kiện',
+      );
+    }
+    if (
+      data.start_time &&
+      data.deadline &&
+      new Date(data.deadline) <= new Date(data.start_time)
+    ) {
+      throw new BadRequestException(
+        'Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu',
+      );
+    }
     const task = this.taskRepo.create(data);
     return this.taskRepo.save(task);
   }
