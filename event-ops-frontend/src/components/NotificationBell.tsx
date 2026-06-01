@@ -104,7 +104,7 @@ export default function NotificationBell() {
                     {typeIcon[n.type]}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{tError(n.message)}</p>
+                    <p className="selectable" style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{tError(n.message)}</p>
                     <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{timeAgo(n.created_at, t)}</p>
                   </div>
                   {!n.is_read && (

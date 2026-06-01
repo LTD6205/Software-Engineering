@@ -138,7 +138,7 @@ export default function AiPage() {
               {msg.role === 'user' ? <User size={15} color="var(--accent-blue)" /> : <Bot size={15} color="var(--accent-purple)" />}
             </div>
             <div style={{ maxWidth: '70%' }}>
-              <div style={{
+              <div className="selectable" style={{
                 background: msg.role === 'user' ? '#1e2d4a' : 'var(--bg-card)',
                 border: `1px solid ${msg.role === 'user' ? 'var(--border-light)' : 'var(--border)'}`,
                 borderRadius: '10px', padding: '12px 14px',

@@ -41,6 +41,13 @@ input, textarea {
   cursor: text;
 }
 
+/* Opt specific content back into being selectable/copyable. Keeps the normal
+   (arrow) cursor — no I-beam — but lets you drag-select and copy the text. */
+.selectable, .selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }

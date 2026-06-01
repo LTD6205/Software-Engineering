@@ -120,7 +120,7 @@ export default function LoginPage() {
           {loading ? t('Signing in...', 'Đang đăng nhập...') : t('Sign In', 'Đăng nhập')}
         </button>
 
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '20px' }}>
+        <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '20px' }}>
           account: {'{role}{id}@eventops.com'}
         </p>
       </div>
