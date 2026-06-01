@@ -7,11 +7,13 @@ import {
   Body,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { JwtPayload } from '../auth/jwt.strategy';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -32,10 +34,11 @@ export class UsersController {
     return this.usersService.findOne(id);
   }
 
-  // POST /api/users — manager creates staff account
+  // POST /api/users — manager creates staff/manager; only admin creates admin
   @Post()
   @Roles('manager', 'admin')
   create(
+    @Request() req: { user: JwtPayload },
     @Body()
     body: {
       name: string;
@@ -44,13 +47,15 @@ export class UsersController {
       role?: string;
     },
   ) {
+    this.assertCanAssignRole(req.user.role, body.role);
     return this.usersService.create(body);
   }
 
-  // PUT /api/users/:id — manager updates staff
+  // PUT /api/users/:id — manager updates staff; only admin sets admin role
   @Put(':id')
   @Roles('manager', 'admin')
   update(
+    @Request() req: { user: JwtPayload },
     @Param('id') id: string,
     @Body()
     body: {
@@ -60,7 +65,17 @@ export class UsersController {
       password?: string;
     },
   ) {
+    this.assertCanAssignRole(req.user.role, body.role);
     return this.usersService.update(id, body);
+  }
+
+  // Only an admin may grant the admin role.
+  private assertCanAssignRole(actorRole: string, targetRole?: string) {
+    if (targetRole === 'admin' && actorRole !== 'admin') {
+      throw new ForbiddenException(
+        'Only an admin can assign the admin role / Chỉ quản trị viên mới có thể cấp vai trò admin',
+      );
+    }
   }
 
   // PUT /api/users/:id/deactivate — manager deactivates staff

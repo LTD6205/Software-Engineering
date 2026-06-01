@@ -6,11 +6,16 @@ import {
   Delete,
   Param,
   Body,
+  UseGuards,
 } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { Event } from '../entities/event.entity';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('events')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
@@ -25,16 +30,19 @@ export class EventsController {
   }
 
   @Post()
+  @Roles('manager')
   create(@Body() body: Partial<Event>) {
     return this.eventsService.create(body);
   }
 
   @Put(':id')
+  @Roles('manager')
   update(@Param('id') id: string, @Body() body: Partial<Event>) {
     return this.eventsService.update(id, body);
   }
 
   @Delete(':id')
+  @Roles('manager')
   remove(@Param('id') id: string) {
     return this.eventsService.remove(id);
   }

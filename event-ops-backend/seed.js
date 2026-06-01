@@ -6,7 +6,8 @@
  * Safe to run repeatedly — existing accounts just get their password/role
  * reset (idempotent via ON CONFLICT). Reads DB settings from .env.
  *
- * Creates 3 managers and 10 staff:
+ * Creates 1 admin, 3 managers and 10 staff:
+ *   admin01@eventops.com                               -> password: admin123
  *   manager01@eventops.com ... manager03@eventops.com  -> password: manager123
  *   staff01@eventops.com   ... staff10@eventops.com    -> password: staff123
  */
@@ -14,11 +15,13 @@ require('dotenv').config();
 const { Client } = require('pg');
 const bcrypt = require('bcrypt');
 
+const ADMIN_PASSWORD = 'admin123';
 const MANAGER_PASSWORD = 'manager123';
 const STAFF_PASSWORD = 'staff123';
 
-// Build the roster: 3 managers + 10 staff
+// Build the roster: 1 admin + 3 managers + 10 staff
 const accounts = [
+  { name: 'Admin 01',   email: 'admin01@eventops.com',   role: 'admin',   password: ADMIN_PASSWORD },
   { name: 'Manager 01', email: 'manager01@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 02', email: 'manager02@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 03', email: 'manager03@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
@@ -61,6 +64,8 @@ async function main() {
   await client.end();
 
   console.log('\n✅ Seeded accounts:');
+  console.log(`   Admin (password "${ADMIN_PASSWORD}"):`);
+  accounts.filter((a) => a.role === 'admin').forEach((a) => console.log(`     - ${a.email}`));
   console.log(`   Managers (password "${MANAGER_PASSWORD}"):`);
   accounts.filter((a) => a.role === 'manager').forEach((a) => console.log(`     - ${a.email}`));
   console.log(`   Staff (password "${STAFF_PASSWORD}"):`);

@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
+import { usePresence } from '@/lib/usePresence'
 
 interface TeamUser {
   user_id: string
@@ -19,10 +20,19 @@ interface TeamUser {
 
 const empty = { name: '', email: '', password: '', role: 'staff' }
 
+// Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
+const roleColor: Record<string, string> = {
+  admin:   'var(--accent-red)',
+  manager: 'var(--accent-amber)',
+  staff:   'var(--accent-green)',
+}
+const OFFLINE = 'var(--text-muted)'
+
 export default function UsersPage() {
-  const { isManager } = useAuth()
+  const { isManager, isAdmin } = useAuth()
   const router = useRouter()
   const { t, tError } = useLang()
+  const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
   const [loading, setLoading]     = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -63,18 +73,27 @@ export default function UsersPage() {
     setUsers(prev => prev.map(x => x.user_id === u.user_id ? { ...x, is_active: !u.is_active } : x))
   }
 
-  const roleColor: Record<string, string> = {
-    manager: 'var(--accent-blue)',
-    admin:   'var(--accent-purple)',
-    staff:   'var(--accent-teal)',
-  }
+  const onlineCount = users.filter(u => online.has(u.user_id)).length
+
+  const legendItem = (label: string, color: string) => (
+    <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--text-muted)' }}>
+      <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: color }} />
+      {label}
+    </span>
+  )
 
   return (
     <div>
       <TopBar title="Team" titleVi="Nhân viên" />
-      <div style={{ padding: '28px', maxWidth: '800px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} {t('members', 'thành viên')}</p>
+      <div style={{ padding: '28px', maxWidth: '820px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} {t('members', 'thành viên')}</p>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--accent-green)', fontWeight: 600 }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-green)' }} />
+              {onlineCount} {t('online', 'trực tuyến')}
+            </span>
+          </div>
           <button onClick={() => setShowModal(true)} style={{
             display: 'flex', alignItems: 'center', gap: '7px',
             background: 'var(--accent-blue)', color: 'white',
@@ -84,32 +103,55 @@ export default function UsersPage() {
           </button>
         </div>
 
+        {/* Role colour legend */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {legendItem(t('Admin', 'Quản trị viên'), roleColor.admin)}
+          {legendItem(t('Manager', 'Quản lý'), roleColor.manager)}
+          {legendItem(t('Staff', 'Nhân viên'), roleColor.staff)}
+          {legendItem(t('Offline', 'Ngoại tuyến'), OFFLINE)}
+        </div>
+
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {users.map(u => (
+            {users.map(u => {
+              const isOnline = online.has(u.user_id)
+              // Role colour when online; grey when offline.
+              const dColor = isOnline ? (roleColor[u.role] || 'var(--accent-teal)') : OFFLINE
+              return (
               <div key={u.user_id} style={{
                 background: 'var(--bg-card)', border: '1px solid var(--border)',
                 borderRadius: '10px', padding: '14px 18px',
                 display: 'flex', alignItems: 'center', gap: '14px',
                 opacity: u.is_active ? 1 : 0.5,
               }}>
-                <div style={{
-                  width: '38px', height: '38px', borderRadius: '10px',
-                  background: (roleColor[u.role] || 'var(--accent-teal)') + '22',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <Users size={17} color={roleColor[u.role] || 'var(--accent-teal)'} />
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                  <div style={{
+                    width: '38px', height: '38px', borderRadius: '10px',
+                    background: dColor + '22',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Users size={17} color={dColor} />
+                  </div>
+                  {/* Online presence dot */}
+                  <span style={{
+                    position: 'absolute', bottom: '-2px', right: '-2px',
+                    width: '12px', height: '12px', borderRadius: '50%',
+                    background: isOnline ? 'var(--accent-green)' : OFFLINE,
+                    border: '2px solid var(--bg-card)',
+                  }} />
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</p>
                 </div>
                 <span style={{
+                  fontSize: '11px', fontWeight: 600, color: isOnline ? 'var(--accent-green)' : OFFLINE,
+                }}>{isOnline ? t('Online', 'Trực tuyến') : t('Offline', 'Ngoại tuyến')}</span>
+                <span style={{
                   fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '12px',
-                  background: (roleColor[u.role] || 'var(--accent-teal)') + '22',
-                  color: roleColor[u.role] || 'var(--accent-teal)',
+                  background: dColor + '22', color: dColor,
                 }}>{roleLabel(u.role)}</span>
                 <span style={{
                   fontSize: '11px', padding: '3px 8px', borderRadius: '12px',
@@ -129,7 +171,8 @@ export default function UsersPage() {
                     : <><UserCheck size={12} /> {t('Activate', 'Kích hoạt')}</>}
                 </button>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -156,6 +199,8 @@ export default function UsersPage() {
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
               <option value="staff">{t('Staff', 'Nhân viên')}</option>
               <option value="manager">{t('Manager', 'Quản lý')}</option>
+              {/* Only an admin can create another admin */}
+              {isAdmin && <option value="admin">{t('Admin', 'Quản trị viên')}</option>}
             </select>
           </div>
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}

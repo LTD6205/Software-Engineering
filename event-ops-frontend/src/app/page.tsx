@@ -8,12 +8,14 @@ import StatCard from '@/components/StatCard'
 import EventCard from '@/components/EventCard'
 import { useRouter } from 'next/navigation'
 import { useLang } from '@/context/LanguageContext'
+import { useAuth } from '@/context/AuthContext'
 
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const { t } = useLang()
+  const { isManager } = useAuth()
 
   useEffect(() => {
     eventsApi.getAll()
@@ -85,6 +87,7 @@ export default function DashboardPage() {
                 event={event}
                 onDelete={handleDelete}
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
+                canDelete={isManager}
               />
             ))}
           </div>

@@ -23,7 +23,7 @@ export default function EventsPage() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isManager } = useAuth()
   const { t, tError } = useLang()
 
   const load = async () => {
@@ -83,16 +83,18 @@ export default function EventsPage() {
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
             {events.length} {t(events.length === 1 ? 'event total' : 'events total', 'sự kiện')}
           </p>
-          <button
-            onClick={() => setShowModal(true)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '7px',
-              background: 'var(--accent-blue)', color: 'white',
-              border: 'none', borderRadius: '9px',
-              padding: '9px 18px', fontSize: '13px', fontWeight: 600,
-            }}>
-            <Plus size={15} /> {t('New Event', 'Tạo sự kiện')}
-          </button>
+          {isManager && (
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '7px',
+                background: 'var(--accent-blue)', color: 'white',
+                border: 'none', borderRadius: '9px',
+                padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+              }}>
+              <Plus size={15} /> {t('New Event', 'Tạo sự kiện')}
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -116,6 +118,7 @@ export default function EventsPage() {
                 event={event}
                 onDelete={handleDelete}
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
+                canDelete={isManager}
               />
             ))}
           </div>

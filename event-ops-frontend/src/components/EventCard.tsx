@@ -8,9 +8,10 @@ interface Props {
   event: Event
   onDelete: (id: string) => void
   onClick: (event: Event) => void
+  canDelete?: boolean
 }
 
-export default function EventCard({ event, onDelete, onClick }: Props) {
+export default function EventCard({ event, onDelete, onClick, canDelete = true }: Props) {
   const { lang } = useLang()
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -44,12 +45,14 @@ export default function EventCard({ event, onDelete, onClick }: Props) {
         </p>
       </div>
       <StatusBadge status={event.status} />
-      <button onClick={e => { e.stopPropagation(); onDelete(event.event_id) }}
-        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--accent-red)'}
-        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
-        <Trash2 size={15} />
-      </button>
+      {canDelete && (
+        <button onClick={e => { e.stopPropagation(); onDelete(event.event_id) }}
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
+          onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--accent-red)'}
+          onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
+          <Trash2 size={15} />
+        </button>
+      )}
       <ChevronRight size={15} color="var(--text-muted)" />
     </div>
   )
