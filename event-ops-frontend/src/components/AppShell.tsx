@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect } from 'react'
 import { useLang } from '@/context/LanguageContext'
 import Sidebar from './Sidebar'
+import Celebration from './Celebration'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
@@ -67,6 +68,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }}>
         {children}
       </main>
+      <Celebration />
     </div>
   )
 }

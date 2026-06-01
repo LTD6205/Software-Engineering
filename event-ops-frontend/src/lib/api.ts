@@ -29,6 +29,7 @@ export const tasksApi = {
   getOne:            (id: string)                     => api.get(`/tasks/${id}`).then(r => r.data),
   create:            (data: object)                   => api.post('/tasks', data).then(r => r.data),
   update:            (id: string, data: object)       => api.put(`/tasks/${id}`, data).then(r => r.data),
+  remove:            (id: string)                     => api.delete(`/tasks/${id}`).then(r => r.data),
   assign:            (taskId: string, userId: string) => api.post(`/tasks/${taskId}/assign`, { user_id: userId }).then(r => r.data),
   unassign:          (taskId: string, userId: string) => api.delete(`/tasks/${taskId}/assign/${userId}`).then(r => r.data),
   getMilestones:     (taskId: string)                 => api.get(`/tasks/${taskId}/milestones`).then(r => r.data),

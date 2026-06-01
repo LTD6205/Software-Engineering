@@ -43,6 +43,7 @@ function TasksContent() {
   const [error, setError]                 = useState('')
   const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string }[]>([])
   const [pendingReopen, setPendingReopen] = useState<{ id: string; status: string } | null>(null)
+  const [pendingTaskDelete, setPendingTaskDelete] = useState<string | null>(null)
 
   useEffect(() => {
     eventsApi.getAll().then(setEvents)
@@ -70,12 +71,18 @@ function TasksContent() {
   const evEnd   = toLocalDateTime(selEvent?.end_time)
 
   const handleCreate = async () => {
-    if (!form.task_name || !selectedEvent) {
-      setError(t('Task name and event are required', 'Vui lòng nhập tên công việc và chọn sự kiện'))
+    if (!selectedEvent) {
+      setError(t('Please select an event', 'Vui lòng chọn sự kiện'))
       return
     }
-    const start = form.startDate ? `${form.startDate}T${form.startTime || '08:00'}` : ''
-    const deadline = form.deadlineDate ? `${form.deadlineDate}T${form.deadlineTime || '08:00'}` : ''
+    // Every field is required.
+    if (!form.task_name || !form.description || !form.assigned_to ||
+        !form.startDate || !form.startTime || !form.deadlineDate || !form.deadlineTime) {
+      setError(t('Please fill in every field', 'Vui lòng điền tất cả các trường'))
+      return
+    }
+    const start = `${form.startDate}T${form.startTime}`
+    const deadline = `${form.deadlineDate}T${form.deadlineTime}`
 
     if (start && deadline && deadline <= start) {
       setError(t('Deadline must be after the start time', 'Hạn chót phải sau thời gian bắt đầu'))
@@ -168,6 +175,26 @@ function TasksContent() {
     void applyStatus(id, status)
   }
 
+  const doDeleteTask = async (id: string) => {
+    try {
+      await tasksApi.remove(id)
+      setTasks(p => p.filter(t => t.task_id !== id))
+    } catch (e) {
+      alert(tError(getErrorMessage(e, 'Could not delete the task / Không thể xóa công việc')))
+    }
+  }
+
+  const handleDeadlineChange = async (id: string, isoDeadline: string) => {
+    const before = tasks
+    setTasks(p => p.map(t => t.task_id === id ? { ...t, deadline: isoDeadline } : t))
+    try {
+      await tasksApi.update(id, { deadline: isoDeadline })
+    } catch (e) {
+      setTasks(before)
+      alert(tError(getErrorMessage(e, 'Could not update the deadline / Không thể cập nhật hạn chót')))
+    }
+  }
+
   const pending    = tasks.filter(t => t.status === 'pending')
   const inProgress = tasks.filter(t => t.status === 'in_progress')
   const completed  = tasks.filter(t => t.status === 'completed')
@@ -186,7 +213,15 @@ function TasksContent() {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {items.map(t => (
-          <TaskCard key={t.task_id} task={t} onStatusChange={handleStatusChange} isCreator={t.created_by === user?.user_id} />
+          <TaskCard
+            key={t.task_id}
+            task={t}
+            onStatusChange={handleStatusChange}
+            isCreator={t.created_by === user?.user_id}
+            canManage={isManager}
+            onDelete={setPendingTaskDelete}
+            onDeadlineChange={handleDeadlineChange}
+          />
         ))}
         {items.length === 0 && (
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '12px 0' }}>{t('No tasks', 'Không có công việc')}</p>
@@ -329,6 +364,17 @@ function TasksContent() {
         cancelLabel={t('Cancel', 'Hủy')}
         onConfirm={() => { const p = pendingReopen; setPendingReopen(null); if (p) void applyStatus(p.id, p.status) }}
         onCancel={() => setPendingReopen(null)}
+      />
+
+      <ConfirmDialog
+        open={!!pendingTaskDelete}
+        danger
+        title={t('Delete task', 'Xóa công việc')}
+        message={t('Delete this task? This cannot be undone.', 'Xóa công việc này? Hành động không thể hoàn tác.')}
+        confirmLabel={t('Delete', 'Xóa')}
+        cancelLabel={t('Cancel', 'Hủy')}
+        onConfirm={() => { if (pendingTaskDelete) void doDeleteTask(pendingTaskDelete); setPendingTaskDelete(null) }}
+        onCancel={() => setPendingTaskDelete(null)}
       />
     </div>
   )

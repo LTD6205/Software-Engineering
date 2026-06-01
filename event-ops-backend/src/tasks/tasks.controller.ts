@@ -54,6 +54,12 @@ export class TasksController {
     });
   }
 
+  @Delete(':id')
+  @Roles('manager')
+  remove(@Param('id') id: string) {
+    return this.tasksService.remove(id);
+  }
+
   // Assignments
   @Get(':id/assignments')
   getAssignments(@Param('id') id: string) {

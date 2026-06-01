@@ -12,6 +12,7 @@ import { TaskLog } from '../entities/task-log.entity';
 import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
+import { EventsGateway } from '../websocket/events.gateway';
 
 @Injectable()
 export class TasksService {
@@ -24,6 +25,7 @@ export class TasksService {
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Event) private eventRepo: Repository<Event>,
+    private readonly gateway: EventsGateway,
     @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
   ) {}
 
@@ -72,6 +74,10 @@ export class TasksService {
   //   no tasks -> pending; all tasks completed -> completed; otherwise -> in progress.
   private async recomputeEventStatus(eventId: string) {
     if (!eventId) return;
+    const event = await this.eventRepo.findOne({
+      where: { event_id: eventId },
+    });
+    if (!event) return;
     const tasks = await this.taskRepo.find({ where: { event_id: eventId } });
     let status = 'pending';
     if (tasks.length > 0) {
@@ -79,7 +85,16 @@ export class TasksService {
         ? 'completed'
         : 'in_progress';
     }
-    await this.eventRepo.update(eventId, { status });
+    if (event.status !== status) {
+      await this.eventRepo.update(eventId, { status });
+      // Celebrate an event that just completed.
+      if (status === 'completed') {
+        this.gateway.broadcast('celebrate', {
+          kind: 'event',
+          name: event.event_name,
+        });
+      }
+    }
   }
 
   async update(
@@ -107,11 +122,35 @@ export class TasksService {
         actor_user_id: actor.sub,
       });
     }
+    // Celebrate a task that was just completed.
+    if (data.status === 'completed' && old.status !== 'completed') {
+      this.gateway.broadcast('celebrate', {
+        kind: 'task',
+        name: old.task_name,
+      });
+    }
     // A task's status change may move its event between pending/in_progress/completed.
     if (data.status !== undefined) {
       await this.recomputeEventStatus(old.event_id);
     }
     return this.findOne(id);
+  }
+
+  async remove(id: string) {
+    const task = await this.findOne(id);
+    // No ON DELETE CASCADE in the schema, so clear child rows first.
+    const m = this.taskRepo.manager;
+    await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
+    await m.query(
+      'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
+      [id],
+    );
+    await m.query('DELETE FROM milestones WHERE task_id = $1', [id]);
+    await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
+    await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
+    await this.taskRepo.delete(id);
+    await this.recomputeEventStatus(task.event_id);
+    return { message: 'Task deleted' };
   }
 
   private async assertStatusChangeAllowed(
