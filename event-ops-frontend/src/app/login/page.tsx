@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
+import { getErrorMessage } from '@/lib/api'
 import { CalendarDays, Lock, Mail, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
@@ -16,8 +17,8 @@ export default function LoginPage() {
     setLoading(true); setError('')
     try {
       await login(email, password)
-    } catch (e: any) {
-      setError(e?.response?.data?.message || 'Invalid email or password.')
+    } catch (e) {
+      setError(getErrorMessage(e, 'Invalid email or password.'))
     } finally { setLoading(false) }
   }
 

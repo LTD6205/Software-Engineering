@@ -4,8 +4,7 @@ import { Bot, Send, User, CheckCircle, XCircle, Loader } from 'lucide-react'
 import { aiApi, eventsApi } from '@/lib/api'
 import { Event, Task } from '@/lib/types'
 import TopBar from '@/components/TopBar'
-
-const DEMO_USER_ID = '5f592659-2ecd-4eb1-a288-b45184bc73f1'
+import { useAuth } from '@/context/AuthContext'
 
 interface Message {
   id: string
@@ -28,6 +27,7 @@ export default function AiPage() {
   const [input, setInput]       = useState('')
   const [loading, setLoading]   = useState(false)
   const bottomRef               = useRef<HTMLDivElement>(null)
+  const { user }                = useAuth()
 
   useEffect(() => { eventsApi.getAll().then(setEvents) }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
@@ -44,7 +44,7 @@ export default function AiPage() {
     setLoading(true)
 
     try {
-      const result = await aiApi.command(DEMO_USER_ID, eventId, text)
+      const result = await aiApi.command(user?.user_id || '', eventId, text)
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id ? {
           ...m,
@@ -104,7 +104,7 @@ export default function AiPage() {
                 }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent-purple)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'}>
-                  "{ex}"
+                  &ldquo;{ex}&rdquo;
                 </button>
               ))}
             </div>

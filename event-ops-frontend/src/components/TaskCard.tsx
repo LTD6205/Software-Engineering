@@ -43,7 +43,7 @@ export default function TaskCard({ task, onStatusChange }: Props) {
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: isOverdue ? 'var(--accent-red)' : 'var(--text-muted)' }}>
               <Clock size={12} />{fmt(task.deadline)}
             </span>
-            <StatusBadge status={task.priority_label as any} />
+            <StatusBadge status={task.priority_label} />
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
@@ -54,6 +54,8 @@ export default function TaskCard({ task, onStatusChange }: Props) {
             <option value="pending">Pending</option>
             <option value="in_progress">In Progress</option>
             <option value="completed">Completed</option>
+            {/* Only present so an overdue task shows its real status; set by the system */}
+            {isOverdue && <option value="overdue">Overdue</option>}
           </select>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -15,7 +15,9 @@ export class AuthService {
 
   // Validate user credentials — called during login
   async validateUser(email: string, password: string): Promise<User> {
-    const user = await this.userRepo.findOne({ where: { email, is_active: true } });
+    const user = await this.userRepo.findOne({
+      where: { email, is_active: true },
+    });
     if (!user || !user.password_hash) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -30,18 +32,18 @@ export class AuthService {
   async login(email: string, password: string) {
     const user = await this.validateUser(email, password);
     const payload = {
-      sub:   user.user_id,
+      sub: user.user_id,
       email: user.email,
-      role:  user.role,
-      name:  user.name,
+      role: user.role,
+      name: user.name,
     };
     return {
       access_token: this.jwtService.sign(payload),
       user: {
         user_id: user.user_id,
-        name:    user.name,
-        email:   user.email,
-        role:    user.role,
+        name: user.name,
+        email: user.email,
+        role: user.role,
       },
     };
   }

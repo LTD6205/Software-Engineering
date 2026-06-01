@@ -1,4 +1,8 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -30,8 +34,15 @@ export class UsersService {
   }
 
   // Manager creates a new staff account
-  async create(data: { name: string; email: string; password: string; role?: string }) {
-    const exists = await this.userRepo.findOne({ where: { email: data.email } });
+  async create(data: {
+    name: string;
+    email: string;
+    password: string;
+    role?: string;
+  }) {
+    const exists = await this.userRepo.findOne({
+      where: { email: data.email },
+    });
     if (exists) throw new ConflictException('Email already in use');
 
     const password_hash = await bcrypt.hash(data.password, 10);
@@ -42,19 +53,27 @@ export class UsersService {
       password_hash,
     });
     const saved = await this.userRepo.save(user);
-    // Return without password_hash
-    const { password_hash: _, ...result } = saved as any;
-    return result;
+    // Re-fetch through findOne so the password_hash is never returned.
+    return this.findOne(saved.user_id);
   }
 
   // Manager updates a user (name, role, active status)
-  async update(id: string, data: { name?: string; role?: string; is_active?: boolean; password?: string }) {
+  async update(
+    id: string,
+    data: {
+      name?: string;
+      role?: string;
+      is_active?: boolean;
+      password?: string;
+    },
+  ) {
     await this.findOne(id);
-    const updateData: any = {};
-    if (data.name)      updateData.name      = data.name;
-    if (data.role)      updateData.role      = data.role;
+    const updateData: Partial<User> = {};
+    if (data.name) updateData.name = data.name;
+    if (data.role) updateData.role = data.role;
     if (data.is_active !== undefined) updateData.is_active = data.is_active;
-    if (data.password)  updateData.password_hash = await bcrypt.hash(data.password, 10);
+    if (data.password)
+      updateData.password_hash = await bcrypt.hash(data.password, 10);
     await this.userRepo.update(id, updateData);
     return this.findOne(id);
   }

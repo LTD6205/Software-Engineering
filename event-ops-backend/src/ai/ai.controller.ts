@@ -9,6 +9,10 @@ export class AiController {
   async processCommand(
     @Body() body: { userId: string; eventId: string; message: string },
   ): Promise<object> {
-    return this.aiService.processCommand(body.userId, body.eventId, body.message);
+    return this.aiService.processCommand(
+      body.userId,
+      body.eventId,
+      body.message,
+    );
   }
 }

@@ -17,8 +17,8 @@ export class EventsGateway {
   handleRegister(
     @MessageBody() data: { userId: string },
     @ConnectedSocket() client: Socket,
-  ) {
-    client.join(`user:${data.userId}`);
+  ): void {
+    void client.join(`user:${data.userId}`);
   }
 
   // Called internally by NotificationsService to push to one user

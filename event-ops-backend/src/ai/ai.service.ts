@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AiRequest } from '../entities/ai-request.entity';
 import { AiTaskMap } from '../entities/ai-task-map.entity';
+import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
 import axios from 'axios';
 
@@ -14,14 +15,32 @@ interface ParsedTask {
   deadline: string;
 }
 
+interface DeepSeekResponse {
+  choices: { message: { content: string } }[];
+}
+
 @Injectable()
 export class AiService {
   constructor(
     private readonly config: ConfigService,
     @InjectRepository(AiRequest) private aiRequestRepo: Repository<AiRequest>,
     @InjectRepository(AiTaskMap) private aiTaskMapRepo: Repository<AiTaskMap>,
+    @InjectRepository(User) private userRepo: Repository<User>,
     private readonly tasksService: TasksService,
   ) {}
+
+  // Resolve an AI-provided "assigned_to" string (name or email) to a real,
+  // active user. Returns null when no confident match is found.
+  private async resolveAssignee(assignedTo?: string): Promise<User | null> {
+    const needle = assignedTo?.trim();
+    if (!needle) return null;
+    return this.userRepo.findOne({
+      where: [
+        { email: needle, is_active: true },
+        { name: needle, is_active: true },
+      ],
+    });
+  }
 
   async processCommand(
     userId: string,
@@ -68,9 +87,10 @@ If the user provides insufficient information, return instead:
         },
       );
 
-      const raw: string = response.data.choices[0].message.content.trim();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let parsed: any;
+      const data = response.data as DeepSeekResponse;
+      const raw: string = data.choices[0].message.content.trim();
+
+      let parsed: unknown;
 
       try {
         parsed = JSON.parse(raw);
@@ -81,7 +101,7 @@ If the user provides insufficient information, return instead:
       // Not an array means AI returned an error object
       if (!Array.isArray(parsed)) {
         await this.aiRequestRepo.update(aiRequest.request_id, {
-          response: parsed,
+          response: parsed as object,
           status: 'rejected',
         });
         return { status: 'rejected', reason: parsed };
@@ -92,19 +112,33 @@ If the user provides insufficient information, return instead:
         const priorityScore =
           item.priority === 'high' ? 90 : item.priority === 'medium' ? 50 : 10;
 
+        // Guard against an invalid/missing date so we don't try to persist
+        // an "Invalid Date" into the timestamp column.
+        const parsedDeadline = item.deadline ? new Date(item.deadline) : null;
+        const deadline =
+          parsedDeadline && !isNaN(parsedDeadline.getTime())
+            ? parsedDeadline
+            : undefined;
+
         const task = await this.tasksService.create({
-          event_id:        eventId,
-          task_name:       item.task_name,
-          priority_label:  item.priority,
-          priority_score:  priorityScore,
+          event_id: eventId,
+          task_name: item.task_name,
+          priority_label: item.priority,
+          priority_score: priorityScore,
           priority_source: 'ai',
-          deadline:        new Date(item.deadline),
-          created_by:      userId,
+          deadline,
+          created_by: userId,
         });
+
+        // Assign the task if the AI named a user we can match.
+        const assignee = await this.resolveAssignee(item.assigned_to);
+        if (assignee) {
+          await this.tasksService.assignUser(task.task_id, assignee.user_id);
+        }
 
         await this.aiTaskMapRepo.save({
           request_id: aiRequest.request_id,
-          task_id:    task.task_id,
+          task_id: task.task_id,
         });
 
         createdTasks.push({ ...task });
@@ -116,9 +150,10 @@ If the user provides insufficient information, return instead:
       });
 
       return { status: 'success', tasks_created: createdTasks };
-
     } catch (err) {
-      await this.aiRequestRepo.update(aiRequest.request_id, { status: 'rejected' });
+      await this.aiRequestRepo.update(aiRequest.request_id, {
+        status: 'rejected',
+      });
       throw err;
     }
   }

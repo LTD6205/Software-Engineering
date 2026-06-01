@@ -1,20 +1,22 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, Not } from 'typeorm';
-import { Task }             from '../entities/task.entity';
-import { TaskAssignment }   from '../entities/task-assignment.entity';
-import { TaskDependency }   from '../entities/task-dependency.entity';
-import { TaskLog }          from '../entities/task-log.entity';
-import { Milestone }        from '../entities/milestone.entity';
+import { Repository, LessThan, Not, In } from 'typeorm';
+import { Task } from '../entities/task.entity';
+import { TaskAssignment } from '../entities/task-assignment.entity';
+import { TaskDependency } from '../entities/task-dependency.entity';
+import { TaskLog } from '../entities/task-log.entity';
+import { Milestone } from '../entities/milestone.entity';
 
 @Injectable()
 export class TasksService {
   constructor(
-    @InjectRepository(Task)           private taskRepo: Repository<Task>,
-    @InjectRepository(TaskAssignment) private assignRepo: Repository<TaskAssignment>,
-    @InjectRepository(TaskDependency) private depRepo: Repository<TaskDependency>,
-    @InjectRepository(TaskLog)        private logRepo: Repository<TaskLog>,
-    @InjectRepository(Milestone)      private milestoneRepo: Repository<Milestone>,
+    @InjectRepository(Task) private taskRepo: Repository<Task>,
+    @InjectRepository(TaskAssignment)
+    private assignRepo: Repository<TaskAssignment>,
+    @InjectRepository(TaskDependency)
+    private depRepo: Repository<TaskDependency>,
+    @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
+    @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
   ) {}
 
   // ── Tasks ──────────────────────────────────────────────────
@@ -40,14 +42,19 @@ export class TasksService {
   async update(id: string, data: Partial<Task>, actorUserId?: string) {
     const old = await this.findOne(id);
     await this.taskRepo.update(id, data);
-    await this.logRepo.save({
-      task_id: id,
-      action_type: 'task_update',
-      old_value: old,
-      new_value: data,
-      actor_type: 'user',
-      actor_user_id: actorUserId,
-    });
+    // Only write an audit log when we know who made the change. The DB CHECK
+    // constraint requires actor_user_id to be set when actor_type = 'user',
+    // so logging without an actor would throw and abort the update.
+    if (actorUserId) {
+      await this.logRepo.save({
+        task_id: id,
+        action_type: 'task_update',
+        old_value: old,
+        new_value: data,
+        actor_type: 'user',
+        actor_user_id: actorUserId,
+      });
+    }
     return this.findOne(id);
   }
 
@@ -55,7 +62,7 @@ export class TasksService {
     return this.taskRepo.find({
       where: {
         deadline: LessThan(new Date()),
-        status: Not('completed'),
+        status: Not(In(['completed', 'overdue'])),
       },
     });
   }
@@ -67,7 +74,10 @@ export class TasksService {
   }
 
   assignUser(taskId: string, userId: string) {
-    const assignment = this.assignRepo.create({ task_id: taskId, user_id: userId });
+    const assignment = this.assignRepo.create({
+      task_id: taskId,
+      user_id: userId,
+    });
     return this.assignRepo.save(assignment);
   }
 

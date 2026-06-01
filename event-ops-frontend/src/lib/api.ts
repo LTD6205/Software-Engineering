@@ -36,6 +36,14 @@ export const tasksApi = {
   completeMilestone: (milestoneId: string)            => api.put(`/tasks/milestones/${milestoneId}/complete`).then(r => r.data),
 }
 
+export const usersApi = {
+  getAll: () => api.get('/users').then(r => r.data),
+  getOne: (id: string) => api.get(`/users/${id}`).then(r => r.data),
+  create: (data: object) => api.post('/users', data).then(r => r.data),
+  update: (id: string, data: object) => api.put(`/users/${id}`, data).then(r => r.data),
+  deactivate: (id: string) => api.put(`/users/${id}/deactivate`).then(r => r.data),
+}
+
 export const notificationsApi = {
   getUnread: (userId: string) => api.get(`/notifications/user/${userId}`).then(r => r.data),
   markRead:  (id: string)     => api.put(`/notifications/${id}/read`).then(r => r.data),
@@ -44,6 +52,15 @@ export const notificationsApi = {
 export const aiApi = {
   command: (userId: string, eventId: string, message: string) =>
     api.post('/ai/command', { userId, eventId, message }).then(r => r.data),
+}
+
+// Pull a human-readable message out of an unknown thrown error (usually an
+// AxiosError) so callers don't need to type their catch clause as `any`.
+export function getErrorMessage(e: unknown, fallback: string): string {
+  if (axios.isAxiosError(e)) {
+    return (e.response?.data as { message?: string })?.message || fallback
+  }
+  return fallback
 }
 
 export default api

@@ -7,16 +7,14 @@ import { useSocket } from './useSocket'
 export function useNotifications() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount]     = useState(0)
-  const [userId, setUserId]               = useState<string | null>(null)
 
-  // Get userId from localStorage (set by AuthContext on login)
-  useEffect(() => {
+  // Read userId from localStorage (set by AuthContext on login). Computed lazily
+  // so we don't need a mount effect that synchronously sets state.
+  const [userId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
     const stored = localStorage.getItem('user')
-    if (stored) {
-      const u = JSON.parse(stored)
-      setUserId(u.user_id)
-    }
-  }, [])
+    return stored ? (JSON.parse(stored) as { user_id: string }).user_id : null
+  })
 
   const fetchNotifications = useCallback(async () => {
     if (!userId) return
@@ -27,7 +25,11 @@ export function useNotifications() {
     } catch {}
   }, [userId])
 
-  useEffect(() => { fetchNotifications() }, [fetchNotifications])
+  // Initial load on mount. The state update lives in fetchNotifications' async
+  // body, which is the intended place for it — fetching is exactly what this
+  // effect exists to do.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void fetchNotifications() }, [fetchNotifications])
 
   const handleIncoming = useCallback(() => {
     fetchNotifications()

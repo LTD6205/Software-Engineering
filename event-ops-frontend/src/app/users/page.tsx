@@ -5,9 +5,7 @@ import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
-import axios from 'axios'
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api'
+import { usersApi, getErrorMessage } from '@/lib/api'
 
 interface TeamUser {
   user_id: string
@@ -32,8 +30,8 @@ export default function UsersPage() {
 
   useEffect(() => {
     if (!isManager) { router.push('/'); return }
-    axios.get(`${API}/users`).then(r => setUsers(r.data)).finally(() => setLoading(false))
-  }, [isManager])
+    usersApi.getAll().then(setUsers).finally(() => setLoading(false))
+  }, [isManager, router])
 
   const handleCreate = async () => {
     if (!form.name || !form.email || !form.password) {
@@ -41,17 +39,17 @@ export default function UsersPage() {
     }
     setSaving(true); setError('')
     try {
-      const res = await axios.post(`${API}/users`, form)
-      setUsers(prev => [...prev, res.data])
+      const created = await usersApi.create(form)
+      setUsers(prev => [...prev, created])
       setShowModal(false); setForm({ ...empty })
-    } catch (e: any) {
-      setError(e?.response?.data?.message || 'Failed to create user.')
+    } catch (e) {
+      setError(getErrorMessage(e, 'Failed to create user.'))
     } finally { setSaving(false) }
   }
 
   const toggleActive = async (u: TeamUser) => {
     if (!confirm(`${u.is_active ? 'Deactivate' : 'Reactivate'} ${u.name}?`)) return
-    await axios.put(`${API}/users/${u.user_id}`, { is_active: !u.is_active })
+    await usersApi.update(u.user_id, { is_active: !u.is_active })
     setUsers(prev => prev.map(x => x.user_id === u.user_id ? { ...x, is_active: !u.is_active } : x))
   }
 
@@ -137,7 +135,7 @@ export default function UsersPage() {
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
                 {f.label} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ {f.vi}</span>
               </label>
-              <input type={f.type} value={(form as any)[f.key]}
+              <input type={f.type} value={form[f.key as keyof typeof empty]}
                 onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} />
             </div>
           ))}

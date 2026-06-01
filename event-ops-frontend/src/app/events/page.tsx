@@ -1,14 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Plus, CalendarDays } from 'lucide-react'
-import { eventsApi } from '@/lib/api'
+import { eventsApi, getErrorMessage } from '@/lib/api'
 import { Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
 import Modal from '@/components/Modal'
 import { useRouter } from 'next/navigation'
-
-const DEMO_USER_ID = '5f592659-2ecd-4eb1-a288-b45184bc73f1'
+import { useAuth } from '@/context/AuthContext'
 
 const empty = {
   event_name: '', description: '',
@@ -23,13 +22,16 @@ export default function EventsPage() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const router = useRouter()
+  const { user } = useAuth()
 
   const load = async () => {
     setLoading(true)
     try { setEvents(await eventsApi.getAll()) } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    eventsApi.getAll().then(setEvents).finally(() => setLoading(false))
+  }, [])
 
   const handleCreate = async () => {
     if (!form.event_name || !form.start_time || !form.end_time) {
@@ -38,12 +40,12 @@ export default function EventsPage() {
     }
     setSaving(true); setError('')
     try {
-      await eventsApi.create({ ...form, created_by: DEMO_USER_ID })
+      await eventsApi.create({ ...form, created_by: user?.user_id })
       setShowModal(false)
       setForm({ ...empty })
       load()
-    } catch (e: any) {
-      setError(e?.response?.data?.message || 'Failed to create event.')
+    } catch (e) {
+      setError(getErrorMessage(e, 'Failed to create event.'))
     } finally { setSaving(false) }
   }
 
@@ -97,7 +99,7 @@ export default function EventsPage() {
             <CalendarDays size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
             <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>No events yet</p>
             <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
-              Click "New Event" to create your first event
+              Click &ldquo;New Event&rdquo; to create your first event
             </p>
           </div>
         ) : (

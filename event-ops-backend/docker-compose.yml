@@ -1,0 +1,25 @@
+# PostgreSQL for local development.
+#
+#   Start the database:   docker compose up -d
+#   Stop it (keep data):  docker compose stop
+#   Delete it entirely:   docker compose down -v   (also removes the stored data)
+#
+# Nothing is installed on your system — it all lives inside Docker and is
+# removed completely by `docker compose down -v`.
+
+services:
+  db:
+    image: postgres:16
+    container_name: event_ops_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: event_ops
+    ports:
+      - "5432:5432"
+    volumes:
+      - event_ops_pgdata:/var/lib/postgresql/data
+
+volumes:
+  event_ops_pgdata:

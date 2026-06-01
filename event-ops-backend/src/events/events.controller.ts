@@ -1,5 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Param, Body } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+} from '@nestjs/common';
 import { EventsService } from './events.service';
+import { Event } from '../entities/event.entity';
 
 @Controller('events')
 export class EventsController {
@@ -16,12 +25,12 @@ export class EventsController {
   }
 
   @Post()
-  create(@Body() body: any) {
+  create(@Body() body: Partial<Event>) {
     return this.eventsService.create(body);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(@Param('id') id: string, @Body() body: Partial<Event>) {
     return this.eventsService.update(id, body);
   }
 

@@ -29,7 +29,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
-  // On mount — restore session from localStorage
+  // On mount — restore session from localStorage. This must run in an effect
+  // (not a lazy useState initializer): the server renders with no session, so
+  // reading localStorage during the first client render would cause a
+  // hydration mismatch. Setting state here is intentional.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const savedToken = localStorage.getItem('token')
     const savedUser  = localStorage.getItem('user')
@@ -40,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsLoading(false)
   }, [])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const login = async (email: string, password: string) => {
     const res = await axios.post(`${API}/auth/login`, { email, password })

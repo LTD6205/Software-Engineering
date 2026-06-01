@@ -1,5 +1,15 @@
-import { Controller, Get, Post, Put, Delete, Param, Body } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+} from '@nestjs/common';
 import { TasksService } from './tasks.service';
+import { Task } from '../entities/task.entity';
+import { Milestone } from '../entities/milestone.entity';
 
 @Controller('tasks')
 export class TasksController {
@@ -16,12 +26,15 @@ export class TasksController {
   }
 
   @Post()
-  create(@Body() body: any) {
+  create(@Body() body: Partial<Task>) {
     return this.tasksService.create(body);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(
+    @Param('id') id: string,
+    @Body() body: Partial<Task> & { actor_user_id?: string },
+  ) {
     return this.tasksService.update(id, body, body.actor_user_id);
   }
 
@@ -48,7 +61,7 @@ export class TasksController {
   }
 
   @Post(':id/milestones')
-  addMilestone(@Param('id') id: string, @Body() body: any) {
+  addMilestone(@Param('id') id: string, @Body() body: Partial<Milestone>) {
     return this.tasksService.addMilestone(id, body);
   }
 

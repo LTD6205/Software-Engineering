@@ -1,8 +1,17 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards, Request } from '@nestjs/common';
-import { UsersService }  from './users.service';
-import { JwtAuthGuard }  from '../auth/jwt-auth.guard';
-import { RolesGuard }    from '../auth/roles.guard';
-import { Roles }         from '../auth/roles.decorator';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Param,
+  Body,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import { UsersService } from './users.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -26,14 +35,31 @@ export class UsersController {
   // POST /api/users — manager creates staff account
   @Post()
   @Roles('manager', 'admin')
-  create(@Body() body: { name: string; email: string; password: string; role?: string }) {
+  create(
+    @Body()
+    body: {
+      name: string;
+      email: string;
+      password: string;
+      role?: string;
+    },
+  ) {
     return this.usersService.create(body);
   }
 
   // PUT /api/users/:id — manager updates staff
   @Put(':id')
   @Roles('manager', 'admin')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      role?: string;
+      is_active?: boolean;
+      password?: string;
+    },
+  ) {
     return this.usersService.update(id, body);
   }
 

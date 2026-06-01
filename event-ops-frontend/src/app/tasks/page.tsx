@@ -2,8 +2,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
-import axios from 'axios'
-import { tasksApi, eventsApi } from '@/lib/api'
+import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
@@ -31,19 +30,20 @@ function TasksContent() {
   const [error, setError]                 = useState('')
   const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string }[]>([])
 
-  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api'
-
   useEffect(() => {
     eventsApi.getAll().then(setEvents)
     if (isManager) {
-      axios.get(`${API}/users`)
-        .then(r => setTeamMembers(r.data))
+      usersApi.getAll()
+        .then(setTeamMembers)
         .catch(() => {})
     }
   }, [isManager])
 
+  // Reload tasks whenever the selected event changes. setLoading(true) up front
+  // is intentional so the spinner shows immediately while the fetch runs.
   useEffect(() => {
     if (!selectedEvent) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     tasksApi.getByEvent(selectedEvent)
       .then(setTasks)
@@ -75,8 +75,8 @@ function TasksContent() {
       setShowModal(false)
       setForm({ ...emptyTask })
       setTasks(await tasksApi.getByEvent(selectedEvent))
-    } catch (e: any) {
-      setError(e?.response?.data?.message || 'Failed to create task.')
+    } catch (e) {
+      setError(getErrorMessage(e, 'Failed to create task.'))
     } finally { setSaving(false) }
   }
 
