@@ -64,6 +64,8 @@ input, textarea, select {
   outline: none;
   width: 100%;
   transition: border-color 0.15s;
+  /* Render native date/time pickers (and their icons) in dark mode. */
+  color-scheme: dark;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent-blue); }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }

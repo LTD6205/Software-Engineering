@@ -12,7 +12,8 @@ import { useLang } from '@/context/LanguageContext'
 
 const empty = {
   event_name: '', description: '',
-  start_time: '', end_time: '', status: 'pending',
+  startDate: '', startTime: '', endDate: '', endTime: '',
+  status: 'pending',
 }
 
 export default function EventsPage() {
@@ -36,17 +37,26 @@ export default function EventsPage() {
   }, [])
 
   const handleCreate = async () => {
-    if (!form.event_name || !form.start_time || !form.end_time) {
-      setError(t('Event name, start time and end time are required', 'Vui lòng nhập tên sự kiện, thời gian bắt đầu và kết thúc'))
+    if (!form.event_name || !form.startDate || !form.endDate) {
+      setError(t('Event name, start date and end date are required', 'Vui lòng nhập tên sự kiện, ngày bắt đầu và ngày kết thúc'))
       return
     }
-    if (new Date(form.end_time) <= new Date(form.start_time)) {
+    // Combine date + time (default 08:00 if a time wasn't set).
+    const start_time = `${form.startDate}T${form.startTime || '08:00'}`
+    const end_time = `${form.endDate}T${form.endTime || '08:00'}`
+    if (new Date(end_time) <= new Date(start_time)) {
       setError(t('End time must be after start time', 'Thời gian kết thúc phải sau thời gian bắt đầu'))
       return
     }
     setSaving(true); setError('')
     try {
-      await eventsApi.create({ ...form, created_by: user?.user_id })
+      await eventsApi.create({
+        event_name: form.event_name,
+        description: form.description,
+        status: form.status,
+        start_time, end_time,
+        created_by: user?.user_id,
+      })
       setShowModal(false)
       setForm({ ...empty })
       load()
@@ -54,6 +64,39 @@ export default function EventsPage() {
       setError(tError(getErrorMessage(e, 'Could not create the event / Không thể tạo sự kiện')))
     } finally { setSaving(false) }
   }
+
+  // A Date + Time row. Picking a date defaults the time to 08:00 (editable).
+  const dateTimeRow = (
+    labelEn: string, labelVi: string,
+    dateKey: 'startDate' | 'endDate', timeKey: 'startTime' | 'endTime',
+  ) => (
+    <div style={{ marginBottom: '16px' }}>
+      <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+        {t(labelEn, labelVi)}
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px' }}>
+        <div>
+          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>{t('Date', 'Ngày')}</span>
+          <input
+            type="date"
+            value={form[dateKey]}
+            onChange={e => {
+              const val = e.target.value
+              setForm(f => ({ ...f, [dateKey]: val, [timeKey]: f[timeKey] || (val ? '08:00' : '') }))
+            }}
+          />
+        </div>
+        <div>
+          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>{t('Time', 'Giờ')}</span>
+          <input
+            type="time"
+            value={form[timeKey]}
+            onChange={e => setForm(f => ({ ...f, [timeKey]: e.target.value }))}
+          />
+        </div>
+      </div>
+    </div>
+  )
 
   const handleDelete = async (id: string) => {
     if (!confirm(t('Delete this event? This cannot be undone.', 'Xóa sự kiện này? Hành động không thể hoàn tác.'))) return
@@ -139,8 +182,8 @@ export default function EventsPage() {
               style={{ resize: 'vertical' }}
             />
           </div>
-          {field('Start Time', 'Thời gian bắt đầu', 'start_time', 'datetime-local')}
-          {field('End Time',   'Thời gian kết thúc', 'end_time',   'datetime-local')}
+          {dateTimeRow('Start', 'Bắt đầu', 'startDate', 'startTime')}
+          {dateTimeRow('End',   'Kết thúc', 'endDate',  'endTime')}
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
               {t('Status', 'Trạng thái')}
