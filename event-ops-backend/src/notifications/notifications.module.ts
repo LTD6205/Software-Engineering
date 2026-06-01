@@ -14,5 +14,6 @@ import { WebsocketModule } from '../websocket/websocket.module';
   ],
   providers: [NotificationsService],
   controllers: [NotificationsController],
+  exports: [NotificationsService],
 })
 export class NotificationsModule {}

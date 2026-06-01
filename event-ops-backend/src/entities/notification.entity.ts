@@ -13,8 +13,8 @@ export class Notification {
   @Column()
   user_id: string;
 
-  @Column({ nullable: true })
-  task_id: string;
+  @Column({ type: 'uuid', nullable: true })
+  task_id: string | null;
 
   @Column({ length: 20 })
   type: string;

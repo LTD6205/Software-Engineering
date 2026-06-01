@@ -9,12 +9,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private userRepo: Repository<User>,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // Full roster for managers/admins (excludes password_hash). Only admins also
@@ -176,6 +178,27 @@ export class UsersService {
     await this.userRepo.update(staffId, {
       pending_manager_id: targetManagerId,
     });
+    // Notify the three parties. The staff stays with their current manager
+    // (and that manager's projects) until the target manager approves.
+    const oldManager = staff.manager_id
+      ? await this.userRepo.findOne({ where: { user_id: staff.manager_id } })
+      : null;
+    const oldName = oldManager?.name ?? '—';
+    await this.notifications.notifyUser(
+      staff.manager_id ?? '',
+      'reassignment',
+      `You requested to move ${staff.name} to ${target.name}'s team — awaiting their approval. / Bạn đã yêu cầu chuyển ${staff.name} sang đội của ${target.name} — đang chờ phê duyệt.`,
+    );
+    await this.notifications.notifyUser(
+      target.user_id,
+      'reassignment',
+      `${oldName} wants to move ${staff.name} into your team. Review the request. / ${oldName} muốn chuyển ${staff.name} sang đội của bạn. Vui lòng xem xét yêu cầu.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `You are being moved to ${target.name}'s team, pending their approval. / Bạn đang được chuyển sang đội của ${target.name}, chờ phê duyệt.`,
+    );
     return this.findOne(staffId);
   }
 
@@ -202,10 +225,33 @@ export class UsersService {
         'There is no reassignment request addressed to you / Không có yêu cầu chuyển nào dành cho bạn',
       );
     }
+    const newId = staff.pending_manager_id;
+    const oldId = staff.manager_id;
     await this.userRepo.update(staffId, {
-      manager_id: staff.pending_manager_id,
+      manager_id: newId,
       pending_manager_id: null,
     });
+    // Confirmation: the staff now leaves the old manager's projects and joins
+    // the new manager's. Notify the same three parties.
+    const newManager = newId
+      ? await this.userRepo.findOne({ where: { user_id: newId } })
+      : null;
+    const newName = newManager?.name ?? '—';
+    await this.notifications.notifyUser(
+      oldId ?? '',
+      'reassignment',
+      `${staff.name} has moved to ${newName}'s team. / ${staff.name} đã chuyển sang đội của ${newName}.`,
+    );
+    await this.notifications.notifyUser(
+      newId ?? '',
+      'reassignment',
+      `You received ${staff.name} into your team. / Bạn đã nhận ${staff.name} vào đội của mình.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `You are now in ${newName}'s team. / Bạn hiện thuộc đội của ${newName}.`,
+    );
     return this.findOne(staffId);
   }
 
@@ -219,7 +265,28 @@ export class UsersService {
         'There is no reassignment request addressed to you / Không có yêu cầu chuyển nào dành cho bạn',
       );
     }
+    const targetId = staff.pending_manager_id;
+    const target = targetId
+      ? await this.userRepo.findOne({ where: { user_id: targetId } })
+      : null;
+    const targetName = target?.name ?? '—';
     await this.userRepo.update(staffId, { pending_manager_id: null });
+    // The move was declined; the staff stays with their current manager.
+    await this.notifications.notifyUser(
+      staff.manager_id ?? '',
+      'reassignment',
+      `${targetName} declined to take ${staff.name}; they stay in your team. / ${targetName} đã từ chối nhận ${staff.name}; nhân viên vẫn ở đội của bạn.`,
+    );
+    await this.notifications.notifyUser(
+      targetId ?? '',
+      'reassignment',
+      `You declined to take ${staff.name}. / Bạn đã từ chối nhận ${staff.name}.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `Your move to ${targetName} was declined; you stay in your current team. / Yêu cầu chuyển bạn sang ${targetName} đã bị từ chối; bạn vẫn ở đội hiện tại.`,
+    );
     return this.findOne(staffId);
   }
 

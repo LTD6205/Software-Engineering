@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Bell, CheckCheck, AlertTriangle, Clock } from 'lucide-react'
+import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, CheckSquare, ArrowRightLeft, Info } from 'lucide-react'
 import { useNotifications } from '@/lib/useNotifications'
 import { useLang } from '@/context/LanguageContext'
 import { Notification } from '@/lib/types'
@@ -17,11 +17,16 @@ function timeAgo(d: string, t: T) {
   return t(`${Math.floor(h / 24)}d ago`, `${Math.floor(h / 24)} ngày trước`)
 }
 
-const typeIcon: Record<Notification['type'], React.ReactNode> = {
-  reminder: <Clock         size={14} color="var(--accent-blue)"  />,
-  alert:    <AlertTriangle size={14} color="var(--accent-amber)" />,
-  overdue:  <AlertTriangle size={14} color="var(--accent-red)"   />,
+const typeIcon: Partial<Record<Notification['type'], React.ReactNode>> = {
+  reminder:     <Clock          size={14} color="var(--accent-blue)"   />,
+  alert:        <AlertTriangle  size={14} color="var(--accent-amber)"  />,
+  overdue:      <AlertTriangle  size={14} color="var(--accent-red)"    />,
+  event:        <Calendar       size={14} color="var(--accent-blue)"   />,
+  task:         <CheckSquare    size={14} color="var(--accent-teal)"   />,
+  reassignment: <ArrowRightLeft size={14} color="var(--accent-purple)" />,
+  info:         <Info           size={14} color="var(--text-muted)"    />,
 }
+const fallbackIcon = <Info size={14} color="var(--text-muted)" />
 
 export default function NotificationBell() {
   const { notifications, unreadCount, markRead } = useNotifications()
@@ -101,7 +106,7 @@ export default function NotificationBell() {
                     background: 'var(--bg-secondary)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {typeIcon[n.type]}
+                    {typeIcon[n.type] ?? fallbackIcon}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p className="selectable" style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{tError(n.message)}</p>

@@ -86,6 +86,39 @@ export class NotificationsService {
     }
   }
 
+  // Create one notification and push it live. Shared by the other feature
+  // services (events, tasks, users) for membership/assignment/reassignment
+  // alerts that aren't tied to a deadline.
+  async notifyUser(
+    userId: string,
+    type: string,
+    message: string,
+    taskId: string | null = null,
+  ) {
+    if (!userId) return;
+    const saved = await this.notifRepo.save({
+      user_id: userId,
+      task_id: taskId,
+      type,
+      message,
+    });
+    this.gateway.sendToUser(userId, { type, message, task_id: taskId });
+    return saved;
+  }
+
+  // Notify several users at once (de-duplicated; blanks skipped).
+  async notifyUsers(
+    userIds: string[],
+    type: string,
+    message: string,
+    taskId: string | null = null,
+  ) {
+    const unique = Array.from(new Set((userIds ?? []).filter(Boolean)));
+    for (const id of unique) {
+      await this.notifyUser(id, type, message, taskId);
+    }
+  }
+
   getUnread(userId: string) {
     return this.notifRepo.find({
       where: { user_id: userId, is_read: false },

@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Event } from '../entities/event.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface Viewer {
   sub: string;
@@ -17,7 +18,32 @@ export class EventsService {
   constructor(
     @InjectRepository(Event)
     private readonly eventRepo: Repository<Event>,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  // All member user ids of an event: the member managers + all of their staff.
+  async getMemberIds(eventId: string): Promise<string[]> {
+    const rows: Array<{ id: string }> = await this.eventRepo.manager.query(
+      `SELECT em.manager_id AS id FROM event_managers em WHERE em.event_id = $1
+       UNION
+       SELECT u.user_id AS id FROM users u
+         WHERE u.role = 'staff'
+           AND u.manager_id IN (SELECT manager_id FROM event_managers WHERE event_id = $1)`,
+      [eventId],
+    );
+    return rows.map((r) => r.id);
+  }
+
+  // The member ids a single manager contributes: the manager + their staff.
+  async getManagerMemberIds(managerId: string): Promise<string[]> {
+    const rows: Array<{ id: string }> = await this.eventRepo.manager.query(
+      `SELECT $1::uuid AS id
+       UNION
+       SELECT user_id FROM users WHERE role = 'staff' AND manager_id = $1`,
+      [managerId],
+    );
+    return rows.map((r) => r.id);
+  }
 
   // Events visible to the viewer, each with manager + total people counts.
   //   admin / eventmanager: all events
@@ -90,22 +116,47 @@ export class EventsService {
     for (const mid of managerIds) {
       await this.addManager(event.event_id, mid);
     }
+    // Notify everyone who just became a member (managers + their staff).
+    const members = await this.getMemberIds(event.event_id);
+    await this.notifications.notifyUsers(
+      members,
+      'event',
+      `You were added to the event "${event.event_name}". / Bạn đã được thêm vào sự kiện "${event.event_name}".`,
+    );
     return this.findOne(event.event_id);
   }
 
-  async addManager(eventId: string, managerId: string) {
+  // notify=true is used by the membership editor (a manager added after the
+  // event exists); create() inserts in bulk and notifies the whole set itself.
+  async addManager(eventId: string, managerId: string, notify = false) {
     await this.eventRepo.manager.query(
       `INSERT INTO event_managers (event_id, manager_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING`,
       [eventId, managerId],
     );
+    if (notify) {
+      const event = await this.findOne(eventId);
+      const added = await this.getManagerMemberIds(managerId);
+      await this.notifications.notifyUsers(
+        added,
+        'event',
+        `You were added to the event "${event.event_name}". / Bạn đã được thêm vào sự kiện "${event.event_name}".`,
+      );
+    }
     return this.getEventManagers(eventId);
   }
 
   async removeManager(eventId: string, managerId: string) {
+    const event = await this.findOne(eventId);
+    const removed = await this.getManagerMemberIds(managerId);
     await this.eventRepo.manager.query(
       `DELETE FROM event_managers WHERE event_id = $1 AND manager_id = $2`,
       [eventId, managerId],
+    );
+    await this.notifications.notifyUsers(
+      removed,
+      'event',
+      `You were removed from the event "${event.event_name}". / Bạn đã bị gỡ khỏi sự kiện "${event.event_name}".`,
     );
     return this.getEventManagers(eventId);
   }
@@ -127,7 +178,9 @@ export class EventsService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const event = await this.findOne(id);
+    // Capture members before the event_managers rows cascade away on delete.
+    const members = await this.getMemberIds(id);
     // event_managers has ON DELETE CASCADE; tasks reference the event, so clear
     // tasks (and their children) first.
     const m = this.eventRepo.manager;
@@ -146,9 +199,15 @@ export class EventsService {
       await m.query('DELETE FROM task_assignments WHERE task_id = $1', [
         task_id,
       ]);
+      await m.query('DELETE FROM notifications WHERE task_id = $1', [task_id]);
     }
     await m.query('DELETE FROM tasks WHERE event_id = $1', [id]);
     await this.eventRepo.delete(id);
+    await this.notifications.notifyUsers(
+      members,
+      'event',
+      `The event "${event.event_name}" was deleted. / Sự kiện "${event.event_name}" đã bị xóa.`,
+    );
     return { message: 'Event deleted' };
   }
 }

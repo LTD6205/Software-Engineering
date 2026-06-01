@@ -61,8 +61,8 @@ export interface Milestone {
 export interface Notification {
   notification_id: string
   user_id: string
-  task_id: string
-  type: 'reminder' | 'alert' | 'overdue'
+  task_id: string | null
+  type: 'reminder' | 'alert' | 'overdue' | 'event' | 'task' | 'reassignment' | 'info'
   message: string
   is_read: boolean
   created_at: string

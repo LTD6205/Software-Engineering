@@ -10,6 +10,8 @@ import { Event } from '../entities/event.entity';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { EventsModule } from '../events/events.module';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { WebsocketModule } from '../websocket/websocket.module';
       Event,
     ]),
     WebsocketModule,
+    NotificationsModule,
+    EventsModule,
   ],
   controllers: [TasksController],
   providers: [TasksService],

@@ -13,6 +13,8 @@ import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
 import { EventsGateway } from '../websocket/events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EventsService } from '../events/events.service';
 
 @Injectable()
 export class TasksService {
@@ -27,6 +29,8 @@ export class TasksService {
     @InjectRepository(Event) private eventRepo: Repository<Event>,
     private readonly gateway: EventsGateway,
     @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
+    private readonly notifications: NotificationsService,
+    private readonly events: EventsService,
   ) {}
 
   // ── Tasks ──────────────────────────────────────────────────
@@ -113,12 +117,18 @@ export class TasksService {
     }
     if (event.status !== status) {
       await this.eventRepo.update(eventId, { status });
-      // Celebrate an event that just completed.
+      // Celebrate an event that just completed, and notify every member.
       if (status === 'completed') {
         this.gateway.broadcast('celebrate', {
           kind: 'event',
           name: event.event_name,
         });
+        const members = await this.events.getMemberIds(eventId);
+        await this.notifications.notifyUsers(
+          members,
+          'event',
+          `The event "${event.event_name}" is now complete. / Sự kiện "${event.event_name}" đã hoàn thành.`,
+        );
       }
     }
   }
@@ -174,6 +184,7 @@ export class TasksService {
     await m.query('DELETE FROM milestones WHERE task_id = $1', [id]);
     await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
     await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
+    await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
     await this.taskRepo.delete(id);
     await this.recomputeEventStatus(task.event_id);
     return { message: 'Task deleted' };
@@ -280,7 +291,15 @@ export class TasksService {
       task_id: taskId,
       user_id: userId,
     });
-    return this.assignRepo.save(assignment);
+    const saved = await this.assignRepo.save(assignment);
+    const task = await this.findOne(taskId);
+    await this.notifications.notifyUser(
+      userId,
+      'task',
+      `You were assigned to the task "${task.task_name}". / Bạn được giao công việc "${task.task_name}".`,
+      taskId,
+    );
+    return saved;
   }
 
   unassignUser(taskId: string, userId: string) {
@@ -294,15 +313,33 @@ export class TasksService {
     userIds: string[],
     actor?: { sub: string; role: string },
   ) {
-    await this.findOne(taskId);
+    const task = await this.findOne(taskId);
     const ids = Array.from(new Set(userIds ?? []));
     for (const uid of ids) await this.assertAssignable(uid, actor);
+    // Diff against the current set so only genuine changes get notified.
+    const before = (
+      await this.assignRepo.find({ where: { task_id: taskId } })
+    ).map((a) => a.user_id);
     await this.assignRepo.delete({ task_id: taskId });
     for (const uid of ids) {
       await this.assignRepo.save(
         this.assignRepo.create({ task_id: taskId, user_id: uid }),
       );
     }
+    const added = ids.filter((i) => !before.includes(i));
+    const removed = before.filter((i) => !ids.includes(i));
+    await this.notifications.notifyUsers(
+      added,
+      'task',
+      `You were assigned to the task "${task.task_name}". / Bạn được giao công việc "${task.task_name}".`,
+      taskId,
+    );
+    await this.notifications.notifyUsers(
+      removed,
+      'task',
+      `You were removed from the task "${task.task_name}". / Bạn đã bị gỡ khỏi công việc "${task.task_name}".`,
+      taskId,
+    );
     return this.getAssigneesDetailed(taskId);
   }
 

@@ -76,7 +76,7 @@ export class EventsController {
   @Post(':id/managers')
   @Roles('eventmanager')
   addManager(@Param('id') id: string, @Body() body: { manager_id: string }) {
-    return this.eventsService.addManager(id, body.manager_id);
+    return this.eventsService.addManager(id, body.manager_id, true);
   }
 
   @Delete(':id/managers/:managerId')

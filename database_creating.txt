@@ -132,7 +132,8 @@ CREATE TABLE Notifications (
     user_id         UUID                NOT NULL REFERENCES Users(user_id),
     task_id         UUID                REFERENCES Tasks(task_id),
     type            VARCHAR(20)         NOT NULL
-                        CHECK (type IN ('reminder', 'alert', 'overdue')),
+                        CHECK (type IN ('reminder', 'alert', 'overdue',
+                                        'event', 'task', 'reassignment', 'info')),
     message         TEXT                NOT NULL,
     is_read         BOOLEAN             NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMP           NOT NULL DEFAULT NOW()
