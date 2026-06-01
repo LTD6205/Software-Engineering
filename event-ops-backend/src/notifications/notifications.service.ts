@@ -31,7 +31,7 @@ export class NotificationsService {
       await this.sendNotification(
         task,
         'reminder',
-        `Reminder: "${task.task_name}" is due within 24 hours.`,
+        `Reminder: "${task.task_name}" is due within 24 hours. / Nhắc nhở: "${task.task_name}" sắp đến hạn trong 24 giờ.`,
       );
     }
 
@@ -49,7 +49,7 @@ export class NotificationsService {
       await this.sendNotification(
         task,
         'overdue',
-        `OVERDUE: "${task.task_name}" has passed its deadline.`,
+        `OVERDUE: "${task.task_name}" has passed its deadline. / QUÁ HẠN: "${task.task_name}" đã quá hạn chót.`,
       );
     }
   }

@@ -31,7 +31,7 @@ const typeBg: Record<Notification['type'], string> = {
 
 export default function NotificationsPage() {
   const { notifications, unreadCount, markRead } = useNotifications()
-  const { t } = useLang()
+  const { t, tError } = useLang()
 
   return (
     <div>
@@ -68,7 +68,7 @@ export default function NotificationsPage() {
                   {typeIcon[n.type]}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{n.message}</p>
+                  <p style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{tError(n.message)}</p>
                   <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>{timeAgo(n.created_at, t)}</p>
                 </div>
                 {!n.is_read && (

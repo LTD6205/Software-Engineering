@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, CalendarDays, CheckSquare, Bell, Bot, Users, LogOut } from 'lucide-react'
+import { LayoutDashboard, CalendarDays, CheckSquare, Bot, Users, LogOut } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 
@@ -19,7 +19,6 @@ export default function Sidebar() {
     { href: '/',              icon: LayoutDashboard, label: t('Dashboard', 'Tổng quan'),      show: true },
     { href: '/events',        icon: CalendarDays,    label: t('Events', 'Sự kiện'),           show: true },
     { href: '/tasks',         icon: CheckSquare,     label: t('Tasks', 'Công việc'),          show: true },
-    { href: '/notifications', icon: Bell,            label: t('Notifications', 'Thông báo'),  show: true },
     { href: '/ai',            icon: Bot,             label: t('AI Assistant', 'Trợ lý AI'),   show: isManager },
     { href: '/users',         icon: Users,           label: t('Team', 'Nhân viên'),           show: isManager },
   ]
