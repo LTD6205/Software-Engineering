@@ -224,7 +224,7 @@ export default function UsersPage() {
                   fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '12px',
                   background: dColor + '22', color: dColor,
                 }}>{roleLabel(u.role)}</span>
-                {isManager && (
+                {isAdmin && (
                   <span style={{
                     fontSize: '11px', padding: '3px 8px', borderRadius: '12px',
                     background: u.is_active ? '#1a3320' : '#2a2a2a',

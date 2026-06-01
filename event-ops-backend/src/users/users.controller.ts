@@ -20,11 +20,11 @@ import { JwtPayload } from '../auth/jwt.strategy';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // GET /api/users — manager only
+  // GET /api/users — manager only (admins additionally get active status)
   @Get()
   @Roles('manager', 'admin')
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Request() req: { user: JwtPayload }) {
+    return this.usersService.findAll(req.user.role);
   }
 
   // GET /api/users/directory — any signed-in user (online/presence board).

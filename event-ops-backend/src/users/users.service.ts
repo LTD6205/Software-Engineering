@@ -16,21 +16,20 @@ export class UsersService {
     private userRepo: Repository<User>,
   ) {}
 
-  // Get all users (manager only) — excludes password_hash
-  findAll() {
-    return this.userRepo.find({
-      select: [
-        'user_id',
-        'name',
-        'email',
-        'role',
-        'phone',
-        'avatar',
-        'is_active',
-        'created_at',
-      ],
-      order: { created_at: 'ASC' },
-    });
+  // Full roster for managers/admins (excludes password_hash). Only admins also
+  // get the account active/inactive status.
+  findAll(viewerRole?: string) {
+    const select: (keyof User)[] = [
+      'user_id',
+      'name',
+      'email',
+      'role',
+      'phone',
+      'avatar',
+      'created_at',
+    ];
+    if (viewerRole === 'admin') select.push('is_active');
+    return this.userRepo.find({ select, order: { created_at: 'ASC' } });
   }
 
   // Roster any signed-in user may see. Staff use this and may only see emails
