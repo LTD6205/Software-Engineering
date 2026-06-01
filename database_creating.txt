@@ -214,3 +214,21 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TR
 -- 3. Profile fields: phone number and avatar (stored as a base64 data URL)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone  VARCHAR(30);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+
+-- 4. Add the 'eventmanager' role (Admin > Eventmanager > Manager > Staff)
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+    CHECK (role IN ('manager', 'staff', 'admin', 'eventmanager'));
+
+-- 5. Staff ownership: which manager a staff reports to, plus a pending
+--    reassignment awaiting the new manager's approval.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id         UUID REFERENCES users(user_id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_manager_id UUID REFERENCES users(user_id);
+
+-- 6. Which managers are part of an event (their staff are members too).
+CREATE TABLE IF NOT EXISTS event_managers (
+    event_id   UUID NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+    manager_id UUID NOT NULL REFERENCES users(user_id),
+    PRIMARY KEY (event_id, manager_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_managers_manager ON event_managers(manager_id);

@@ -12,7 +12,8 @@ import { JwtPayload } from './jwt.strategy';
 export const ROLE_LEVELS: Record<string, number> = {
   staff: 1,
   manager: 2,
-  admin: 3,
+  eventmanager: 3,
+  admin: 4,
 };
 
 @Injectable()

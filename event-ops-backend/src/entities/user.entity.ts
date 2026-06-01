@@ -19,6 +19,14 @@ export class User {
   @Column({ default: 'staff' })
   role!: string;
 
+  // For staff: the manager they report to, and a pending reassignment awaiting
+  // the new manager's approval.
+  @Column({ type: 'uuid', nullable: true })
+  manager_id!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  pending_manager_id!: string | null;
+
   @Column({ length: 30, nullable: true })
   phone!: string;
 

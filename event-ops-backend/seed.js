@@ -6,22 +6,28 @@
  * Safe to run repeatedly — existing accounts just get their password/role
  * reset (idempotent via ON CONFLICT). Reads DB settings from .env.
  *
- * Creates 1 admin, 3 managers and 10 staff:
- *   admin01@eventops.com                               -> password: admin123
- *   manager01@eventops.com ... manager03@eventops.com  -> password: manager123
- *   staff01@eventops.com   ... staff10@eventops.com    -> password: staff123
+ * Creates 1 admin, 3 event managers, 3 managers and 10 staff:
+ *   admin01@eventops.com                                       -> password: admin123
+ *   eventmanager01@eventops.com ... eventmanager03@eventops.com -> password: eventmanager123
+ *   manager01@eventops.com      ... manager03@eventops.com      -> password: manager123
+ *   staff01@eventops.com        ... staff10@eventops.com        -> password: staff123
+ * Each staff is randomly assigned to one manager (manager_id).
  */
 require('dotenv').config();
 const { Client } = require('pg');
 const bcrypt = require('bcrypt');
 
 const ADMIN_PASSWORD = 'admin123';
+const EVENTMANAGER_PASSWORD = 'eventmanager123';
 const MANAGER_PASSWORD = 'manager123';
 const STAFF_PASSWORD = 'staff123';
 
-// Build the roster: 1 admin + 3 managers + 10 staff
+// Build the roster: 1 admin + 3 event managers + 3 managers + 10 staff
 const accounts = [
-  { name: 'Admin 01',   email: 'admin01@eventops.com',   role: 'admin',   password: ADMIN_PASSWORD },
+  { name: 'Admin 01',          email: 'admin01@eventops.com',        role: 'admin',        password: ADMIN_PASSWORD },
+  { name: 'Event Manager 01',  email: 'eventmanager01@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
+  { name: 'Event Manager 02',  email: 'eventmanager02@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
+  { name: 'Event Manager 03',  email: 'eventmanager03@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
   { name: 'Manager 01', email: 'manager01@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 02', email: 'manager02@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 03', email: 'manager03@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
@@ -67,14 +73,30 @@ async function main() {
     );
   }
 
+  // Randomly assign each unassigned staff to one manager.
+  const { rows: managers } = await client.query(
+    `SELECT user_id FROM users WHERE role = 'manager'`,
+  );
+  if (managers.length > 0) {
+    const { rows: staff } = await client.query(
+      `SELECT user_id FROM users WHERE role = 'staff' AND manager_id IS NULL`,
+    );
+    for (const s of staff) {
+      const m = managers[Math.floor(Math.random() * managers.length)].user_id;
+      await client.query(`UPDATE users SET manager_id = $1 WHERE user_id = $2`, [m, s.user_id]);
+    }
+  }
+
   await client.end();
 
   console.log('\n✅ Seeded accounts:');
   console.log(`   Admin (password "${ADMIN_PASSWORD}"):`);
   accounts.filter((a) => a.role === 'admin').forEach((a) => console.log(`     - ${a.email}`));
+  console.log(`   Event Managers (password "${EVENTMANAGER_PASSWORD}"):`);
+  accounts.filter((a) => a.role === 'eventmanager').forEach((a) => console.log(`     - ${a.email}`));
   console.log(`   Managers (password "${MANAGER_PASSWORD}"):`);
   accounts.filter((a) => a.role === 'manager').forEach((a) => console.log(`     - ${a.email}`));
-  console.log(`   Staff (password "${STAFF_PASSWORD}"):`);
+  console.log(`   Staff (password "${STAFF_PASSWORD}", each assigned to a manager):`);
   accounts.filter((a) => a.role === 'staff').forEach((a) => console.log(`     - ${a.email}`));
   console.log('');
 }
