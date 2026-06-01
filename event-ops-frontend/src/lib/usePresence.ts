@@ -1,10 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { io } from 'socket.io-client'
-
-// Connect straight to the backend — the Next.js dev server doesn't proxy
-// WebSockets. Override with NEXT_PUBLIC_WS_URL for a remote/ngrok backend.
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3000'
+import { getWsUrl } from './wsUrl'
 
 /**
  * Tracks which users are currently online (have a live socket connection).
@@ -17,7 +14,8 @@ export function usePresence(): Set<string> {
   useEffect(() => {
     // The server identifies the user from the JWT in the handshake.
     const token = localStorage.getItem('token')
-    const socket = WS_URL ? io(WS_URL, { auth: { token } }) : io({ auth: { token } })
+    const url = getWsUrl()
+    const socket = url ? io(url, { auth: { token } }) : io({ auth: { token } })
     socket.on('connect', () => { socket.emit('register') })
     socket.on('presence', (ids: string[]) => setOnline(ids))
     return () => { socket.disconnect() }

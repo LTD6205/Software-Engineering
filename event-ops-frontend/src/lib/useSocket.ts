@@ -1,21 +1,15 @@
 'use client'
 import { useEffect } from 'react'
 import { io } from 'socket.io-client'
-
-// Connect straight to the backend. The Next.js dev server does not proxy
-// WebSocket/socket.io traffic, so same-origin would never connect. For a
-// remote (e.g. ngrok) setup, set NEXT_PUBLIC_WS_URL to the backend's URL.
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3000'
+import { getWsUrl } from './wsUrl'
 
 export function useSocket(userId: string | null, onNotification: (data: object) => void) {
   useEffect(() => {
     if (!userId) return
     // Send the JWT in the handshake; the server derives the user from it.
     const token = localStorage.getItem('token')
-    // With no explicit URL, connect to the page's own origin so traffic flows
-    // through the Next.js /socket.io proxy (works behind a single ngrok tunnel).
-    // Default transports allow polling to fall back through the HTTP proxy.
-    const socket = WS_URL ? io(WS_URL, { auth: { token } }) : io({ auth: { token } })
+    const url = getWsUrl()
+    const socket = url ? io(url, { auth: { token } }) : io({ auth: { token } })
     socket.on('connect', () => { socket.emit('register') })
     socket.on('notification', (data: object) => { onNotification(data) })
     return () => { socket.disconnect() }

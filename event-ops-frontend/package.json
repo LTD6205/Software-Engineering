@@ -6,6 +6,7 @@
     "dev": "node --max-old-space-size=8192 node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
+    "share": "node share-proxy.js",
     "lint": "eslint"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "http-proxy": "^1.18.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
