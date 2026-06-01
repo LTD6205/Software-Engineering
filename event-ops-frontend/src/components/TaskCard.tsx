@@ -1,6 +1,7 @@
 'use client'
 import { Clock, Bot } from 'lucide-react'
 import { Task } from '@/lib/types'
+import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 
 interface Props {
@@ -8,17 +9,15 @@ interface Props {
   onStatusChange: (id: string, status: string) => void
 }
 
-function fmt(d: string) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
 const priorityColor: Record<string, string> = {
   high: 'var(--accent-red)', medium: 'var(--accent-amber)', low: 'var(--accent-blue)',
 }
 
 export default function TaskCard({ task, onStatusChange }: Props) {
+  const { t, lang } = useLang()
   const isOverdue = task.status === 'overdue'
+  const fmt = (d: string) =>
+    !d ? '—' : new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   return (
     <div style={{
       background: 'var(--bg-card)',
@@ -51,11 +50,11 @@ export default function TaskCard({ task, onStatusChange }: Props) {
           <select value={task.status} onChange={e => { e.stopPropagation(); onStatusChange(task.task_id, e.target.value) }}
             style={{ fontSize: '11px', padding: '3px 6px', width: 'auto', cursor: 'pointer' }}
             onClick={e => e.stopPropagation()}>
-            <option value="pending">Pending</option>
-            <option value="in_progress">In Progress</option>
-            <option value="completed">Completed</option>
+            <option value="pending">{t('Pending', 'Chờ xử lý')}</option>
+            <option value="in_progress">{t('In Progress', 'Đang làm')}</option>
+            <option value="completed">{t('Completed', 'Hoàn thành')}</option>
             {/* Only present so an overdue task shows its real status; set by the system */}
-            {isOverdue && <option value="overdue">Overdue</option>}
+            {isOverdue && <option value="overdue">{t('Overdue', 'Quá hạn')}</option>}
           </select>
         </div>
       </div>

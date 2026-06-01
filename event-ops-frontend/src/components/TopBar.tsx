@@ -3,12 +3,20 @@ import { Bell } from 'lucide-react'
 import Link from 'next/link'
 import { useNotifications } from '@/lib/useNotifications'
 import { useAuth } from '@/context/AuthContext'
+import { useLang } from '@/context/LanguageContext'
+import LangToggle from './LangToggle'
 
 interface Props { title: string; titleVi: string }
 
 export default function TopBar({ title, titleVi }: Props) {
   const { unreadCount } = useNotifications()
   const { user } = useAuth()
+  const { t } = useLang()
+
+  const roleLabel =
+    user?.role === 'manager' ? t('Manager', 'Quản lý')
+    : user?.role === 'admin' ? t('Admin', 'Quản trị viên')
+    : t('Staff', 'Nhân viên')
 
   return (
     <div style={{
@@ -18,12 +26,12 @@ export default function TopBar({ title, titleVi }: Props) {
       padding: '0 28px', position: 'sticky', top: 0, zIndex: 30,
     }}>
       <div>
-        <h1 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{title}</h1>
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{titleVi}</p>
+        <h1 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{t(title, titleVi)}</h1>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <LangToggle />
         <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-          {user?.name} · <span style={{ color: 'var(--text-muted)' }}>{user?.role}</span>
+          {user?.name} · <span style={{ color: 'var(--text-muted)' }}>{roleLabel}</span>
         </p>
         <Link href="/notifications" style={{ textDecoration: 'none', position: 'relative' }}>
           <div style={{

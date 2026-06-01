@@ -3,15 +3,18 @@ import { Bell, CheckCheck, AlertTriangle, Clock } from 'lucide-react'
 import TopBar from '@/components/TopBar'
 import { useNotifications } from '@/lib/useNotifications'
 import { Notification } from '@/lib/types'
+import { useLang } from '@/context/LanguageContext'
 
-function timeAgo(d: string) {
+type T = (en: string, vi: string) => string
+
+function timeAgo(d: string, t: T) {
   const diff = Date.now() - new Date(d).getTime()
   const m = Math.floor(diff / 60000)
-  if (m < 1)  return 'Just now'
-  if (m < 60) return `${m}m ago`
+  if (m < 1)  return t('Just now', 'Vừa xong')
+  if (m < 60) return t(`${m}m ago`, `${m} phút trước`)
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
+  if (h < 24) return t(`${h}h ago`, `${h} giờ trước`)
+  return t(`${Math.floor(h / 24)}d ago`, `${Math.floor(h / 24)} ngày trước`)
 }
 
 const typeIcon: Record<Notification['type'], React.ReactNode> = {
@@ -28,6 +31,7 @@ const typeBg: Record<Notification['type'], string> = {
 
 export default function NotificationsPage() {
   const { notifications, unreadCount, markRead } = useNotifications()
+  const { t } = useLang()
 
   return (
     <div>
@@ -35,7 +39,7 @@ export default function NotificationsPage() {
       <div style={{ padding: '28px', maxWidth: '700px' }}>
 
         <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
-          {unreadCount} unread · {notifications.length} total
+          {unreadCount} {t('unread', 'chưa đọc')} · {notifications.length} {t('total', 'tổng cộng')}
         </p>
 
         {notifications.length === 0 ? (
@@ -44,8 +48,7 @@ export default function NotificationsPage() {
             borderRadius: '12px', padding: '60px', textAlign: 'center',
           }}>
             <Bell size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>No notifications yet</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>Chưa có thông báo nào</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No notifications yet', 'Chưa có thông báo nào')}</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -66,7 +69,7 @@ export default function NotificationsPage() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{n.message}</p>
-                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>{timeAgo(n.created_at)}</p>
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>{timeAgo(n.created_at, t)}</p>
                 </div>
                 {!n.is_read && (
                   <button onClick={() => markRead(n.notification_id)}

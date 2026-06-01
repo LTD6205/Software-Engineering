@@ -1,4 +1,6 @@
+'use client'
 import { LucideIcon } from 'lucide-react'
+import { useLang } from '@/context/LanguageContext'
 
 interface Props {
   label: string
@@ -9,6 +11,7 @@ interface Props {
 }
 
 export default function StatCard({ label, labelVi, value, icon: Icon, color }: Props) {
+  const { t } = useLang()
   return (
     <div style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -26,8 +29,7 @@ export default function StatCard({ label, labelVi, value, icon: Icon, color }: P
         <p style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1 }}>
           {value}
         </p>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>{label}</p>
-        <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{labelVi}</p>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>{t(label, labelVi)}</p>
       </div>
     </div>
   )

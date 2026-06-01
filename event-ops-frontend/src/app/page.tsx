@@ -7,11 +7,13 @@ import TopBar from '@/components/TopBar'
 import StatCard from '@/components/StatCard'
 import EventCard from '@/components/EventCard'
 import { useRouter } from 'next/navigation'
+import { useLang } from '@/context/LanguageContext'
 
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const { t } = useLang()
 
   useEffect(() => {
     eventsApi.getAll()
@@ -25,7 +27,7 @@ export default function DashboardPage() {
   const pending   = events.filter(e => e.status === 'pending').length
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this event?')) return
+    if (!confirm(t('Delete this event?', 'Xóa sự kiện này?'))) return
     await eventsApi.remove(id)
     setEvents(prev => prev.filter(e => e.event_id !== id))
   }
@@ -49,8 +51,7 @@ export default function DashboardPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
-            <h2 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>Recent Events</h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Sự kiện gần đây</p>
+            <h2 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>{t('Recent Events', 'Sự kiện gần đây')}</h2>
           </div>
           <button
             onClick={() => router.push('/events')}
@@ -59,21 +60,21 @@ export default function DashboardPage() {
               border: 'none', borderRadius: '8px',
               padding: '8px 16px', fontSize: '13px', fontWeight: 600,
             }}>
-            View all
+            {t('View all', 'Xem tất cả')}
           </button>
         </div>
 
         {loading ? (
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading...</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : events.length === 0 ? (
           <div style={{
             background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
             borderRadius: '12px', padding: '48px', textAlign: 'center',
           }}>
             <CalendarDays size={32} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>No events yet</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>{t('No events yet', 'Chưa có sự kiện nào')}</p>
             <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '4px' }}>
-              Go to Events to create your first one
+              {t('Go to Events to create your first one', 'Vào mục Sự kiện để tạo sự kiện đầu tiên')}
             </p>
           </div>
         ) : (

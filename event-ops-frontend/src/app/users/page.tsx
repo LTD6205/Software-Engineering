@@ -6,6 +6,7 @@ import Modal from '@/components/Modal'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import { usersApi, getErrorMessage } from '@/lib/api'
+import { useLang } from '@/context/LanguageContext'
 
 interface TeamUser {
   user_id: string
@@ -21,6 +22,7 @@ const empty = { name: '', email: '', password: '', role: 'staff' }
 export default function UsersPage() {
   const { isManager } = useAuth()
   const router = useRouter()
+  const { t, tError } = useLang()
   const [users, setUsers]         = useState<TeamUser[]>([])
   const [loading, setLoading]     = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -33,9 +35,14 @@ export default function UsersPage() {
     usersApi.getAll().then(setUsers).finally(() => setLoading(false))
   }, [isManager, router])
 
+  const roleLabel = (role: string) =>
+    role === 'manager' ? t('Manager', 'Quản lý')
+    : role === 'admin' ? t('Admin', 'Quản trị viên')
+    : t('Staff', 'Nhân viên')
+
   const handleCreate = async () => {
     if (!form.name || !form.email || !form.password) {
-      setError('Name, email and password are required / Vui lòng nhập tên, email và mật khẩu'); return
+      setError(t('Name, email and password are required', 'Vui lòng nhập tên, email và mật khẩu')); return
     }
     setSaving(true); setError('')
     try {
@@ -43,12 +50,15 @@ export default function UsersPage() {
       setUsers(prev => [...prev, created])
       setShowModal(false); setForm({ ...empty })
     } catch (e) {
-      setError(getErrorMessage(e, 'Could not create the member / Không thể tạo thành viên'))
+      setError(tError(getErrorMessage(e, 'Could not create the member / Không thể tạo thành viên')))
     } finally { setSaving(false) }
   }
 
   const toggleActive = async (u: TeamUser) => {
-    if (!confirm(`${u.is_active ? 'Deactivate' : 'Reactivate'} ${u.name}?`)) return
+    const msg = u.is_active
+      ? t(`Deactivate ${u.name}?`, `Vô hiệu hóa ${u.name}?`)
+      : t(`Reactivate ${u.name}?`, `Kích hoạt lại ${u.name}?`)
+    if (!confirm(msg)) return
     await usersApi.update(u.user_id, { is_active: !u.is_active })
     setUsers(prev => prev.map(x => x.user_id === u.user_id ? { ...x, is_active: !u.is_active } : x))
   }
@@ -64,18 +74,18 @@ export default function UsersPage() {
       <TopBar title="Team" titleVi="Nhân viên" />
       <div style={{ padding: '28px', maxWidth: '800px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} members</p>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{users.length} {t('members', 'thành viên')}</p>
           <button onClick={() => setShowModal(true)} style={{
             display: 'flex', alignItems: 'center', gap: '7px',
             background: 'var(--accent-blue)', color: 'white',
             border: 'none', borderRadius: '9px', padding: '9px 18px', fontSize: '13px', fontWeight: 600,
           }}>
-            <Plus size={15} /> Add Member / Thêm nhân viên
+            <Plus size={15} /> {t('Add Member', 'Thêm nhân viên')}
           </button>
         </div>
 
         {loading ? (
-          <p style={{ color: 'var(--text-muted)' }}>Loading...</p>
+          <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {users.map(u => (
@@ -100,13 +110,13 @@ export default function UsersPage() {
                   fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '12px',
                   background: (roleColor[u.role] || 'var(--accent-teal)') + '22',
                   color: roleColor[u.role] || 'var(--accent-teal)',
-                }}>{u.role}</span>
+                }}>{roleLabel(u.role)}</span>
                 <span style={{
                   fontSize: '11px', padding: '3px 8px', borderRadius: '12px',
                   background: u.is_active ? '#1a3320' : '#2a2a2a',
                   color: u.is_active ? 'var(--accent-green)' : 'var(--text-muted)',
                 }}>
-                  {u.is_active ? 'Active' : 'Inactive'}
+                  {u.is_active ? t('Active', 'Hoạt động') : t('Inactive', 'Ngừng')}
                 </span>
                 <button onClick={() => toggleActive(u)} style={{
                   background: 'none', border: '1px solid var(--border)',
@@ -115,8 +125,8 @@ export default function UsersPage() {
                   fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px',
                 }}>
                   {u.is_active
-                    ? <><UserX size={12} /> Deactivate</>
-                    : <><UserCheck size={12} /> Activate</>}
+                    ? <><UserX size={12} /> {t('Deactivate', 'Vô hiệu hóa')}</>
+                    : <><UserCheck size={12} /> {t('Activate', 'Kích hoạt')}</>}
                 </button>
               </div>
             ))}
@@ -125,7 +135,7 @@ export default function UsersPage() {
       </div>
 
       {showModal && (
-        <Modal title="Add Team Member / Thêm nhân viên" onClose={() => { setShowModal(false); setError('') }}>
+        <Modal title={t('Add Team Member', 'Thêm nhân viên')} onClose={() => { setShowModal(false); setError('') }}>
           {[
             { label: 'Full Name', vi: 'Họ và tên', key: 'name', type: 'text' },
             { label: 'Email',     vi: 'Email',     key: 'email', type: 'email' },
@@ -133,7 +143,7 @@ export default function UsersPage() {
           ].map(f => (
             <div key={f.key} style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {f.label} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ {f.vi}</span>
+                {t(f.label, f.vi)}
               </label>
               <input type={f.type} value={form[f.key as keyof typeof empty]}
                 onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))} />
@@ -141,11 +151,11 @@ export default function UsersPage() {
           ))}
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Role / Vai trò
+              {t('Role', 'Vai trò')}
             </label>
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="staff">Staff / Nhân viên</option>
-              <option value="manager">Manager / Quản lý</option>
+              <option value="staff">{t('Staff', 'Nhân viên')}</option>
+              <option value="manager">{t('Manager', 'Quản lý')}</option>
             </select>
           </div>
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
@@ -154,13 +164,13 @@ export default function UsersPage() {
               background: 'var(--bg-hover)', color: 'var(--text-secondary)',
               border: '1px solid var(--border)', borderRadius: '8px',
               padding: '9px 18px', fontSize: '13px',
-            }}>Cancel</button>
+            }}>{t('Cancel', 'Hủy')}</button>
             <button onClick={handleCreate} disabled={saving} style={{
               background: 'var(--accent-blue)', color: 'white',
               border: 'none', borderRadius: '8px',
               padding: '9px 18px', fontSize: '13px', fontWeight: 600,
               opacity: saving ? 0.6 : 1,
-            }}>{saving ? 'Adding...' : 'Add Member'}</button>
+            }}>{saving ? t('Adding...', 'Đang thêm...') : t('Add Member', 'Thêm nhân viên')}</button>
           </div>
         </Modal>
       )}

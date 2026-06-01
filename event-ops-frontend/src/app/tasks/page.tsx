@@ -8,6 +8,7 @@ import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
 import { useAuth } from '@/context/AuthContext'
+import { useLang } from '@/context/LanguageContext'
 
 const emptyTask = {
   task_name: '', description: '',
@@ -19,6 +20,7 @@ function TasksContent() {
   const searchParams = useSearchParams()
   const eventId      = searchParams.get('eventId') || ''
   const { user, isManager } = useAuth()
+  const { t, tError } = useLang()
 
   const [events, setEvents]               = useState<Event[]>([])
   const [selectedEvent, setSelectedEvent] = useState(eventId)
@@ -52,11 +54,11 @@ function TasksContent() {
 
   const handleCreate = async () => {
     if (!form.task_name || !selectedEvent) {
-      setError('Task name and event are required / Vui lòng nhập tên công việc và chọn sự kiện')
+      setError(t('Task name and event are required', 'Vui lòng nhập tên công việc và chọn sự kiện'))
       return
     }
     if (form.start_time && form.deadline && new Date(form.deadline) <= new Date(form.start_time)) {
-      setError('Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu')
+      setError(t('Deadline must be after the start time', 'Hạn chót phải sau thời gian bắt đầu'))
       return
     }
     setSaving(true); setError('')
@@ -80,7 +82,7 @@ function TasksContent() {
       setForm({ ...emptyTask })
       setTasks(await tasksApi.getByEvent(selectedEvent))
     } catch (e) {
-      setError(getErrorMessage(e, 'Could not create the task / Không thể tạo công việc'))
+      setError(tError(getErrorMessage(e, 'Could not create the task / Không thể tạo công việc')))
     } finally { setSaving(false) }
   }
 
@@ -98,8 +100,7 @@ function TasksContent() {
     <div style={{ flex: 1, minWidth: '220px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: color }} />
-        <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</p>
-        <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>/ {titleVi}</p>
+        <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{t(title, titleVi)}</p>
         <span style={{
           marginLeft: 'auto', fontSize: '11px', fontWeight: 700,
           background: 'var(--bg-hover)', color: 'var(--text-muted)',
@@ -111,7 +112,7 @@ function TasksContent() {
           <TaskCard key={t.task_id} task={t} onStatusChange={handleStatusChange} />
         ))}
         {items.length === 0 && (
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '12px 0' }}>No tasks</p>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '12px 0' }}>{t('No tasks', 'Không có công việc')}</p>
         )}
       </div>
     </div>
@@ -125,7 +126,7 @@ function TasksContent() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: '200px', maxWidth: '340px' }}>
             <select value={selectedEvent} onChange={e => setSelectedEvent(e.target.value)}>
-              <option value="">— Select an event / Chọn sự kiện —</option>
+              <option value="">{t('— Select an event —', '— Chọn sự kiện —')}</option>
               {events.map(e => (
                 <option key={e.event_id} value={e.event_id}>{e.event_name}</option>
               ))}
@@ -140,7 +141,7 @@ function TasksContent() {
                 border: 'none', borderRadius: '9px',
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,
               }}>
-              <Plus size={15} /> New Task / Tạo công việc
+              <Plus size={15} /> {t('New Task', 'Tạo công việc')}
             </button>
           )}
         </div>
@@ -152,14 +153,11 @@ function TasksContent() {
           }}>
             <CheckSquare size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
             <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>
-              Select an event to view tasks
-            </p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
-              Chọn sự kiện để xem danh sách công việc
+              {t('Select an event to view tasks', 'Chọn sự kiện để xem công việc')}
             </p>
           </div>
         ) : loading ? (
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading tasks...</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading tasks...', 'Đang tải công việc...')}</p>
         ) : (
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {col('Pending',     'Chờ xử lý',  pending,    'var(--accent-blue)')}
@@ -171,21 +169,21 @@ function TasksContent() {
       </div>
 
       {showModal && (
-        <Modal title="Create New Task / Tạo công việc mới" onClose={() => { setShowModal(false); setError('') }}>
+        <Modal title={t('Create New Task', 'Tạo công việc mới')} onClose={() => { setShowModal(false); setError('') }}>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Task Name / Tên công việc
+              {t('Task Name', 'Tên công việc')}
             </label>
             <input
               value={form.task_name}
               onChange={e => setForm(f => ({ ...f, task_name: e.target.value }))}
-              placeholder="Enter task name..."
+              placeholder={t('Enter task name...', 'Nhập tên công việc...')}
             />
           </div>
 
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Description / Mô tả
+              {t('Description', 'Mô tả')}
             </label>
             <textarea rows={3} value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -195,20 +193,20 @@ function TasksContent() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                Priority / Ưu tiên
+                {t('Priority', 'Ưu tiên')}
               </label>
               <select value={form.priority_label} onChange={e => setForm(f => ({ ...f, priority_label: e.target.value }))}>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
+                <option value="low">{t('Low', 'Thấp')}</option>
+                <option value="medium">{t('Medium', 'Trung bình')}</option>
+                <option value="high">{t('High', 'Cao')}</option>
               </select>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                Assign To / Giao cho
+                {t('Assign To', 'Giao cho')}
               </label>
               <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
-                <option value="">— Select member —</option>
+                <option value="">{t('— Select member —', '— Chọn thành viên —')}</option>
                 {teamMembers.map(m => (
                   <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
                 ))}
@@ -219,14 +217,14 @@ function TasksContent() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                Start Time / Bắt đầu
+                {t('Start Time', 'Bắt đầu')}
               </label>
               <input type="datetime-local" value={form.start_time}
                 onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                Deadline / Hạn chót
+                {t('Deadline', 'Hạn chót')}
               </label>
               <input type="datetime-local" value={form.deadline}
                 onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))} />
@@ -240,14 +238,14 @@ function TasksContent() {
                 background: 'var(--bg-hover)', color: 'var(--text-secondary)',
                 border: '1px solid var(--border)', borderRadius: '8px',
                 padding: '9px 18px', fontSize: '13px',
-              }}>Cancel</button>
+              }}>{t('Cancel', 'Hủy')}</button>
             <button onClick={handleCreate} disabled={saving}
               style={{
                 background: 'var(--accent-blue)', color: 'white',
                 border: 'none', borderRadius: '8px',
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,
                 opacity: saving ? 0.6 : 1,
-              }}>{saving ? 'Creating...' : 'Create Task'}</button>
+              }}>{saving ? t('Creating...', 'Đang tạo...') : t('Create Task', 'Tạo công việc')}</button>
           </div>
         </Modal>
       )}

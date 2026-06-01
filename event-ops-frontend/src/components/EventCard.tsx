@@ -1,6 +1,7 @@
 'use client'
 import { Calendar, Trash2, ChevronRight } from 'lucide-react'
 import { Event } from '@/lib/types'
+import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 
 interface Props {
@@ -9,11 +10,10 @@ interface Props {
   onClick: (event: Event) => void
 }
 
-function fmt(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
 export default function EventCard({ event, onDelete, onClick }: Props) {
+  const { lang } = useLang()
+  const fmt = (d: string) =>
+    new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   return (
     <div onClick={() => onClick(event)} style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',

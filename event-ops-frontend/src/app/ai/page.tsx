@@ -5,6 +5,7 @@ import { aiApi, eventsApi } from '@/lib/api'
 import { Event, Task } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import { useAuth } from '@/context/AuthContext'
+import { useLang } from '@/context/LanguageContext'
 
 interface Message {
   id: string
@@ -14,12 +15,6 @@ interface Message {
   status?: 'success' | 'rejected' | 'loading'
 }
 
-const examples = [
-  'Create 3 tasks for venue setup by next Friday, assign to the team, high priority',
-  'Add a task to check audio equipment with medium priority, deadline this Sunday',
-  'Create catering coordination task with high priority, deadline 2025-09-01',
-]
-
 export default function AiPage() {
   const [events, setEvents]     = useState<Event[]>([])
   const [eventId, setEventId]   = useState('')
@@ -28,6 +23,23 @@ export default function AiPage() {
   const [loading, setLoading]   = useState(false)
   const bottomRef               = useRef<HTMLDivElement>(null)
   const { user }                = useAuth()
+  const { t, lang } = useLang()
+
+  const examples = lang === 'en'
+    ? [
+        'Create 3 tasks for venue setup by next Friday, assign to the team, high priority',
+        'Add a task to check audio equipment with medium priority, deadline this Sunday',
+        'Create catering coordination task with high priority, deadline 2025-09-01',
+      ]
+    : [
+        'Tạo 3 công việc chuẩn bị địa điểm trước thứ Sáu tới, giao cho nhóm, ưu tiên cao',
+        'Thêm công việc kiểm tra thiết bị âm thanh, ưu tiên trung bình, hạn chủ nhật này',
+        'Tạo công việc điều phối ăn uống, ưu tiên cao, hạn chót 2025-09-01',
+      ]
+
+  const prioLabel = (p: string) =>
+    t(p === 'high' ? 'High' : p === 'medium' ? 'Medium' : 'Low',
+      p === 'high' ? 'Cao' : p === 'medium' ? 'Trung bình' : 'Thấp')
 
   useEffect(() => { eventsApi.getAll().then(setEvents) }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
@@ -45,20 +57,21 @@ export default function AiPage() {
 
     try {
       const result = await aiApi.command(user?.user_id || '', eventId, text)
+      const n = result.tasks_created?.length ?? 0
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id ? {
           ...m,
           status: result.status,
           text: result.status === 'success'
-            ? `Successfully created ${result.tasks_created?.length ?? 0} task(s).`
-            : `Could not process: ${JSON.stringify(result.reason)}`,
+            ? (lang === 'en' ? `Successfully created ${n} task(s).` : `Đã tạo thành công ${n} công việc.`)
+            : `${t('Could not process', 'Không thể xử lý')}: ${JSON.stringify(result.reason)}`,
           tasks: result.tasks_created,
         } : m
       ))
     } catch {
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id
-          ? { ...m, status: 'rejected', text: 'Could not reach the AI service. Check your DeepSeek API key in .env / Không thể kết nối dịch vụ AI. Kiểm tra khóa API DeepSeek trong .env' }
+          ? { ...m, status: 'rejected', text: t('Could not reach the AI service. Check your DeepSeek API key in .env', 'Không thể kết nối dịch vụ AI. Kiểm tra khóa API DeepSeek trong .env') }
           : m
       ))
     } finally { setLoading(false) }
@@ -71,10 +84,10 @@ export default function AiPage() {
       <div style={{ padding: '16px 28px', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
         <div style={{ maxWidth: '500px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-            Select Event / Chọn sự kiện
+            {t('Select Event', 'Chọn sự kiện')}
           </label>
           <select value={eventId} onChange={e => setEventId(e.target.value)}>
-            <option value="">— Select an event first —</option>
+            <option value="">{t('— Select an event first —', '— Chọn sự kiện trước —')}</option>
             {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name}</option>)}
           </select>
         </div>
@@ -90,10 +103,10 @@ export default function AiPage() {
               <Bot size={28} color="var(--accent-purple)" />
             </div>
             <p style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
-              AI Task Assistant
+              {t('AI Task Assistant', 'Trợ lý công việc AI')}
             </p>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '24px' }}>
-              Type a command in English or Vietnamese to create tasks automatically.
+              {t('Type a command in English or Vietnamese to create tasks automatically.', 'Nhập lệnh bằng tiếng Anh hoặc tiếng Việt để tạo công việc tự động.')}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '500px', margin: '0 auto' }}>
               {examples.map((ex, i) => (
@@ -133,7 +146,7 @@ export default function AiPage() {
                 {msg.status === 'loading' ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)' }}>
                     <Loader size={14} color="var(--accent-purple)" />
-                    <span style={{ fontSize: '13px' }}>Processing your command...</span>
+                    <span style={{ fontSize: '13px' }}>{t('Processing your command...', 'Đang xử lý lệnh của bạn...')}</span>
                   </div>
                 ) : (
                   <>
@@ -144,14 +157,14 @@ export default function AiPage() {
                     </div>
                     {msg.tasks && msg.tasks.length > 0 && (
                       <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {msg.tasks.map(t => (
-                          <div key={t.task_id} style={{
+                        {msg.tasks.map(tk => (
+                          <div key={tk.task_id} style={{
                             background: 'var(--bg-hover)', borderRadius: '6px',
                             padding: '6px 10px', fontSize: '12px', color: 'var(--text-secondary)',
                             borderLeft: '2px solid var(--accent-purple)',
                           }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.task_name}</span>
-                            {' · '}{t.priority_label} priority
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{tk.task_name}</span>
+                            {' · '}{prioLabel(tk.priority_label)} {t('priority', 'ưu tiên')}
                           </div>
                         ))}
                       </div>
@@ -168,7 +181,7 @@ export default function AiPage() {
       <div style={{ padding: '16px 28px', borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
         {!eventId && (
           <p style={{ fontSize: '12px', color: 'var(--accent-amber)', marginBottom: '8px' }}>
-            ⚠ Please select an event above before sending a command.
+            ⚠ {t('Please select an event above before sending a command.', 'Vui lòng chọn sự kiện ở trên trước khi gửi lệnh.')}
           </p>
         )}
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -176,7 +189,7 @@ export default function AiPage() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder="Type a command... / Nhập lệnh..."
+            placeholder={t('Type a command...', 'Nhập lệnh...')}
             disabled={!eventId || loading}
             style={{ flex: 1 }}
           />
@@ -188,7 +201,7 @@ export default function AiPage() {
               display: 'flex', alignItems: 'center', gap: '6px',
               opacity: (!eventId || !input.trim() || loading) ? 0.5 : 1, flexShrink: 0,
             }}>
-            <Send size={14} /> Send
+            <Send size={14} /> {t('Send', 'Gửi')}
           </button>
         </div>
       </div>

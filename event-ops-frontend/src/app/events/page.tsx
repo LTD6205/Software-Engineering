@@ -8,6 +8,7 @@ import EventCard from '@/components/EventCard'
 import Modal from '@/components/Modal'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
+import { useLang } from '@/context/LanguageContext'
 
 const empty = {
   event_name: '', description: '',
@@ -23,6 +24,7 @@ export default function EventsPage() {
   const [error, setError]         = useState('')
   const router = useRouter()
   const { user } = useAuth()
+  const { t, tError } = useLang()
 
   const load = async () => {
     setLoading(true)
@@ -35,11 +37,11 @@ export default function EventsPage() {
 
   const handleCreate = async () => {
     if (!form.event_name || !form.start_time || !form.end_time) {
-      setError('Event name, start time and end time are required / Vui lòng nhập tên sự kiện, thời gian bắt đầu và kết thúc')
+      setError(t('Event name, start time and end time are required', 'Vui lòng nhập tên sự kiện, thời gian bắt đầu và kết thúc'))
       return
     }
     if (new Date(form.end_time) <= new Date(form.start_time)) {
-      setError('End time must be after start time / Thời gian kết thúc phải sau thời gian bắt đầu')
+      setError(t('End time must be after start time', 'Thời gian kết thúc phải sau thời gian bắt đầu'))
       return
     }
     setSaving(true); setError('')
@@ -49,12 +51,12 @@ export default function EventsPage() {
       setForm({ ...empty })
       load()
     } catch (e) {
-      setError(getErrorMessage(e, 'Could not create the event / Không thể tạo sự kiện'))
+      setError(tError(getErrorMessage(e, 'Could not create the event / Không thể tạo sự kiện')))
     } finally { setSaving(false) }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this event? This cannot be undone.')) return
+    if (!confirm(t('Delete this event? This cannot be undone.', 'Xóa sự kiện này? Hành động không thể hoàn tác.'))) return
     await eventsApi.remove(id)
     setEvents(prev => prev.filter(e => e.event_id !== id))
   }
@@ -62,7 +64,7 @@ export default function EventsPage() {
   const field = (label: string, labelVi: string, key: keyof typeof form, type = 'text') => (
     <div style={{ marginBottom: '16px' }}>
       <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-        {label} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ {labelVi}</span>
+        {t(label, labelVi)}
       </label>
       <input
         type={type}
@@ -79,7 +81,7 @@ export default function EventsPage() {
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            {events.length} event{events.length !== 1 ? 's' : ''} total
+            {events.length} {t(events.length === 1 ? 'event total' : 'events total', 'sự kiện')}
           </p>
           <button
             onClick={() => setShowModal(true)}
@@ -89,21 +91,21 @@ export default function EventsPage() {
               border: 'none', borderRadius: '9px',
               padding: '9px 18px', fontSize: '13px', fontWeight: 600,
             }}>
-            <Plus size={15} /> New Event / Tạo sự kiện
+            <Plus size={15} /> {t('New Event', 'Tạo sự kiện')}
           </button>
         </div>
 
         {loading ? (
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading...</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : events.length === 0 ? (
           <div style={{
             background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
             borderRadius: '12px', padding: '60px', textAlign: 'center',
           }}>
             <CalendarDays size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>No events yet</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No events yet', 'Chưa có sự kiện nào')}</p>
             <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
-              Click &ldquo;New Event&rdquo; to create your first event
+              {t('Click "New Event" to create your first event', 'Nhấn "Tạo sự kiện" để tạo sự kiện đầu tiên')}
             </p>
           </div>
         ) : (
@@ -121,11 +123,11 @@ export default function EventsPage() {
       </div>
 
       {showModal && (
-        <Modal title="Create New Event / Tạo sự kiện mới" onClose={() => { setShowModal(false); setError('') }}>
+        <Modal title={t('Create New Event', 'Tạo sự kiện mới')} onClose={() => { setShowModal(false); setError('') }}>
           {field('Event Name', 'Tên sự kiện', 'event_name')}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Description <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ Mô tả</span>
+              {t('Description', 'Mô tả')}
             </label>
             <textarea
               rows={3}
@@ -138,12 +140,12 @@ export default function EventsPage() {
           {field('End Time',   'Thời gian kết thúc', 'end_time',   'datetime-local')}
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              Status <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/ Trạng thái</span>
+              {t('Status', 'Trạng thái')}
             </label>
             <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
+              <option value="pending">{t('Pending', 'Chờ xử lý')}</option>
+              <option value="in_progress">{t('In Progress', 'Đang làm')}</option>
+              <option value="completed">{t('Completed', 'Hoàn thành')}</option>
             </select>
           </div>
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
@@ -155,7 +157,7 @@ export default function EventsPage() {
                 border: '1px solid var(--border)', borderRadius: '8px',
                 padding: '9px 18px', fontSize: '13px',
               }}>
-              Cancel
+              {t('Cancel', 'Hủy')}
             </button>
             <button
               onClick={handleCreate}
@@ -166,7 +168,7 @@ export default function EventsPage() {
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,
                 opacity: saving ? 0.6 : 1,
               }}>
-              {saving ? 'Creating...' : 'Create Event'}
+              {saving ? t('Creating...', 'Đang tạo...') : t('Create Event', 'Tạo sự kiện')}
             </button>
           </div>
         </Modal>

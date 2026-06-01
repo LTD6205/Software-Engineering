@@ -2,10 +2,12 @@
 import { useAuth } from '@/context/AuthContext'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect } from 'react'
+import { useLang } from '@/context/LanguageContext'
 import Sidebar from './Sidebar'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
+  const { t } = useLang()
   const pathname = usePathname()
   const router   = useRouter()
 
@@ -21,7 +23,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         minHeight: '100vh', background: 'var(--bg-primary)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading...</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading...', 'Đang tải...')}</p>
       </div>
     )
   }

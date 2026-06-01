@@ -2,10 +2,13 @@
 import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { getErrorMessage } from '@/lib/api'
+import { useLang } from '@/context/LanguageContext'
+import LangToggle from '@/components/LangToggle'
 import { CalendarDays, Lock, Mail, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
   const { login } = useAuth()
+  const { t, tError } = useLang()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
@@ -13,12 +16,12 @@ export default function LoginPage() {
   const [loading, setLoading]   = useState(false)
 
   const handleLogin = async () => {
-    if (!email || !password) { setError('Please enter email and password / Vui lòng nhập email và mật khẩu'); return }
+    if (!email || !password) { setError(t('Please enter email and password', 'Vui lòng nhập email và mật khẩu')); return }
     setLoading(true); setError('')
     try {
       await login(email, password)
     } catch (e) {
-      setError(getErrorMessage(e, 'Invalid email or password / Email hoặc mật khẩu không đúng'))
+      setError(tError(getErrorMessage(e, 'Invalid email or password / Email hoặc mật khẩu không đúng')))
     } finally { setLoading(false) }
   }
 
@@ -33,6 +36,9 @@ export default function LoginPage() {
         background: 'var(--bg-card)', border: '1px solid var(--border)',
         borderRadius: '16px', padding: '40px',
       }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+          <LangToggle />
+        </div>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{
             width: '48px', height: '48px', borderRadius: '12px',
@@ -46,13 +52,13 @@ export default function LoginPage() {
             Event Ops
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Sign in to your account / Đăng nhập
+            {t('Sign in to your account', 'Đăng nhập vào tài khoản')}
           </p>
         </div>
 
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-            Email
+            {t('Email', 'Email')}
           </label>
           <div style={{ position: 'relative' }}>
             <Mail size={15} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -69,7 +75,7 @@ export default function LoginPage() {
 
         <div style={{ marginBottom: '24px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-            Password / Mật khẩu
+            {t('Password', 'Mật khẩu')}
           </label>
           <div style={{ position: 'relative' }}>
             <Lock size={15} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -111,7 +117,7 @@ export default function LoginPage() {
             fontSize: '14px', fontWeight: 700,
             opacity: loading ? 0.6 : 1,
           }}>
-          {loading ? 'Signing in...' : 'Sign In / Đăng nhập'}
+          {loading ? t('Signing in...', 'Đang đăng nhập...') : t('Sign In', 'Đăng nhập')}
         </button>
 
         <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '20px' }}>
