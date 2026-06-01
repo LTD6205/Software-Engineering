@@ -37,10 +37,10 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true }
         <Calendar size={18} color="var(--accent-blue)" />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+        <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
           {event.event_name}
         </p>
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+        <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
           {fmt(event.start_time)} — {fmt(event.end_time)}
         </p>
       </div>

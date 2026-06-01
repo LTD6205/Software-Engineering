@@ -145,7 +145,7 @@ export default function UsersPage() {
                   }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
+                  <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
                   {u.email && <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</p>}
                 </div>
                 <span style={{

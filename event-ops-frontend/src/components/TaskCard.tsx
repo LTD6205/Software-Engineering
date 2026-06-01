@@ -28,7 +28,7 @@ export default function TaskCard({ task, onStatusChange }: Props) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
-            <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.task_name}</p>
+            <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.task_name}</p>
             {task.priority_source === 'ai' && (
               <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--accent-purple)' }}>
                 <Bot size={11} /> AI
@@ -36,10 +36,10 @@ export default function TaskCard({ task, onStatusChange }: Props) {
             )}
           </div>
           {task.description && (
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>{task.description}</p>
+            <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>{task.description}</p>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: isOverdue ? 'var(--accent-red)' : 'var(--text-muted)' }}>
+            <span className="selectable" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: isOverdue ? 'var(--accent-red)' : 'var(--text-muted)' }}>
               <Clock size={12} />{fmt(task.deadline)}
             </span>
             <StatusBadge status={task.priority_label} />
