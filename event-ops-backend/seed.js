@@ -7,8 +7,8 @@
  * reset (idempotent via ON CONFLICT). Reads DB settings from .env.
  *
  * Creates 3 managers and 10 staff:
- *   manager@eventops.com, manager02@eventops.com, manager03@eventops.com  -> password: manager123
- *   staff01@eventops.com ... staff10@eventops.com                          -> password: staff123
+ *   manager01@eventops.com ... manager03@eventops.com  -> password: manager123
+ *   staff01@eventops.com   ... staff10@eventops.com    -> password: staff123
  */
 require('dotenv').config();
 const { Client } = require('pg');
@@ -19,9 +19,9 @@ const STAFF_PASSWORD = 'staff123';
 
 // Build the roster: 3 managers + 10 staff
 const accounts = [
-  { name: 'Default Manager', email: 'manager@eventops.com',   role: 'manager', password: MANAGER_PASSWORD },
-  { name: 'Manager 02',      email: 'manager02@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
-  { name: 'Manager 03',      email: 'manager03@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
+  { name: 'Manager 01', email: 'manager01@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
+  { name: 'Manager 02', email: 'manager02@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
+  { name: 'Manager 03', email: 'manager03@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
 ];
 for (let i = 1; i <= 10; i++) {
   const n = String(i).padStart(2, '0'); // 01, 02, ... 10

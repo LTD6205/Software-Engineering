@@ -115,7 +115,7 @@ export default function LoginPage() {
         </button>
 
         <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '20px' }}>
-          Default manager account: manager@eventops.com
+          account: {'{role}{id}@eventops.com'}
         </p>
       </div>
     </div>
