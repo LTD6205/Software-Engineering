@@ -45,7 +45,7 @@ const OFFLINE = 'var(--text-muted)'
 // Ordering: Staff first, then Manager, Event Manager, then Admin.
 const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, eventmanager: 2, admin: 3 }
 
-type RoleFilter = 'all' | 'staff' | 'manager' | 'eventmanager' | 'admin'
+type RoleFilter = 'all' | 'myteam' | 'staff' | 'manager' | 'eventmanager' | 'admin'
 
 export default function UsersPage() {
   const { user, isManager, isAdmin, isEventManager } = useAuth()
@@ -69,11 +69,19 @@ export default function UsersPage() {
   // Managers, eventmanagers and admins get the full roster; staff see the
   // minimal directory.
   const canSeeRoster = isManager || isEventManager
+  // A plain manager (not admin/eventmanager) can filter down to just their own
+  // team to reassign members quickly.
+  const isPlainManager = user?.role === 'manager'
 
   // Current user first, then Staff > Manager > Admin (then by name), with the
   // optional role filter applied.
   const visibleUsers = users
-    .filter(u => roleFilter === 'all' || u.role === roleFilter)
+    .filter(u => {
+      if (roleFilter === 'all') return true
+      // "My Team" = the staff that report to the current manager.
+      if (roleFilter === 'myteam') return u.role === 'staff' && u.manager_id === user?.user_id
+      return u.role === roleFilter
+    })
     .sort((a, b) => {
       const aMe = a.user_id === user?.user_id ? 0 : 1
       const bMe = b.user_id === user?.user_id ? 0 : 1
@@ -210,6 +218,8 @@ export default function UsersPage() {
         <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
           {([
             ['all', t('All', 'Tất cả')],
+            // "My Team" only makes sense for a manager reassigning their own staff.
+            ...(isPlainManager ? [['myteam', t('My Team', 'Đội của tôi')] as [RoleFilter, string]] : []),
             ['staff', t('Staff', 'Nhân viên')],
             ['manager', t('Manager', 'Quản lý')],
             ['eventmanager', t('Event Manager', 'Quản lý sự kiện')],
