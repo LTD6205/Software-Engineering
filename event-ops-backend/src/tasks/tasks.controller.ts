@@ -41,7 +41,10 @@ export class TasksController {
     @Param('id') id: string,
     @Body() body: Partial<Task> & { actor_user_id?: string },
   ) {
-    return this.tasksService.update(id, body, body.actor_user_id);
+    // actor_user_id is for the audit log, not a Task column — keep it out of
+    // the data passed to the update (otherwise TypeORM errors).
+    const { actor_user_id, ...data } = body;
+    return this.tasksService.update(id, data, actor_user_id);
   }
 
   // Assignments
