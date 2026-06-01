@@ -1,6 +1,6 @@
 # Intelligent Event Operations & Task Management System
 
-A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (Admin > Manager > Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
+A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (Admin > Event Manager > Manager > Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
 
 ## Tech Stack
 
@@ -15,10 +15,12 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 
 ## Features
 
-- **Events & tasks** — managers create events and per-event task checklists (Kanban: Pending / In Progress / Completed / Overdue) and assign them to staff.
+- **Events & membership** — event managers create events and add member managers; each chosen manager brings their whole staff team in, and the event shows a live headcount. Visibility is scoped: admins/event managers see all events, managers see events they're a member of, and staff see events their manager is in.
+- **Tasks** — managers build per-event task checklists (Kanban: Pending / In Progress / Completed / Overdue) and assign each task to one or many of their own staff; assignees show as avatars on the card and can be re-selected with a click.
+- **Staff reassignment** — a manager can hand one of their staff to another manager; the receiving manager gets a request and accepts or rejects it.
 - **Real-time deadline monitoring** — a cron job flags upcoming/overdue tasks and pushes live notifications over WebSocket.
 - **AI commands** — managers describe tasks in plain English/Vietnamese; DeepSeek turns them into real tasks.
-- **Roles** — Admin > Manager > Staff, enforced on the API. Staff get a read-only/limited UI.
+- **Roles** — Admin > Event Manager > Manager > Staff, enforced on the API (a higher level inherits everything below it). Staff get a read-only/limited UI.
 - **Online presence** — the Team page shows who's online, colour-coded by role.
 - **Language switch** — EN/VI toggle that translates the whole UI.
 
@@ -75,8 +77,11 @@ Open **http://localhost:3001** and log in.
 | Role | Email | Password |
 |---|---|---|
 | Admin | `admin01@eventops.com` | `admin123` |
+| Event Manager | `eventmanager01@eventops.com` … `eventmanager03@` | `eventmanager123` |
 | Manager | `manager01@eventops.com` … `manager03@` | `manager123` |
 | Staff | `staff01@eventops.com` … `staff10@` | `staff123` |
+
+> Seeding randomly assigns each staff member to one manager (their owning team).
 
 > Stop everything: `Ctrl+C` in each terminal. Stop the DB with `docker compose stop` (keeps data) or `docker compose down -v` (deletes data — re-run step 1 + `npm run seed` to restore).
 
@@ -88,17 +93,23 @@ npm run db:restore                # restore the most recent backup
 npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specific file
 ```
 
-## Roles & Permissions (Admin > Manager > Staff)
+## Roles & Permissions (Admin > Event Manager > Manager > Staff)
 
-| Action | Admin | Manager | Staff |
-|---|---|---|---|
-| View dashboard / events / tasks | ✅ | ✅ | ✅ |
-| View Team presence board | ✅ | ✅ | ✅ (read-only) |
-| Create/edit/delete events & tasks, assign tasks | ✅ | ✅ | ❌ |
-| Update task status | ✅ | ✅ | ✅ |
-| AI Assistant | ✅ | ✅ | ❌ |
-| Manage team (add/deactivate) | ✅ | ✅ | ❌ |
-| Create an Admin account | ✅ | ❌ | ❌ |
+The API guard is level-based: a role can do everything the roles below it can.
+
+| Action | Admin | Event Manager | Manager | Staff |
+|---|---|---|---|---|
+| View dashboard / tasks | ✅ | ✅ | ✅ | ✅ |
+| View events | all | all | member events | their team's events |
+| View Team presence board | ✅ | ✅ | ✅ | ✅ (read-only) |
+| Create/edit/delete events, add member managers | ✅ | ✅ | ❌ | ❌ |
+| Create tasks & assign to staff | ✅ | ✅ | ✅ (own staff) | ❌ |
+| Update task status | ✅ | ✅ | ✅ | ✅ (if assigned) |
+| Reassign a staff member to another manager | ✅ | ❌ | ✅ (own staff) | ❌ |
+| AI Assistant | ✅ | ✅ | ✅ | ❌ |
+| Add team members | ✅ | ✅ | ✅ | ❌ |
+| Activate/deactivate accounts | ✅ | ❌ | ❌ | ❌ |
+| Create an Admin account | ✅ | ❌ | ❌ | ❌ |
 
 ## Sharing Online (ngrok, with real-time)
 
@@ -112,6 +123,8 @@ cd event-ops-frontend
 npm run share:web      # starts the proxy + ngrok and prints the public link
 ```
 This starts the proxy **and** ngrok on port 8080 and prints the link to share. (Or run them separately: `npm run share` then `ngrok http 8080` — always tunnel **8080**, never 3001, or real-time won't reach the backend.)
+
+If the link doesn't print (or you cleared the terminal), open the ngrok inspector at **http://localhost:4040** — the public URL is shown there and at its `/api/tunnels` endpoint.
 
 Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use is unchanged — `http://localhost:3001` still works directly (the socket URL auto-detects).
 
@@ -127,13 +140,19 @@ Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use
 
 All routes are under `/api` and require a JWT (except `POST /api/auth/login`).
 
+Access reflects the level-based guard, so "manager+" also admits event managers and admins, and "event manager+" admits admins.
+
 | Area | Endpoints | Access |
 |---|---|---|
 | Auth | `POST /auth/login`, `GET /auth/me` | public / any |
-| Users | `GET /users`, `POST /users`, `PUT /users/:id`, `PUT /users/:id/deactivate` | manager+ |
+| Users | `GET /users`, `POST /users`, `PUT /users/:id` | manager+ |
+| | `PUT /users/:id/deactivate` | admin only |
 | | `GET /users/directory` | any (presence board) |
-| Events | `GET /events`, `GET /events/:id` (any) · `POST/PUT/DELETE /events/:id` (manager+) | mixed |
-| Tasks | `GET /tasks/event/:eventId`, `PUT /tasks/:id` (any) · `POST /tasks`, assign/milestones (manager+) | mixed |
+| | `GET /users/reassign-requests`, `POST /users/:id/reassign`, `…/reassign/accept`, `…/reassign/reject` | manager+ |
+| Events | `GET /events` (viewer-scoped), `GET /events/:id` | any |
+| | `GET /events/available-managers`, `GET /events/:id/managers`, `POST/PUT/DELETE /events`, `POST/DELETE /events/:id/managers` | event manager+ |
+| Tasks | `GET /tasks/event/:eventId` (assignees included), `PUT /tasks/:id` | any |
+| | `POST /tasks`, `PUT /tasks/:id/assignments`, assign/unassign, milestones | manager+ |
 | Notifications | `GET /notifications/user/:userId`, `PUT /notifications/:id/read` | any |
 | AI | `POST /ai/command` | manager+ |
 
