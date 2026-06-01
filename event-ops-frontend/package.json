@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "start:prod": "next start -p 3001",
-    "share": "node share-proxy.js",
-    "share:web": "node share.js",
+    "share": "node --no-deprecation share-proxy.js",
+    "share:web": "node --no-deprecation share.js",
     "lint": "eslint"
   },
   "dependencies": {
