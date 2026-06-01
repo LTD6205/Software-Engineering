@@ -126,7 +126,9 @@ export default function UsersPage() {
                 background: 'var(--bg-card)', border: '1px solid var(--border)',
                 borderRadius: '10px', padding: '14px 18px',
                 display: 'flex', alignItems: 'center', gap: '14px',
-                opacity: u.is_active ? 1 : 0.5,
+                // Only dim genuinely deactivated accounts. The staff directory
+                // omits is_active (undefined) — those must not look greyed.
+                opacity: u.is_active === false ? 0.5 : 1,
               }}>
                 <div style={{ position: 'relative', flexShrink: 0 }}>
                   <div style={{
