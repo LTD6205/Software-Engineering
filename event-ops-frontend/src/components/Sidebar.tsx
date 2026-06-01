@@ -38,19 +38,21 @@ export default function Sidebar() {
       position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 40,
     }}>
       <div style={{ padding: '20px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '34px', height: '34px', borderRadius: '8px',
-            background: 'var(--accent-blue)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <CalendarDays size={18} color="white" />
+        <Link href="/" style={{ textDecoration: 'none' }} title={t('Go to Dashboard', 'Về Tổng quan')}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <div style={{
+              width: '34px', height: '34px', borderRadius: '8px',
+              background: 'var(--accent-blue)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <CalendarDays size={18} color="white" />
+            </div>
+            <div>
+              <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>Event Ops</p>
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t('Management System', 'Hệ thống quản lý')}</p>
+            </div>
           </div>
-          <div>
-            <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>Event Ops</p>
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t('Management System', 'Hệ thống quản lý')}</p>
-          </div>
-        </div>
+        </Link>
       </div>
 
       <nav style={{ flex: 1, padding: '12px 10px' }}>
