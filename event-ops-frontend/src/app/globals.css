@@ -25,6 +25,20 @@ body {
   color: var(--text-primary);
   font-family: 'Inter', sans-serif;
   min-height: 100vh;
+  cursor: default;
+}
+
+/* This is an application UI, not a document. Don't show a text (I-beam) cursor
+   or place a blinking caret on non-editable elements when clicked — only real
+   form fields are typeable. */
+*:not(input):not(textarea) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -45,5 +59,6 @@ input, textarea, select {
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent-blue); }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
+select { cursor: pointer; }
 
 button { cursor: pointer; font-family: inherit; transition: all 0.15s; }
