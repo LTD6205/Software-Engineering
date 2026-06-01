@@ -19,26 +19,91 @@ export class UsersService {
   // Get all users (manager only) — excludes password_hash
   findAll() {
     return this.userRepo.find({
-      select: ['user_id', 'name', 'email', 'role', 'is_active', 'created_at'],
+      select: [
+        'user_id',
+        'name',
+        'email',
+        'role',
+        'phone',
+        'avatar',
+        'is_active',
+        'created_at',
+      ],
       order: { created_at: 'ASC' },
     });
   }
 
-  // Minimal roster any signed-in user may see (for the online/presence board).
-  // No emails or other sensitive fields.
+  // Roster any signed-in user may see (for the online/presence + contact board).
   directory() {
     return this.userRepo.find({
-      select: ['user_id', 'name', 'role'],
+      select: ['user_id', 'name', 'role', 'email', 'phone', 'avatar'],
       where: { is_active: true },
       order: { role: 'ASC', name: 'ASC' },
     });
+  }
+
+  // A user updates their OWN profile. Requires the current password.
+  async updateProfile(
+    userId: string,
+    data: {
+      current_password: string;
+      name?: string;
+      email?: string;
+      phone?: string;
+      avatar?: string;
+      new_password?: string;
+    },
+  ) {
+    const user = await this.userRepo.findOne({ where: { user_id: userId } });
+    if (!user)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+
+    const ok =
+      user.password_hash &&
+      (await bcrypt.compare(data.current_password || '', user.password_hash));
+    if (!ok) {
+      throw new BadRequestException(
+        'Current password is incorrect / Mật khẩu hiện tại không đúng',
+      );
+    }
+
+    if (data.email && data.email !== user.email) {
+      const exists = await this.userRepo.findOne({
+        where: { email: data.email },
+      });
+      if (exists) {
+        throw new ConflictException(
+          'Email already in use / Email đã được sử dụng',
+        );
+      }
+    }
+
+    const update: Partial<User> = {};
+    if (data.name !== undefined) update.name = data.name;
+    if (data.email !== undefined) update.email = data.email;
+    if (data.phone !== undefined) update.phone = data.phone;
+    if (data.avatar !== undefined) update.avatar = data.avatar;
+    if (data.new_password)
+      update.password_hash = await bcrypt.hash(data.new_password, 10);
+
+    await this.userRepo.update(userId, update);
+    return this.findOne(userId);
   }
 
   // Get single user
   async findOne(id: string) {
     const user = await this.userRepo.findOne({
       where: { user_id: id },
-      select: ['user_id', 'name', 'email', 'role', 'is_active', 'created_at'],
+      select: [
+        'user_id',
+        'name',
+        'email',
+        'role',
+        'phone',
+        'avatar',
+        'is_active',
+        'created_at',
+      ],
     });
     if (!user) throw new NotFoundException('User not found');
     return user;

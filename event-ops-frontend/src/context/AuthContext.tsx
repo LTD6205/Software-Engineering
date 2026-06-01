@@ -10,6 +10,8 @@ interface AuthUser {
   name: string
   email: string
   role: 'manager' | 'staff' | 'admin'
+  phone?: string
+  avatar?: string
 }
 
 interface AuthContextType {
@@ -17,6 +19,7 @@ interface AuthContextType {
   token: string | null
   login: (email: string, password: string) => Promise<void>
   logout: () => void
+  updateUser: (partial: Partial<AuthUser>) => void
   isManager: boolean
   isAdmin: boolean
   isLoading: boolean
@@ -58,6 +61,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push('/')
   }
 
+  // Merge updated fields (e.g. after editing the profile) into the stored user.
+  const updateUser = (partial: Partial<AuthUser>) => {
+    setUser(prev => {
+      const next = prev ? { ...prev, ...partial } : prev
+      if (next) localStorage.setItem('user', JSON.stringify(next))
+      return next
+    })
+  }
+
   const logout = () => {
     setToken(null)
     setUser(null)
@@ -69,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user, token, login, logout,
+      user, token, login, logout, updateUser,
       isManager: user?.role === 'manager' || user?.role === 'admin',
       isAdmin: user?.role === 'admin',
       isLoading,

@@ -48,6 +48,8 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
+        phone: user.phone,
+        avatar: user.avatar,
       },
     };
   }
@@ -56,7 +58,15 @@ export class AuthService {
   async getMe(userId: string) {
     return this.userRepo.findOne({
       where: { user_id: userId },
-      select: ['user_id', 'name', 'email', 'role', 'created_at'],
+      select: [
+        'user_id',
+        'name',
+        'email',
+        'role',
+        'phone',
+        'avatar',
+        'created_at',
+      ],
     });
   }
 }

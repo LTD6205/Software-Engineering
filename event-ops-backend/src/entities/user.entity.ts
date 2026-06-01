@@ -19,6 +19,12 @@ export class User {
   @Column({ default: 'staff' })
   role!: string;
 
+  @Column({ length: 30, nullable: true })
+  phone!: string;
+
+  @Column({ type: 'text', nullable: true })
+  avatar!: string;
+
   @Column({ nullable: true })
   password_hash!: string;
 

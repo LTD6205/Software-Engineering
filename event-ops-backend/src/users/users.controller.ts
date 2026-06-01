@@ -58,6 +58,24 @@ export class UsersController {
     return this.usersService.create(body);
   }
 
+  // PUT /api/users/me — any signed-in user edits their own profile.
+  // Declared before :id so "me" isn't treated as an id.
+  @Put('me')
+  updateProfile(
+    @Request() req: { user: JwtPayload },
+    @Body()
+    body: {
+      current_password: string;
+      name?: string;
+      email?: string;
+      phone?: string;
+      avatar?: string;
+      new_password?: string;
+    },
+  ) {
+    return this.usersService.updateProfile(req.user.sub, body);
+  }
+
   // PUT /api/users/:id — manager updates staff; only admin sets admin role
   @Put(':id')
   @Roles('manager', 'admin')

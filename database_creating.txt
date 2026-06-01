@@ -210,3 +210,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
  
 -- 2. Add refresh_token column (optional but useful)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- 3. Profile fields: phone number and avatar (stored as a base64 data URL)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone  VARCHAR(30);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;

@@ -1,14 +1,17 @@
 'use client'
+import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 import LangToggle from './LangToggle'
 import NotificationBell from './NotificationBell'
+import ProfileModal from './ProfileModal'
 
 interface Props { title: string; titleVi: string }
 
 export default function TopBar({ title, titleVi }: Props) {
   const { user } = useAuth()
   const { t } = useLang()
+  const [showProfile, setShowProfile] = useState(false)
 
   const roleLabel =
     user?.role === 'manager' ? t('Manager', 'Quản lý')
@@ -27,11 +30,23 @@ export default function TopBar({ title, titleVi }: Props) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
         <LangToggle />
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+        {/* Click to open the personal profile editor */}
+        <button
+          onClick={() => setShowProfile(true)}
+          title={t('Edit profile', 'Chỉnh sửa hồ sơ')}
+          style={{
+            background: 'transparent', border: '1px solid transparent', borderRadius: '8px',
+            padding: '5px 10px', fontSize: '13px', color: 'var(--text-secondary)',
+            display: 'flex', alignItems: 'center', gap: '6px',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
           {user?.name} · <span style={{ color: 'var(--text-muted)' }}>{roleLabel}</span>
-        </p>
+        </button>
         <NotificationBell />
       </div>
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   )
 }

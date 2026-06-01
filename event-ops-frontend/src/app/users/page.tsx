@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Plus, Users, UserCheck, UserX } from 'lucide-react'
+import { Plus, UserCheck, UserX, Phone, Mail } from 'lucide-react'
 import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
+import Avatar from '@/components/Avatar'
 import { useAuth } from '@/context/AuthContext'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
@@ -13,6 +14,8 @@ interface TeamUser {
   name: string
   email?: string
   role: string
+  phone?: string
+  avatar?: string
   is_active?: boolean
   created_at?: string
 }
@@ -131,13 +134,7 @@ export default function UsersPage() {
                 opacity: u.is_active === false ? 0.5 : 1,
               }}>
                 <div style={{ position: 'relative', flexShrink: 0 }}>
-                  <div style={{
-                    width: '38px', height: '38px', borderRadius: '10px',
-                    background: dColor + '22',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Users size={17} color={dColor} />
-                  </div>
+                  <Avatar src={u.avatar} size={42} radius={10} iconColor={dColor} bg={dColor + '22'} />
                   {/* Online presence dot */}
                   <span style={{
                     position: 'absolute', bottom: '-2px', right: '-2px',
@@ -148,7 +145,18 @@ export default function UsersPage() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
-                  {u.email && <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</p>}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: '2px' }}>
+                    {u.email && (
+                      <span className="selectable" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <Mail size={11} /> {u.email}
+                      </span>
+                    )}
+                    {u.phone && (
+                      <span className="selectable" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <Phone size={11} /> {u.phone}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <span style={{
                   fontSize: '11px', fontWeight: 600, color: isOnline ? 'var(--accent-green)' : OFFLINE,

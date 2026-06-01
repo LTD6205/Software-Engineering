@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { LayoutDashboard, CalendarDays, CheckSquare, Bot, Users, LogOut } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
+import Avatar from './Avatar'
 
 export default function Sidebar() {
   const path = usePathname()
@@ -82,13 +83,16 @@ export default function Sidebar() {
 
       {/* User info + logout */}
       <div style={{ padding: '12px 10px', borderTop: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 10px', marginBottom: '4px' }}>
-          {/* Active bubble — coloured by the user's role level */}
-          <span style={{
-            width: '10px', height: '10px', borderRadius: '50%',
-            background: roleColor, flexShrink: 0,
-            boxShadow: `0 0 0 3px ${roleColor}22`,
-          }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', marginBottom: '4px' }}>
+          {/* Avatar (or default icon) with a role-coloured active bubble */}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <Avatar src={user?.avatar} size={36} radius={9} />
+            <span style={{
+              position: 'absolute', bottom: '-2px', right: '-2px',
+              width: '11px', height: '11px', borderRadius: '50%',
+              background: roleColor, border: '2px solid var(--bg-secondary)',
+            }} />
+          </div>
           <div style={{ minWidth: 0 }}>
             <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.name}</p>
             <p style={{ fontSize: '11px', color: roleColor, fontWeight: 600 }}>{roleLabel}</p>
