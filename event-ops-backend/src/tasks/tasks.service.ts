@@ -10,6 +10,7 @@ import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { Milestone } from '../entities/milestone.entity';
+import { User } from '../entities/user.entity';
 
 @Injectable()
 export class TasksService {
@@ -20,6 +21,7 @@ export class TasksService {
     @InjectRepository(TaskDependency)
     private depRepo: Repository<TaskDependency>,
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
+    @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
   ) {}
 
@@ -96,7 +98,17 @@ export class TasksService {
     return this.assignRepo.find({ where: { task_id: taskId } });
   }
 
-  assignUser(taskId: string, userId: string) {
+  async assignUser(taskId: string, userId: string) {
+    const u = await this.userRepo.findOne({ where: { user_id: userId } });
+    if (!u) {
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    }
+    // Tasks may only be assigned to staff and managers, never admins.
+    if (u.role === 'admin') {
+      throw new BadRequestException(
+        'Tasks cannot be assigned to an admin / Không thể giao công việc cho quản trị viên',
+      );
+    }
     const assignment = this.assignRepo.create({
       task_id: taskId,
       user_id: userId,

@@ -12,8 +12,18 @@ import { useLang } from '@/context/LanguageContext'
 
 const emptyTask = {
   task_name: '', description: '',
-  priority_label: 'medium', deadline: '', start_time: '',
+  priority_label: 'medium',
+  startDate: '', startTime: '', deadlineDate: '', deadlineTime: '',
   assigned_to: '',
+}
+
+// Format a stored timestamp to a local "YYYY-MM-DDTHH:mm" string.
+function toLocalDateTime(v?: string) {
+  if (!v) return ''
+  const d = new Date(v)
+  if (isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function TasksContent() {
@@ -52,15 +62,30 @@ function TasksContent() {
       .finally(() => setLoading(false))
   }, [selectedEvent])
 
+  // The task's dates must stay within the parent event's time range.
+  const selEvent = events.find(e => e.event_id === selectedEvent)
+  const evStart = toLocalDateTime(selEvent?.start_time) // "YYYY-MM-DDTHH:mm"
+  const evEnd   = toLocalDateTime(selEvent?.end_time)
+
   const handleCreate = async () => {
     if (!form.task_name || !selectedEvent) {
       setError(t('Task name and event are required', 'Vui lòng nhập tên công việc và chọn sự kiện'))
       return
     }
-    if (form.start_time && form.deadline && new Date(form.deadline) <= new Date(form.start_time)) {
+    const start = form.startDate ? `${form.startDate}T${form.startTime || '08:00'}` : ''
+    const deadline = form.deadlineDate ? `${form.deadlineDate}T${form.deadlineTime || '08:00'}` : ''
+
+    if (start && deadline && deadline <= start) {
       setError(t('Deadline must be after the start time', 'Hạn chót phải sau thời gian bắt đầu'))
       return
     }
+    // Keep within the event window (string compare works for this format).
+    const outside = (v: string) => evStart && evEnd && (v < evStart || v > evEnd)
+    if ((start && outside(start)) || (deadline && outside(deadline))) {
+      setError(t('Task dates must be within the event period', 'Thời gian công việc phải nằm trong thời gian sự kiện'))
+      return
+    }
+
     setSaving(true); setError('')
     try {
       const task = await tasksApi.create({
@@ -70,8 +95,8 @@ function TasksContent() {
         priority_score: form.priority_label === 'high' ? 90 : form.priority_label === 'medium' ? 50 : 10,
         event_id:       selectedEvent,
         created_by:     user?.user_id || '',
-        ...(form.deadline   ? { deadline:   new Date(form.deadline).toISOString() }   : {}),
-        ...(form.start_time ? { start_time: new Date(form.start_time).toISOString() } : {}),
+        ...(deadline ? { deadline:   new Date(deadline).toISOString() }   : {}),
+        ...(start    ? { start_time: new Date(start).toISOString() } : {}),
       })
 
       if (form.assigned_to) {
@@ -85,6 +110,36 @@ function TasksContent() {
       setError(tError(getErrorMessage(e, 'Could not create the task / Không thể tạo công việc')))
     } finally { setSaving(false) }
   }
+
+  // A Date + Time row constrained to the event's date range. Picking a date
+  // defaults the time to 08:00 (editable).
+  const dateTimeRow = (
+    labelEn: string, labelVi: string,
+    dateKey: 'startDate' | 'deadlineDate', timeKey: 'startTime' | 'deadlineTime',
+  ) => (
+    <div>
+      <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+        {t(labelEn, labelVi)}
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px' }}>
+        <input
+          type="date"
+          value={form[dateKey]}
+          min={evStart.slice(0, 10) || undefined}
+          max={evEnd.slice(0, 10) || undefined}
+          onChange={e => {
+            const val = e.target.value
+            setForm(f => ({ ...f, [dateKey]: val, [timeKey]: f[timeKey] || (val ? '08:00' : '') }))
+          }}
+        />
+        <input
+          type="time"
+          value={form[timeKey]}
+          onChange={e => setForm(f => ({ ...f, [timeKey]: e.target.value }))}
+        />
+      </div>
+    </div>
+  )
 
   const handleStatusChange = async (id: string, status: string) => {
     await tasksApi.update(id, { status, actor_user_id: user?.user_id || '' })
@@ -207,28 +262,22 @@ function TasksContent() {
               </label>
               <select value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
                 <option value="">{t('— Select member —', '— Chọn thành viên —')}</option>
-                {teamMembers.map(m => (
+                {/* Tasks can only be assigned to staff and managers, not admins. */}
+                {teamMembers.filter(m => m.role !== 'admin').map(m => (
                   <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
                 ))}
               </select>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {t('Start Time', 'Bắt đầu')}
-              </label>
-              <input type="datetime-local" value={form.start_time}
-                onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {t('Deadline', 'Hạn chót')}
-              </label>
-              <input type="datetime-local" value={form.deadline}
-                onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))} />
-            </div>
+          {selEvent && (
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+              {t('Within event', 'Trong sự kiện')}: {evStart.replace('T', ' ')} → {evEnd.replace('T', ' ')}
+            </p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
+            {dateTimeRow('Start', 'Bắt đầu', 'startDate', 'startTime')}
+            {dateTimeRow('Deadline', 'Hạn chót', 'deadlineDate', 'deadlineTime')}
           </div>
 
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
