@@ -17,7 +17,7 @@ export default function DashboardPage() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const router = useRouter()
   const { t } = useLang()
-  const { isManager } = useAuth()
+  const { canManageEvents } = useAuth()
 
   useEffect(() => {
     eventsApi.getAll()
@@ -89,7 +89,7 @@ export default function DashboardPage() {
                 event={event}
                 onDelete={setPendingDelete}
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
-                canDelete={isManager}
+                canDelete={canManageEvents}
               />
             ))}
           </div>

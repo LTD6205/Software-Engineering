@@ -1,5 +1,5 @@
 'use client'
-import { Calendar, Trash2, ChevronRight } from 'lucide-react'
+import { Calendar, Trash2, ChevronRight, Users } from 'lucide-react'
 import { Event } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
@@ -9,6 +9,7 @@ interface Props {
   onDelete: (id: string) => void
   onClick: (event: Event) => void
   canDelete?: boolean
+  onManageMembers?: (event: Event) => void
 }
 
 // Status accent: pending=yellow, in_progress=blue, completed=green.
@@ -18,8 +19,8 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'var(--accent-green)',
 }
 
-export default function EventCard({ event, onDelete, onClick, canDelete = true }: Props) {
-  const { lang } = useLang()
+export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers }: Props) {
+  const { t, lang } = useLang()
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
@@ -53,6 +54,20 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true }
           {fmt(event.start_time)} — {fmt(event.end_time)}
         </p>
       </div>
+      {event.people_count != null && (
+        <span
+          onClick={onManageMembers ? (e => { e.stopPropagation(); onManageMembers(event) }) : undefined}
+          title={onManageMembers ? t('Manage members', 'Quản lý thành viên') : t('People in this event', 'Số người trong sự kiện')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
+            color: 'var(--text-secondary)', background: 'var(--bg-hover)',
+            padding: '4px 10px', borderRadius: '20px',
+            border: `1px solid ${onManageMembers ? 'var(--border-light)' : 'var(--border)'}`,
+            cursor: onManageMembers ? 'pointer' : 'default',
+          }}>
+          <Users size={13} /> {event.people_count}
+        </span>
+      )}
       <StatusBadge status={event.status} />
       {canDelete && (
         <button onClick={e => { e.stopPropagation(); onDelete(event.event_id) }}

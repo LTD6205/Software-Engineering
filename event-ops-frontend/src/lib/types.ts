@@ -2,7 +2,7 @@ export interface User {
   user_id: string
   name: string
   email: string
-  role: 'manager' | 'staff' | 'admin'
+  role: 'manager' | 'staff' | 'admin' | 'eventmanager'
   created_at: string
 }
 
@@ -15,6 +15,15 @@ export interface Event {
   created_by: string
   status: 'pending' | 'in_progress' | 'completed'
   created_at: string
+  manager_count?: number
+  people_count?: number
+}
+
+export interface ManagerOption {
+  user_id: string
+  name: string
+  email?: string
+  team_count: number
 }
 
 export interface Task {

@@ -22,6 +22,10 @@ export const eventsApi = {
   create:  (data: object)             => api.post('/events', data).then(r => r.data),
   update:  (id: string, data: object) => api.put(`/events/${id}`, data).then(r => r.data),
   remove:  (id: string)               => api.delete(`/events/${id}`).then(r => r.data),
+  availableManagers: ()                       => api.get('/events/available-managers').then(r => r.data),
+  getManagers:       (id: string)             => api.get(`/events/${id}/managers`).then(r => r.data),
+  addManager:        (id: string, mid: string) => api.post(`/events/${id}/managers`, { manager_id: mid }).then(r => r.data),
+  removeManager:     (id: string, mid: string) => api.delete(`/events/${id}/managers/${mid}`).then(r => r.data),
 }
 
 export const tasksApi = {
