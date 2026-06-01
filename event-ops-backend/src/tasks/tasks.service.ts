@@ -11,6 +11,7 @@ import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
+import { Event } from '../entities/event.entity';
 
 @Injectable()
 export class TasksService {
@@ -22,6 +23,7 @@ export class TasksService {
     private depRepo: Repository<TaskDependency>,
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
     @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(Event) private eventRepo: Repository<Event>,
     @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
   ) {}
 
@@ -40,7 +42,7 @@ export class TasksService {
     return task;
   }
 
-  create(data: Partial<Task>) {
+  async create(data: Partial<Task>) {
     if (!data.task_name) {
       throw new BadRequestException(
         'Task name is required / Vui lòng nhập tên công việc',
@@ -60,8 +62,24 @@ export class TasksService {
         'Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu',
       );
     }
-    const task = this.taskRepo.create(data);
-    return this.taskRepo.save(task);
+    const task = await this.taskRepo.save(this.taskRepo.create(data));
+    // Adding a task moves its event into "in progress".
+    await this.recomputeEventStatus(task.event_id);
+    return task;
+  }
+
+  // An event's status is derived from its tasks:
+  //   no tasks -> pending; all tasks completed -> completed; otherwise -> in progress.
+  private async recomputeEventStatus(eventId: string) {
+    if (!eventId) return;
+    const tasks = await this.taskRepo.find({ where: { event_id: eventId } });
+    let status = 'pending';
+    if (tasks.length > 0) {
+      status = tasks.every((tk) => tk.status === 'completed')
+        ? 'completed'
+        : 'in_progress';
+    }
+    await this.eventRepo.update(eventId, { status });
   }
 
   async update(
@@ -88,6 +106,10 @@ export class TasksService {
         actor_type: 'user',
         actor_user_id: actor.sub,
       });
+    }
+    // A task's status change may move its event between pending/in_progress/completed.
+    if (data.status !== undefined) {
+      await this.recomputeEventStatus(old.event_id);
     }
     return this.findOne(id);
   }

@@ -6,6 +6,7 @@ import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
+import { Event } from '../entities/event.entity';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 
@@ -18,6 +19,7 @@ import { TasksService } from './tasks.service';
       TaskLog,
       Milestone,
       User,
+      Event,
     ]),
   ],
   controllers: [TasksController],

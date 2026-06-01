@@ -6,6 +6,7 @@ import { Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import StatCard from '@/components/StatCard'
 import EventCard from '@/components/EventCard'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useRouter } from 'next/navigation'
 import { useLang } from '@/context/LanguageContext'
 import { useAuth } from '@/context/AuthContext'
@@ -13,6 +14,7 @@ import { useAuth } from '@/context/AuthContext'
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const router = useRouter()
   const { t } = useLang()
   const { isManager } = useAuth()
@@ -28,8 +30,7 @@ export default function DashboardPage() {
   const completed = events.filter(e => e.status === 'completed').length
   const pending   = events.filter(e => e.status === 'pending').length
 
-  const handleDelete = async (id: string) => {
-    if (!confirm(t('Delete this event?', 'Xóa sự kiện này?'))) return
+  const doDelete = async (id: string) => {
     await eventsApi.remove(id)
     setEvents(prev => prev.filter(e => e.event_id !== id))
   }
@@ -85,7 +86,7 @@ export default function DashboardPage() {
               <EventCard
                 key={event.event_id}
                 event={event}
-                onDelete={handleDelete}
+                onDelete={setPendingDelete}
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
                 canDelete={isManager}
               />
@@ -93,6 +94,17 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        danger
+        title={t('Delete event', 'Xóa sự kiện')}
+        message={t('Delete this event? This cannot be undone.', 'Xóa sự kiện này? Hành động không thể hoàn tác.')}
+        confirmLabel={t('Delete', 'Xóa')}
+        cancelLabel={t('Cancel', 'Hủy')}
+        onConfirm={() => { if (pendingDelete) doDelete(pendingDelete); setPendingDelete(null) }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

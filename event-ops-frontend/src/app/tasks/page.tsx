@@ -7,6 +7,7 @@ import { Task, Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 
@@ -41,6 +42,7 @@ function TasksContent() {
   const [saving, setSaving]               = useState(false)
   const [error, setError]                 = useState('')
   const [teamMembers, setTeamMembers]     = useState<{ user_id: string; name: string; role: string }[]>([])
+  const [pendingReopen, setPendingReopen] = useState<{ id: string; status: string } | null>(null)
 
   useEffect(() => {
     eventsApi.getAll().then(setEvents)
@@ -141,15 +143,11 @@ function TasksContent() {
     </div>
   )
 
-  const handleStatusChange = async (id: string, status: string) => {
+  // Optimistic status update; reverts (with a message) if the server rejects it.
+  const applyStatus = async (id: string, status: string) => {
     const task = tasks.find(t => t.task_id === id)
-    if (!task || task.status === status) return
-    // Reopening a completed task asks for confirmation (creator-only on server).
-    if (task.status === 'completed' && status !== 'completed') {
-      if (!confirm(t('Reopen this completed task?', 'Mở lại công việc đã hoàn thành này?'))) return
-    }
+    if (!task) return
     const prev = task.status
-    // Optimistic update, revert if the server rejects it.
     setTasks(p => p.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
     try {
       await tasksApi.update(id, { status })
@@ -157,6 +155,17 @@ function TasksContent() {
       setTasks(p => p.map(t => t.task_id === id ? { ...t, status: prev } : t))
       alert(tError(getErrorMessage(e, 'Could not update status / Không thể cập nhật trạng thái')))
     }
+  }
+
+  const handleStatusChange = (id: string, status: string) => {
+    const task = tasks.find(t => t.task_id === id)
+    if (!task || task.status === status) return
+    // Reopening a completed task asks for confirmation first.
+    if (task.status === 'completed' && status !== 'completed') {
+      setPendingReopen({ id, status })
+      return
+    }
+    void applyStatus(id, status)
   }
 
   const pending    = tasks.filter(t => t.status === 'pending')
@@ -311,6 +320,16 @@ function TasksContent() {
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={!!pendingReopen}
+        title={t('Reopen task', 'Mở lại công việc')}
+        message={t('Reopen this completed task?', 'Mở lại công việc đã hoàn thành này?')}
+        confirmLabel={t('Reopen', 'Mở lại')}
+        cancelLabel={t('Cancel', 'Hủy')}
+        onConfirm={() => { const p = pendingReopen; setPendingReopen(null); if (p) void applyStatus(p.id, p.status) }}
+        onCancel={() => setPendingReopen(null)}
+      />
     </div>
   )
 }

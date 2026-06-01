@@ -6,6 +6,7 @@ import { Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
 import Modal from '@/components/Modal'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
@@ -23,6 +24,7 @@ export default function EventsPage() {
   const [form, setForm]           = useState({ ...empty })
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const router = useRouter()
   const { user, isManager } = useAuth()
   const { t, tError } = useLang()
@@ -53,7 +55,7 @@ export default function EventsPage() {
       await eventsApi.create({
         event_name: form.event_name,
         description: form.description,
-        status: form.status,
+        status: 'pending', // always starts pending; driven by its tasks afterward
         start_time, end_time,
         created_by: user?.user_id,
       })
@@ -98,8 +100,7 @@ export default function EventsPage() {
     </div>
   )
 
-  const handleDelete = async (id: string) => {
-    if (!confirm(t('Delete this event? This cannot be undone.', 'Xóa sự kiện này? Hành động không thể hoàn tác.'))) return
+  const doDelete = async (id: string) => {
     await eventsApi.remove(id)
     setEvents(prev => prev.filter(e => e.event_id !== id))
   }
@@ -159,7 +160,7 @@ export default function EventsPage() {
               <EventCard
                 key={event.event_id}
                 event={event}
-                onDelete={handleDelete}
+                onDelete={setPendingDelete}
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
                 canDelete={isManager}
               />
@@ -184,16 +185,8 @@ export default function EventsPage() {
           </div>
           {dateTimeRow('Start', 'Bắt đầu', 'startDate', 'startTime')}
           {dateTimeRow('End',   'Kết thúc', 'endDate',  'endTime')}
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              {t('Status', 'Trạng thái')}
-            </label>
-            <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-              <option value="pending">{t('Pending', 'Chờ xử lý')}</option>
-              <option value="in_progress">{t('In Progress', 'Đang làm')}</option>
-              {/* A new event can't be created already 'completed'. */}
-            </select>
-          </div>
+          {/* No status field — a new event always starts as "pending" and its
+              status is then driven automatically by its tasks. */}
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button
@@ -219,6 +212,17 @@ export default function EventsPage() {
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        danger
+        title={t('Delete event', 'Xóa sự kiện')}
+        message={t('Delete this event? This cannot be undone.', 'Xóa sự kiện này? Hành động không thể hoàn tác.')}
+        confirmLabel={t('Delete', 'Xóa')}
+        cancelLabel={t('Cancel', 'Hủy')}
+        onConfirm={() => { if (pendingDelete) doDelete(pendingDelete); setPendingDelete(null) }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }
