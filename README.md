@@ -107,6 +107,14 @@ This starts the proxy **and** ngrok on port 8080 and prints the link to share. (
 
 Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use is unchanged — `http://localhost:3001` still works directly (the socket URL auto-detects).
 
+> For a **stable shared demo**, serve a production build instead of the dev server (the dev server recompiles routes on demand, which can time out over a tunnel and cause "Failed to fetch RSC payload" / endless loading):
+> ```bash
+> cd event-ops-frontend
+> npm run build
+> npm run start:prod      # production server on port 3001
+> npm run share:web       # in another terminal
+> ```
+
 ## API Overview
 
 All routes are under `/api` and require a JWT (except `POST /api/auth/login`).
