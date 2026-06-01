@@ -17,6 +17,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [user, isLoading, pathname, router])
 
+  // Clear any highlighted text when clicking outside a selectable region.
+  // Because most of the UI is user-select:none, the browser won't collapse an
+  // existing selection on its own when you click a non-selectable element.
+  useEffect(() => {
+    const clearSelectionOnOutsideClick = (e: MouseEvent) => {
+      const el = e.target as Element | null
+      if (el && typeof el.closest === 'function' && el.closest('.selectable')) return
+      const sel = window.getSelection?.()
+      if (sel && !sel.isCollapsed) sel.removeAllRanges()
+    }
+    document.addEventListener('mousedown', clearSelectionOnOutsideClick)
+    return () => document.removeEventListener('mousedown', clearSelectionOnOutsideClick)
+  }, [])
+
   if (isLoading) {
     return (
       <div style={{
