@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Plus, UserCheck, UserX, Phone, Mail } from 'lucide-react'
+import { Plus, UserCheck, UserX, Phone, Mail, ArrowRightLeft, Check, X } from 'lucide-react'
 import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
@@ -16,27 +16,39 @@ interface TeamUser {
   role: string
   phone?: string
   avatar?: string
+  manager_id?: string | null
+  pending_manager_id?: string | null
   is_active?: boolean
   created_at?: string
+}
+
+interface ReassignRequest {
+  user_id: string
+  name: string
+  email?: string
+  avatar?: string
+  current_manager_id?: string | null
+  current_manager_name?: string | null
 }
 
 const empty = { name: '', email: '', phone: '', password: '', role: 'staff' }
 
 // Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
 const roleColor: Record<string, string> = {
-  admin:   'var(--accent-red)',
-  manager: 'var(--accent-amber)',
-  staff:   'var(--accent-green)',
+  admin:        'var(--accent-red)',
+  eventmanager: 'var(--accent-purple)',
+  manager:      'var(--accent-amber)',
+  staff:        'var(--accent-green)',
 }
 const OFFLINE = 'var(--text-muted)'
 
-// Ordering of the "everyone else" section: Staff first, then Manager, then Admin.
-const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, admin: 2 }
+// Ordering: Staff first, then Manager, Event Manager, then Admin.
+const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, eventmanager: 2, admin: 3 }
 
 type RoleFilter = 'all' | 'staff' | 'manager' | 'admin'
 
 export default function UsersPage() {
-  const { user, isManager, isAdmin } = useAuth()
+  const { user, isManager, isAdmin, isEventManager } = useAuth()
   const { t, tError } = useLang()
   const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
@@ -46,6 +58,17 @@ export default function UsersPage() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
+
+  // Reassignment workflow state.
+  const [requests, setRequests]     = useState<ReassignRequest[]>([])
+  const [reassigning, setReassigning] = useState<TeamUser | null>(null)
+  const [targetMgr, setTargetMgr]   = useState('')
+  const [reErr, setReErr]           = useState('')
+  const [reSaving, setReSaving]     = useState(false)
+
+  // Managers, eventmanagers and admins get the full roster; staff see the
+  // minimal directory.
+  const canSeeRoster = isManager || isEventManager
 
   // Current user first, then Staff > Manager > Admin (then by name), with the
   // optional role filter applied.
@@ -61,17 +84,57 @@ export default function UsersPage() {
       return a.name.localeCompare(b.name)
     })
 
-  // Everyone can see the presence board. Managers/admins get the full roster
-  // (with emails + management); staff get the minimal directory.
+  // Everyone can see the presence board. Managers/eventmanagers/admins get the
+  // full roster (with emails + management); staff get the minimal directory.
   useEffect(() => {
-    const load = isManager ? usersApi.getAll() : usersApi.directory()
+    const load = canSeeRoster ? usersApi.getAll() : usersApi.directory()
     load.then(setUsers).finally(() => setLoading(false))
-  }, [isManager])
+    // Only a manager can be the target of a reassignment request.
+    if (isManager) usersApi.reassignRequests().then(setRequests).catch(() => {})
+  }, [canSeeRoster, isManager])
+
+  // Map of manager id → name, for showing which manager a staff reports to.
+  const managerName: Record<string, string> = {}
+  for (const u of users) if (u.role === 'manager') managerName[u.user_id] = u.name
+  // Managers the current user can hand a staff member off to (everyone but self).
+  const otherManagers = users.filter(u => u.role === 'manager' && u.user_id !== user?.user_id)
 
   const roleLabel = (role: string) =>
     role === 'manager' ? t('Manager', 'Quản lý')
     : role === 'admin' ? t('Admin', 'Quản trị viên')
+    : role === 'eventmanager' ? t('Event Manager', 'Quản lý sự kiện')
     : t('Staff', 'Nhân viên')
+
+  // Open the reassign picker for one of my staff members.
+  const openReassign = (u: TeamUser) => {
+    setReassigning(u); setTargetMgr(''); setReErr('')
+  }
+
+  const submitReassign = async () => {
+    if (!reassigning || !targetMgr) {
+      setReErr(t('Select a manager', 'Chọn một quản lý')); return
+    }
+    setReSaving(true); setReErr('')
+    try {
+      const updated = await usersApi.reassign(reassigning.user_id, targetMgr)
+      setUsers(prev => prev.map(x => x.user_id === updated.user_id ? { ...x, ...updated } : x))
+      setReassigning(null)
+    } catch (e) {
+      setReErr(tError(getErrorMessage(e, 'Could not send the request / Không thể gửi yêu cầu')))
+    } finally { setReSaving(false) }
+  }
+
+  // Accept / reject an incoming request (I am the proposed new manager).
+  const acceptRequest = async (staffId: string) => {
+    const updated = await usersApi.acceptReassign(staffId)
+    setRequests(prev => prev.filter(r => r.user_id !== staffId))
+    setUsers(prev => prev.map(x => x.user_id === staffId ? { ...x, ...updated } : x))
+  }
+  const rejectRequest = async (staffId: string) => {
+    await usersApi.rejectReassign(staffId)
+    setRequests(prev => prev.filter(r => r.user_id !== staffId))
+    setUsers(prev => prev.map(x => x.user_id === staffId ? { ...x, pending_manager_id: null } : x))
+  }
 
   const handleCreate = async () => {
     if (!form.name || !form.email || !form.phone || !form.password) {
@@ -162,6 +225,45 @@ export default function UsersPage() {
           })}
         </div>
 
+        {/* Incoming reassignment requests — I am the proposed new manager. */}
+        {requests.length > 0 && (
+          <div style={{
+            background: 'rgba(59,130,246,0.06)', border: '1px solid var(--accent-blue)',
+            borderRadius: '12px', padding: '16px 18px', marginBottom: '20px',
+          }}>
+            <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent-blue)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <ArrowRightLeft size={15} /> {t('Reassignment requests', 'Yêu cầu chuyển nhân viên')} ({requests.length})
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {requests.map(r => (
+                <div key={r.user_id} style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  background: 'var(--bg-card)', border: '1px solid var(--border)',
+                  borderRadius: '9px', padding: '10px 14px',
+                }}>
+                  <Avatar src={r.avatar} size={34} radius={9} iconColor="var(--accent-blue)" bg="rgba(59,130,246,0.13)" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p className="selectable" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{r.name}</p>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {t('Currently with', 'Hiện thuộc')} {r.current_manager_name || t('no manager', 'chưa có quản lý')}
+                    </p>
+                  </div>
+                  <button onClick={() => acceptRequest(r.user_id)} style={{
+                    display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
+                    background: 'var(--accent-green)', color: 'white', border: 'none',
+                    borderRadius: '7px', padding: '7px 13px', cursor: 'pointer',
+                  }}><Check size={13} /> {t('Accept', 'Chấp nhận')}</button>
+                  <button onClick={() => rejectRequest(r.user_id)} style={{
+                    display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
+                    background: 'var(--bg-hover)', color: 'var(--accent-red)', border: '1px solid var(--border)',
+                    borderRadius: '7px', padding: '7px 13px', cursor: 'pointer',
+                  }}><X size={13} /> {t('Reject', 'Từ chối')}</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
@@ -216,7 +318,37 @@ export default function UsersPage() {
                       </span>
                     )}
                   </div>
+                  {/* For staff (roster view): which manager they report to, plus
+                      any pending reassignment. */}
+                  {canSeeRoster && u.role === 'staff' && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', marginTop: '4px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {t('Team', 'Đội')}: <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
+                          {u.manager_id ? (managerName[u.manager_id] || t('Manager', 'Quản lý')) : t('Unassigned', 'Chưa phân')}
+                        </span>
+                      </span>
+                      {u.pending_manager_id && (
+                        <span style={{
+                          fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '10px',
+                          background: 'rgba(245,158,11,0.16)', color: 'var(--accent-amber)',
+                          display: 'flex', alignItems: 'center', gap: '4px',
+                        }}>
+                          <ArrowRightLeft size={10} /> {t('Pending', 'Đang chờ')} → {managerName[u.pending_manager_id] || '...'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
+                {/* Owner manager can hand this staff member to another manager. */}
+                {isManager && u.role === 'staff' && u.manager_id === user?.user_id && !u.pending_manager_id && (
+                  <button onClick={() => openReassign(u)} style={{
+                    background: 'none', border: '1px solid var(--border)', borderRadius: '6px',
+                    padding: '5px 9px', cursor: 'pointer', color: 'var(--accent-blue)',
+                    fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <ArrowRightLeft size={12} /> {t('Reassign', 'Chuyển')}
+                  </button>
+                )}
                 <span style={{
                   fontSize: '11px', fontWeight: 600, color: isOnline ? 'var(--accent-green)' : OFFLINE,
                 }}>{isOnline ? t('Online', 'Trực tuyến') : t('Offline', 'Ngoại tuyến')}</span>
@@ -292,6 +424,46 @@ export default function UsersPage() {
               padding: '9px 18px', fontSize: '13px', fontWeight: 600,
               opacity: saving ? 0.6 : 1,
             }}>{saving ? t('Adding...', 'Đang thêm...') : t('Add Member', 'Thêm nhân viên')}</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Reassign a staff member to another manager (target must accept). */}
+      {reassigning && (
+        <Modal
+          title={t('Reassign', 'Chuyển') + ' ' + reassigning.name}
+          onClose={() => setReassigning(null)}
+        >
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+            {t(
+              'The chosen manager will receive a request and must accept before the move takes effect.',
+              'Quản lý được chọn sẽ nhận một yêu cầu và phải chấp nhận trước khi việc chuyển có hiệu lực.',
+            )}
+          </p>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              {t('New manager', 'Quản lý mới')}
+            </label>
+            <select value={targetMgr} onChange={e => setTargetMgr(e.target.value)}>
+              <option value="">{t('Select a manager...', 'Chọn quản lý...')}</option>
+              {otherManagers.map(m => (
+                <option key={m.user_id} value={m.user_id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+          {reErr && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{reErr}</p>}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button onClick={() => setReassigning(null)} style={{
+              background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: '8px',
+              padding: '9px 18px', fontSize: '13px',
+            }}>{t('Cancel', 'Hủy')}</button>
+            <button onClick={submitReassign} disabled={reSaving} style={{
+              background: 'var(--accent-blue)', color: 'white',
+              border: 'none', borderRadius: '8px',
+              padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+              opacity: reSaving ? 0.6 : 1,
+            }}>{reSaving ? t('Sending...', 'Đang gửi...') : t('Send request', 'Gửi yêu cầu')}</button>
           </div>
         </Modal>
       )}

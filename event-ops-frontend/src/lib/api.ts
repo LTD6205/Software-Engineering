@@ -49,6 +49,11 @@ export const usersApi = {
   create: (data: object) => api.post('/users', data).then(r => r.data),
   update: (id: string, data: object) => api.put(`/users/${id}`, data).then(r => r.data),
   deactivate: (id: string) => api.put(`/users/${id}/deactivate`).then(r => r.data),
+  // Staff → manager reassignment workflow
+  reassignRequests: ()                              => api.get('/users/reassign-requests').then(r => r.data),
+  reassign:        (staffId: string, mid: string)   => api.post(`/users/${staffId}/reassign`, { target_manager_id: mid }).then(r => r.data),
+  acceptReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/accept`).then(r => r.data),
+  rejectReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/reject`).then(r => r.data),
 }
 
 export const notificationsApi = {

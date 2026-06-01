@@ -3,6 +3,7 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -26,6 +27,8 @@ export class UsersService {
       'role',
       'phone',
       'avatar',
+      'manager_id',
+      'pending_manager_id',
       'created_at',
     ];
     if (viewerRole === 'admin') select.push('is_active');
@@ -117,12 +120,107 @@ export class UsersService {
         'role',
         'phone',
         'avatar',
+        'manager_id',
+        'pending_manager_id',
         'is_active',
         'created_at',
       ],
     });
     if (!user) throw new NotFoundException('User not found');
     return user;
+  }
+
+  // --- Staff → manager reassignment workflow ---
+  // The current owner manager (or an admin) proposes moving a staff member to
+  // another manager. This only sets pending_manager_id; the target manager must
+  // accept before they actually own the staff.
+  async requestReassign(
+    staffId: string,
+    targetManagerId: string,
+    actor: { sub: string; role: string },
+  ) {
+    const staff = await this.userRepo.findOne({
+      where: { user_id: staffId },
+    });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (staff.role !== 'staff') {
+      throw new BadRequestException(
+        'Only staff members can be reassigned / Chỉ có thể chuyển nhân viên',
+      );
+    }
+    // Only the current owner manager or an admin may initiate a reassignment.
+    if (actor.role !== 'admin' && staff.manager_id !== actor.sub) {
+      throw new ForbiddenException(
+        'Only the current manager can reassign this staff member / Chỉ quản lý hiện tại mới có thể chuyển nhân viên này',
+      );
+    }
+    if (!targetManagerId) {
+      throw new BadRequestException(
+        'A target manager is required / Vui lòng chọn quản lý nhận',
+      );
+    }
+    const target = await this.userRepo.findOne({
+      where: { user_id: targetManagerId },
+    });
+    if (!target || target.role !== 'manager') {
+      throw new BadRequestException(
+        'The target must be a manager / Người nhận phải là quản lý',
+      );
+    }
+    if (target.user_id === staff.manager_id) {
+      throw new BadRequestException(
+        'This staff member already reports to that manager / Nhân viên này đã thuộc quản lý đó',
+      );
+    }
+    await this.userRepo.update(staffId, {
+      pending_manager_id: targetManagerId,
+    });
+    return this.findOne(staffId);
+  }
+
+  // Pending requests addressed to a manager (they are the proposed new owner).
+  incomingReassignRequests(managerId: string): Promise<unknown[]> {
+    return this.userRepo.manager.query(
+      `SELECT s.user_id, s.name, s.email, s.avatar,
+         o.user_id AS current_manager_id, o.name AS current_manager_name
+       FROM users s
+       LEFT JOIN users o ON o.user_id = s.manager_id
+       WHERE s.pending_manager_id = $1
+       ORDER BY s.name ASC`,
+      [managerId],
+    );
+  }
+
+  // The target manager accepts: they become the staff member's owner.
+  async acceptReassign(staffId: string, actor: { sub: string; role: string }) {
+    const staff = await this.userRepo.findOne({ where: { user_id: staffId } });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (actor.role !== 'admin' && staff.pending_manager_id !== actor.sub) {
+      throw new ForbiddenException(
+        'There is no reassignment request addressed to you / Không có yêu cầu chuyển nào dành cho bạn',
+      );
+    }
+    await this.userRepo.update(staffId, {
+      manager_id: staff.pending_manager_id,
+      pending_manager_id: null,
+    });
+    return this.findOne(staffId);
+  }
+
+  // The target manager rejects: the pending request is cleared, owner unchanged.
+  async rejectReassign(staffId: string, actor: { sub: string; role: string }) {
+    const staff = await this.userRepo.findOne({ where: { user_id: staffId } });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (actor.role !== 'admin' && staff.pending_manager_id !== actor.sub) {
+      throw new ForbiddenException(
+        'There is no reassignment request addressed to you / Không có yêu cầu chuyển nào dành cho bạn',
+      );
+    }
+    await this.userRepo.update(staffId, { pending_manager_id: null });
+    return this.findOne(staffId);
   }
 
   // Manager creates a new staff account

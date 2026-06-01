@@ -34,11 +34,55 @@ export class UsersController {
     return this.usersService.directory();
   }
 
+  // GET /api/users/reassign-requests — staff reassignment requests addressed to
+  // me (I am the proposed new manager). Declared before :id.
+  @Get('reassign-requests')
+  @Roles('manager', 'admin')
+  reassignRequests(@Request() req: { user: JwtPayload }) {
+    return this.usersService.incomingReassignRequests(req.user.sub);
+  }
+
   // GET /api/users/:id — manager only
   @Get(':id')
   @Roles('manager', 'admin')
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
+  }
+
+  // POST /api/users/:id/reassign — owner manager proposes moving a staff member
+  // to another manager (target must then accept).
+  @Post(':id/reassign')
+  @Roles('manager', 'admin')
+  reassign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+    @Body() body: { target_manager_id: string },
+  ) {
+    return this.usersService.requestReassign(
+      id,
+      body.target_manager_id,
+      req.user,
+    );
+  }
+
+  // POST /api/users/:id/reassign/accept — target manager accepts the request.
+  @Post(':id/reassign/accept')
+  @Roles('manager', 'admin')
+  acceptReassign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.usersService.acceptReassign(id, req.user);
+  }
+
+  // POST /api/users/:id/reassign/reject — target manager rejects the request.
+  @Post(':id/reassign/reject')
+  @Roles('manager', 'admin')
+  rejectReassign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.usersService.rejectReassign(id, req.user);
   }
 
   // POST /api/users — manager creates staff/manager; only admin creates admin
