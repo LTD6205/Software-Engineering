@@ -17,18 +17,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [user, isLoading, pathname, router])
 
-  // Clear any highlighted text when clicking outside a selectable region.
-  // Because most of the UI is user-select:none, the browser won't collapse an
-  // existing selection on its own when you click a non-selectable element.
+  // When clicking outside selectable text / form fields, tidy up:
+  //  - clear any highlighted text (the UI is user-select:none, so the browser
+  //    won't collapse the selection on its own), and
+  //  - blur a focused input/textarea so its blinking caret goes away (clicking
+  //    a non-focusable panel doesn't move focus by itself).
   useEffect(() => {
-    const clearSelectionOnOutsideClick = (e: MouseEvent) => {
+    const onMouseDown = (e: MouseEvent) => {
       const el = e.target as Element | null
-      if (el && typeof el.closest === 'function' && el.closest('.selectable')) return
-      const sel = window.getSelection?.()
-      if (sel && !sel.isCollapsed) sel.removeAllRanges()
+      const closest = (sel: string) =>
+        el && typeof el.closest === 'function' ? el.closest(sel) : null
+
+      if (!closest('.selectable')) {
+        const sel = window.getSelection?.()
+        if (sel && !sel.isCollapsed) sel.removeAllRanges()
+      }
+
+      if (!closest('input, textarea')) {
+        const active = document.activeElement as HTMLElement | null
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+          active.blur()
+        }
+      }
     }
-    document.addEventListener('mousedown', clearSelectionOnOutsideClick)
-    return () => document.removeEventListener('mousedown', clearSelectionOnOutsideClick)
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
   }, [])
 
   if (isLoading) {
