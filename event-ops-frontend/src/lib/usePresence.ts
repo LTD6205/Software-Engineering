@@ -13,14 +13,10 @@ export function usePresence(): Set<string> {
   const [online, setOnline] = useState<string[]>([])
 
   useEffect(() => {
-    let userId: string | null = null
-    const stored = localStorage.getItem('user')
-    if (stored) {
-      try { userId = (JSON.parse(stored) as { user_id: string }).user_id } catch {}
-    }
-
-    const socket = WS_URL ? io(WS_URL) : io()
-    socket.on('connect', () => { if (userId) socket.emit('register', { userId }) })
+    // The server identifies the user from the JWT in the handshake.
+    const token = localStorage.getItem('token')
+    const socket = WS_URL ? io(WS_URL, { auth: { token } }) : io({ auth: { token } })
+    socket.on('connect', () => { socket.emit('register') })
     socket.on('presence', (ids: string[]) => setOnline(ids))
     return () => { socket.disconnect() }
   }, [])

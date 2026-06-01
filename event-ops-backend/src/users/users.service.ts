@@ -24,6 +24,16 @@ export class UsersService {
     });
   }
 
+  // Minimal roster any signed-in user may see (for the online/presence board).
+  // No emails or other sensitive fields.
+  directory() {
+    return this.userRepo.find({
+      select: ['user_id', 'name', 'role'],
+      where: { is_active: true },
+      order: { role: 'ASC', name: 'ASC' },
+    });
+  }
+
   // Get single user
   async findOne(id: string) {
     const user = await this.userRepo.findOne({

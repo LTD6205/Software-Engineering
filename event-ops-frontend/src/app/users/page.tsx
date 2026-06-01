@@ -4,7 +4,6 @@ import { Plus, Users, UserCheck, UserX } from 'lucide-react'
 import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import { useAuth } from '@/context/AuthContext'
-import { useRouter } from 'next/navigation'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
 import { usePresence } from '@/lib/usePresence'
@@ -12,10 +11,10 @@ import { usePresence } from '@/lib/usePresence'
 interface TeamUser {
   user_id: string
   name: string
-  email: string
+  email?: string
   role: string
-  is_active: boolean
-  created_at: string
+  is_active?: boolean
+  created_at?: string
 }
 
 const empty = { name: '', email: '', password: '', role: 'staff' }
@@ -30,7 +29,6 @@ const OFFLINE = 'var(--text-muted)'
 
 export default function UsersPage() {
   const { isManager, isAdmin } = useAuth()
-  const router = useRouter()
   const { t, tError } = useLang()
   const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
@@ -40,10 +38,12 @@ export default function UsersPage() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
 
+  // Everyone can see the presence board. Managers/admins get the full roster
+  // (with emails + management); staff get the minimal directory.
   useEffect(() => {
-    if (!isManager) { router.push('/'); return }
-    usersApi.getAll().then(setUsers).finally(() => setLoading(false))
-  }, [isManager, router])
+    const load = isManager ? usersApi.getAll() : usersApi.directory()
+    load.then(setUsers).finally(() => setLoading(false))
+  }, [isManager])
 
   const roleLabel = (role: string) =>
     role === 'manager' ? t('Manager', 'Quản lý')
@@ -94,13 +94,15 @@ export default function UsersPage() {
               {onlineCount} {t('online', 'trực tuyến')}
             </span>
           </div>
-          <button onClick={() => setShowModal(true)} style={{
-            display: 'flex', alignItems: 'center', gap: '7px',
-            background: 'var(--accent-blue)', color: 'white',
-            border: 'none', borderRadius: '9px', padding: '9px 18px', fontSize: '13px', fontWeight: 600,
-          }}>
-            <Plus size={15} /> {t('Add Member', 'Thêm nhân viên')}
-          </button>
+          {isManager && (
+            <button onClick={() => setShowModal(true)} style={{
+              display: 'flex', alignItems: 'center', gap: '7px',
+              background: 'var(--accent-blue)', color: 'white',
+              border: 'none', borderRadius: '9px', padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+            }}>
+              <Plus size={15} /> {t('Add Member', 'Thêm nhân viên')}
+            </button>
+          )}
         </div>
 
         {/* Role colour legend */}
@@ -144,7 +146,7 @@ export default function UsersPage() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{u.name}</p>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</p>
+                  {u.email && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</p>}
                 </div>
                 <span style={{
                   fontSize: '11px', fontWeight: 600, color: isOnline ? 'var(--accent-green)' : OFFLINE,
@@ -153,23 +155,27 @@ export default function UsersPage() {
                   fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '12px',
                   background: dColor + '22', color: dColor,
                 }}>{roleLabel(u.role)}</span>
-                <span style={{
-                  fontSize: '11px', padding: '3px 8px', borderRadius: '12px',
-                  background: u.is_active ? '#1a3320' : '#2a2a2a',
-                  color: u.is_active ? 'var(--accent-green)' : 'var(--text-muted)',
-                }}>
-                  {u.is_active ? t('Active', 'Hoạt động') : t('Inactive', 'Ngừng')}
-                </span>
-                <button onClick={() => toggleActive(u)} style={{
-                  background: 'none', border: '1px solid var(--border)',
-                  borderRadius: '6px', padding: '5px 8px', cursor: 'pointer',
-                  color: u.is_active ? 'var(--accent-red)' : 'var(--accent-green)',
-                  fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px',
-                }}>
-                  {u.is_active
-                    ? <><UserX size={12} /> {t('Deactivate', 'Vô hiệu hóa')}</>
-                    : <><UserCheck size={12} /> {t('Activate', 'Kích hoạt')}</>}
-                </button>
+                {isManager && (
+                  <span style={{
+                    fontSize: '11px', padding: '3px 8px', borderRadius: '12px',
+                    background: u.is_active ? '#1a3320' : '#2a2a2a',
+                    color: u.is_active ? 'var(--accent-green)' : 'var(--text-muted)',
+                  }}>
+                    {u.is_active ? t('Active', 'Hoạt động') : t('Inactive', 'Ngừng')}
+                  </span>
+                )}
+                {isManager && (
+                  <button onClick={() => toggleActive(u)} style={{
+                    background: 'none', border: '1px solid var(--border)',
+                    borderRadius: '6px', padding: '5px 8px', cursor: 'pointer',
+                    color: u.is_active ? 'var(--accent-red)' : 'var(--accent-green)',
+                    fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    {u.is_active
+                      ? <><UserX size={12} /> {t('Deactivate', 'Vô hiệu hóa')}</>
+                      : <><UserCheck size={12} /> {t('Activate', 'Kích hoạt')}</>}
+                  </button>
+                )}
               </div>
               )
             })}

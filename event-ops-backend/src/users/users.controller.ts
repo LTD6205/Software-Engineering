@@ -27,6 +27,13 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  // GET /api/users/directory — any signed-in user (online/presence board).
+  // Must be declared before :id so it isn't captured as an id.
+  @Get('directory')
+  directory() {
+    return this.usersService.directory();
+  }
+
   // GET /api/users/:id — manager only
   @Get(':id')
   @Roles('manager', 'admin')

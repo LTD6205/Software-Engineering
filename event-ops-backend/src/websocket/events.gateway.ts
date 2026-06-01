@@ -2,10 +2,10 @@ import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
-  MessageBody,
   ConnectedSocket,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({ cors: { origin: '*' } })
@@ -13,26 +13,35 @@ export class EventsGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
+  constructor(private readonly jwtService: JwtService) {}
+
   // Presence tracking. A user may have several sockets open (multiple tabs),
   // so we count sockets per user and only treat a user as offline once the
   // last one disconnects.
   private socketToUser = new Map<string, string>();
   private onlineCounts = new Map<string, number>();
 
-  // Frontend calls: socket.emit('register', { userId })
+  // Frontend connects with the JWT in the handshake auth, then emits
+  // 'register'. We derive the user id from the *verified* token rather than
+  // trusting any client-supplied value, so presence cannot be spoofed.
   @SubscribeMessage('register')
-  handleRegister(
-    @MessageBody() data: { userId: string },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.userId) return;
-    void client.join(`user:${data.userId}`);
+  handleRegister(@ConnectedSocket() client: Socket): void {
+    const token =
+      (client.handshake.auth?.token as string | undefined) ??
+      client.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '');
 
-    this.socketToUser.set(client.id, data.userId);
-    this.onlineCounts.set(
-      data.userId,
-      (this.onlineCounts.get(data.userId) ?? 0) + 1,
-    );
+    let userId: string;
+    try {
+      const payload = this.jwtService.verify<{ sub: string }>(token ?? '');
+      userId = payload.sub;
+    } catch {
+      return; // unauthenticated socket — ignore
+    }
+    if (!userId) return;
+
+    void client.join(`user:${userId}`);
+    this.socketToUser.set(client.id, userId);
+    this.onlineCounts.set(userId, (this.onlineCounts.get(userId) ?? 0) + 1);
 
     // Send the current presence list to the new client, then tell everyone.
     client.emit('presence', this.getOnlineUserIds());

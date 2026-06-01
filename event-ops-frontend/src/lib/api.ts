@@ -38,6 +38,7 @@ export const tasksApi = {
 
 export const usersApi = {
   getAll: () => api.get('/users').then(r => r.data),
+  directory: () => api.get('/users/directory').then(r => r.data),
   getOne: (id: string) => api.get(`/users/${id}`).then(r => r.data),
   create: (data: object) => api.post('/users', data).then(r => r.data),
   update: (id: string, data: object) => api.put(`/users/${id}`, data).then(r => r.data),

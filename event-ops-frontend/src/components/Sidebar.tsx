@@ -15,12 +15,18 @@ export default function Sidebar() {
     : user?.role === 'admin' ? t('Admin', 'Quản trị viên')
     : t('Staff', 'Nhân viên')
 
+  // Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
+  const roleColor =
+    user?.role === 'admin' ? 'var(--accent-red)'
+    : user?.role === 'manager' ? 'var(--accent-amber)'
+    : 'var(--accent-green)'
+
   const nav = [
     { href: '/',              icon: LayoutDashboard, label: t('Dashboard', 'Tổng quan'),      show: true },
     { href: '/events',        icon: CalendarDays,    label: t('Events', 'Sự kiện'),           show: true },
     { href: '/tasks',         icon: CheckSquare,     label: t('Tasks', 'Công việc'),          show: true },
     { href: '/ai',            icon: Bot,             label: t('AI Assistant', 'Trợ lý AI'),   show: isManager },
-    { href: '/users',         icon: Users,           label: t('Team', 'Nhân viên'),           show: isManager },
+    { href: '/users',         icon: Users,           label: t('Team', 'Nhân viên'),           show: true },
   ]
 
   return (
@@ -76,9 +82,17 @@ export default function Sidebar() {
 
       {/* User info + logout */}
       <div style={{ padding: '12px 10px', borderTop: '1px solid var(--border)' }}>
-        <div style={{ padding: '8px 10px', marginBottom: '4px' }}>
-          <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.name}</p>
-          <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{roleLabel}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 10px', marginBottom: '4px' }}>
+          {/* Active bubble — coloured by the user's role level */}
+          <span style={{
+            width: '10px', height: '10px', borderRadius: '50%',
+            background: roleColor, flexShrink: 0,
+            boxShadow: `0 0 0 3px ${roleColor}22`,
+          }} />
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{user?.name}</p>
+            <p style={{ fontSize: '11px', color: roleColor, fontWeight: 600 }}>{roleLabel}</p>
+          </div>
         </div>
         <div
           onClick={logout}
