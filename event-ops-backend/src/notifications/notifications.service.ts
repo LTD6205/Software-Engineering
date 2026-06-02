@@ -54,16 +54,34 @@ export class NotificationsService {
     }
   }
 
+  // Everyone who should hear about a task's deadline: the assigned staff, each
+  // of their owning managers, and the event manager who owns the event.
+  private async deadlineRecipients(taskId: string): Promise<string[]> {
+    const rows: Array<{ uid: string }> = await this.notifRepo.manager.query(
+      `SELECT DISTINCT uid FROM (
+         SELECT ta.user_id AS uid FROM task_assignments ta WHERE ta.task_id = $1
+         UNION
+         SELECT u.manager_id AS uid FROM task_assignments ta
+           JOIN users u ON u.user_id = ta.user_id
+           WHERE ta.task_id = $1 AND u.manager_id IS NOT NULL
+         UNION
+         SELECT e.created_by AS uid FROM tasks t
+           JOIN events e ON e.event_id = t.event_id
+           WHERE t.task_id = $1 AND e.created_by IS NOT NULL
+       ) x WHERE uid IS NOT NULL`,
+      [taskId],
+    );
+    return rows.map((r) => r.uid);
+  }
+
   private async sendNotification(task: Task, type: string, message: string) {
-    const assignments = await this.assignRepo.find({
-      where: { task_id: task.task_id },
-    });
-    for (const assignment of assignments) {
+    const recipients = await this.deadlineRecipients(task.task_id);
+    for (const userId of recipients) {
       // Skip if this user already has an unread notification of the same type
       // for this task — prevents the cron from spamming duplicate reminders.
       const existing = await this.notifRepo.findOne({
         where: {
-          user_id: assignment.user_id,
+          user_id: userId,
           task_id: task.task_id,
           type,
           is_read: false,
@@ -72,13 +90,13 @@ export class NotificationsService {
       if (existing) continue;
 
       await this.notifRepo.save({
-        user_id: assignment.user_id,
+        user_id: userId,
         task_id: task.task_id,
         type,
         message,
       });
       // Push real-time via WebSocket
-      this.gateway.sendToUser(assignment.user_id, {
+      this.gateway.sendToUser(userId, {
         type,
         message,
         task_id: task.task_id,

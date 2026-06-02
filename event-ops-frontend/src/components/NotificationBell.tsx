@@ -28,6 +28,19 @@ const typeIcon: Partial<Record<Notification['type'], React.ReactNode>> = {
 }
 const fallbackIcon = <Info size={14} color="var(--text-muted)" />
 
+// Deadline notifications are rendered as alerts: tinted row, coloured left
+// border, and a small uppercase tag.
+const ALERT_ACCENT: Record<string, string> = {
+  overdue: 'var(--accent-red)',
+  reminder: 'var(--accent-amber)',
+  alert: 'var(--accent-amber)',
+}
+const ALERT_TINT: Record<string, string> = {
+  overdue: 'rgba(239,68,68,0.13)',
+  reminder: 'rgba(245,158,11,0.13)',
+  alert: 'rgba(245,158,11,0.13)',
+}
+
 export default function NotificationBell() {
   const { notifications, unreadCount, markRead, markAllRead, showHistory, setShowHistory } = useNotifications()
   const { t, tError } = useLang()
@@ -121,21 +134,42 @@ export default function NotificationBell() {
                 <p style={{ fontSize: '13px' }}>{t('No notifications yet', 'Chưa có thông báo nào')}</p>
               </div>
             ) : (
-              notifications.map(n => (
-                <div key={n.notification_id} style={{
+              notifications.map(n => {
+                const accent = ALERT_ACCENT[n.type]
+                const isAlert = !!accent
+                const alertTag = n.type === 'overdue'
+                  ? t('Overdue', 'Quá hạn')
+                  : n.type === 'reminder'
+                    ? t('Due soon', 'Sắp đến hạn')
+                    : t('Alert', 'Cảnh báo')
+                return (
+                <div key={n.notification_id}
+                  className={n.type === 'overdue' && !n.is_read ? 'overdue-glow' : undefined}
+                  style={{
                   display: 'flex', alignItems: 'flex-start', gap: '10px',
                   padding: '10px 12px', borderRadius: '8px',
-                  background: n.is_read ? 'transparent' : 'var(--bg-hover)',
+                  borderLeft: isAlert ? `3px solid ${accent}` : '3px solid transparent',
+                  background: isAlert
+                    ? ALERT_TINT[n.type]
+                    : (n.is_read ? 'transparent' : 'var(--bg-hover)'),
+                  opacity: isAlert && n.is_read ? 0.7 : 1,
                 }}>
                   <div style={{
                     width: '26px', height: '26px', borderRadius: '7px', flexShrink: 0,
-                    background: 'var(--bg-secondary)',
+                    background: isAlert ? `${accent}22` : 'var(--bg-secondary)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
                     {typeIcon[n.type] ?? fallbackIcon}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p className="selectable" style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{tError(n.message)}</p>
+                    {isAlert && (
+                      <span style={{
+                        display: 'inline-block', fontSize: '9.5px', fontWeight: 800, letterSpacing: '0.05em',
+                        textTransform: 'uppercase', color: accent,
+                        background: `${accent}22`, padding: '1px 6px', borderRadius: '5px', marginBottom: '4px',
+                      }}>{alertTag}</span>
+                    )}
+                    <p className="selectable" style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.4, fontWeight: isAlert ? 600 : 400 }}>{tError(n.message)}</p>
                     <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{timeAgo(n.created_at, t)}</p>
                   </div>
                   {!n.is_read && (
@@ -148,7 +182,8 @@ export default function NotificationBell() {
                     </button>
                   )}
                 </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>
