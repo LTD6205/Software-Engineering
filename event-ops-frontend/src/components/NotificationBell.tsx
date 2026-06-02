@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, CheckSquare, ArrowRightLeft, Info } from 'lucide-react'
+import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, CheckSquare, ArrowRightLeft, Info, History } from 'lucide-react'
 import { useNotifications } from '@/lib/useNotifications'
 import { useLang } from '@/context/LanguageContext'
 import { Notification } from '@/lib/types'
@@ -29,7 +29,7 @@ const typeIcon: Partial<Record<Notification['type'], React.ReactNode>> = {
 const fallbackIcon = <Info size={14} color="var(--text-muted)" />
 
 export default function NotificationBell() {
-  const { notifications, unreadCount, markRead } = useNotifications()
+  const { notifications, unreadCount, markRead, markAllRead, showHistory, setShowHistory } = useNotifications()
   const { t, tError } = useLang()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -78,14 +78,40 @@ export default function NotificationBell() {
         }}>
           <div style={{
             padding: '12px 16px', borderBottom: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
           }}>
             <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
               {t('Notifications', 'Thông báo')}
             </p>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              {unreadCount} {t('unread', 'chưa đọc')}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginRight: '4px' }}>
+                {unreadCount} {t('unread', 'chưa đọc')}
+              </span>
+              {/* Mark all as read */}
+              <button
+                onClick={markAllRead}
+                disabled={unreadCount === 0}
+                title={t('Mark all as read', 'Đánh dấu tất cả đã đọc')}
+                style={{
+                  background: 'none', border: 'none', display: 'flex', padding: '5px', borderRadius: '6px',
+                  cursor: unreadCount === 0 ? 'default' : 'pointer',
+                  color: unreadCount === 0 ? 'var(--text-muted)' : 'var(--accent-green)',
+                  opacity: unreadCount === 0 ? 0.4 : 1,
+                }}>
+                <CheckCheck size={16} />
+              </button>
+              {/* Toggle history (all vs unread only) */}
+              <button
+                onClick={() => setShowHistory(h => !h)}
+                title={showHistory ? t('Show unread only', 'Chỉ hiện chưa đọc') : t('Show all (history)', 'Hiện tất cả (lịch sử)')}
+                style={{
+                  background: showHistory ? 'var(--bg-hover)' : 'none', border: 'none',
+                  display: 'flex', padding: '5px', borderRadius: '6px', cursor: 'pointer',
+                  color: showHistory ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                }}>
+                <History size={16} />
+              </button>
+            </div>
           </div>
 
           <div style={{ overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>

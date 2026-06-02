@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { CalendarDays, CheckSquare, AlertTriangle, Clock } from 'lucide-react'
 import { eventsApi } from '@/lib/api'
+import { useLiveData } from '@/lib/useLiveData'
 import { Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import StatCard from '@/components/StatCard'
@@ -25,6 +26,12 @@ export default function DashboardPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // Live updates: refresh stats + event list when tasks/events change anywhere.
+  const liveRefresh = useCallback(() => {
+    eventsApi.getAll().then(setEvents).catch(() => {})
+  }, [])
+  useLiveData(liveRefresh)
 
   const total     = events.length
   const active    = events.filter(e => e.status === 'in_progress').length

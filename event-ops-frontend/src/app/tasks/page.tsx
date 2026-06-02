@@ -13,6 +13,7 @@ import EventPicker from '@/components/EventPicker'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
+import { useLiveData, type DataChange } from '@/lib/useLiveData'
 
 const emptyTask = {
   task_name: '', description: '',
@@ -79,6 +80,16 @@ function TasksContent() {
       setSelectedEvent(events[0].event_id)
     }
   }, [events, selectedEvent])
+
+  // Live updates: when anyone changes a task/event, refresh the board + milestone
+  // without a manual reload (e.g. a staff completing the last task).
+  const onLiveChange = useCallback((c: DataChange) => {
+    refreshEvents()
+    if (selectedEvent && (!c.event_id || c.event_id === selectedEvent)) {
+      tasksApi.getByEvent(selectedEvent).then(setTasks).catch(() => {})
+    }
+  }, [selectedEvent, refreshEvents])
+  useLiveData(onLiveChange)
 
   // Reload tasks whenever the selected event changes. setLoading(true) up front
   // is intentional so the spinner shows immediately while the fetch runs.

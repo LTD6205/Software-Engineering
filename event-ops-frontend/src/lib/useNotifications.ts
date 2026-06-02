@@ -7,6 +7,8 @@ import { useSocket } from './useSocket'
 export function useNotifications() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount]     = useState(0)
+  // history = show all (read + unread); otherwise just unread.
+  const [showHistory, setShowHistory]     = useState(false)
 
   // Read userId from localStorage (set by AuthContext on login). Computed lazily
   // so we don't need a mount effect that synchronously sets state.
@@ -19,11 +21,13 @@ export function useNotifications() {
   const fetchNotifications = useCallback(async () => {
     if (!userId) return
     try {
-      const data = await notificationsApi.getUnread(userId)
+      const data = showHistory
+        ? await notificationsApi.getAll(userId)
+        : await notificationsApi.getUnread(userId)
       setNotifications(data)
       setUnreadCount(data.filter((n: Notification) => !n.is_read).length)
     } catch {}
-  }, [userId])
+  }, [userId, showHistory])
 
   // Initial load on mount. The state update lives in fetchNotifications' async
   // body, which is the intended place for it — fetching is exactly what this
@@ -42,5 +46,14 @@ export function useNotifications() {
     fetchNotifications()
   }
 
-  return { notifications, unreadCount, markRead, refresh: fetchNotifications }
+  const markAllRead = async () => {
+    if (!userId) return
+    await notificationsApi.markAllRead(userId)
+    fetchNotifications()
+  }
+
+  return {
+    notifications, unreadCount, markRead, markAllRead,
+    showHistory, setShowHistory, refresh: fetchNotifications,
+  }
 }

@@ -12,6 +12,17 @@ export class NotificationsController {
     return this.notifsService.getUnread(userId);
   }
 
+  // Full history (read + unread). Declared before the bare :id-style routes.
+  @Get('user/:userId/all')
+  getAll(@Param('userId') userId: string) {
+    return this.notifsService.getAll(userId);
+  }
+
+  @Put('user/:userId/read-all')
+  markAllRead(@Param('userId') userId: string) {
+    return this.notifsService.markAllRead(userId);
+  }
+
   @Put(':id/read')
   markRead(@Param('id') id: string) {
     return this.notifsService.markRead(id);

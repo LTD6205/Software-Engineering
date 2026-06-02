@@ -60,8 +60,10 @@ export const usersApi = {
 }
 
 export const notificationsApi = {
-  getUnread: (userId: string) => api.get(`/notifications/user/${userId}`).then(r => r.data),
-  markRead:  (id: string)     => api.put(`/notifications/${id}/read`).then(r => r.data),
+  getUnread:   (userId: string) => api.get(`/notifications/user/${userId}`).then(r => r.data),
+  getAll:      (userId: string) => api.get(`/notifications/user/${userId}/all`).then(r => r.data),
+  markRead:    (id: string)     => api.put(`/notifications/${id}/read`).then(r => r.data),
+  markAllRead: (userId: string) => api.put(`/notifications/user/${userId}/read-all`).then(r => r.data),
 }
 
 export const aiApi = {

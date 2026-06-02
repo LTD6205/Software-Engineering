@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Event } from '../entities/event.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EventsGateway } from '../websocket/events.gateway';
 
 interface Viewer {
   sub: string;
@@ -19,7 +20,16 @@ export class EventsService {
     @InjectRepository(Event)
     private readonly eventRepo: Repository<Event>,
     private readonly notifications: NotificationsService,
+    private readonly gateway: EventsGateway,
   ) {}
+
+  // Tell connected clients something changed so they can refetch live.
+  private broadcastChange(eventId?: string) {
+    this.gateway.broadcast('data_changed', {
+      kind: 'event',
+      event_id: eventId,
+    });
+  }
 
   // All member user ids of an event: the member managers + all of their staff.
   async getMemberIds(eventId: string): Promise<string[]> {
@@ -125,6 +135,7 @@ export class EventsService {
       'event',
       `You were added to the event "${event.event_name}". / Bạn đã được thêm vào sự kiện "${event.event_name}".`,
     );
+    this.broadcastChange(event.event_id);
     return this.findOne(event.event_id);
   }
 
@@ -144,6 +155,7 @@ export class EventsService {
         'event',
         `You were added to the event "${event.event_name}". / Bạn đã được thêm vào sự kiện "${event.event_name}".`,
       );
+      this.broadcastChange(eventId);
     }
     return this.getEventManagers(eventId);
   }
@@ -160,6 +172,7 @@ export class EventsService {
       'event',
       `You were removed from the event "${event.event_name}". / Bạn đã bị gỡ khỏi sự kiện "${event.event_name}".`,
     );
+    this.broadcastChange(eventId);
     return this.getEventManagers(eventId);
   }
 
@@ -167,6 +180,7 @@ export class EventsService {
     await this.findOne(id);
     this.assertValidDateRange(data.start_time, data.end_time);
     await this.eventRepo.update(id, data);
+    this.broadcastChange(id);
     return this.findOne(id);
   }
 
@@ -251,6 +265,7 @@ export class EventsService {
       null,
       id,
     );
+    this.broadcastChange(id);
     return this.findOne(id);
   }
 
@@ -296,6 +311,7 @@ export class EventsService {
       'event',
       `The event "${event.event_name}" was deleted. / Sự kiện "${event.event_name}" đã bị xóa.`,
     );
+    this.broadcastChange(id);
     return { message: 'Event deleted' };
   }
 }

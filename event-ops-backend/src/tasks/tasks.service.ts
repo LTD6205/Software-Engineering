@@ -33,6 +33,11 @@ export class TasksService {
     private readonly events: EventsService,
   ) {}
 
+  // Tell connected clients something changed so they can refetch live.
+  private broadcastChange(eventId?: string) {
+    this.gateway.broadcast('data_changed', { kind: 'task', event_id: eventId });
+  }
+
   // ── Tasks ──────────────────────────────────────────────────
 
   async findAllByEvent(
@@ -108,6 +113,7 @@ export class TasksService {
     const task = await this.taskRepo.save(this.taskRepo.create(data));
     // Adding a task moves its event into "in progress".
     await this.recomputeEventStatus(task.event_id);
+    this.broadcastChange(task.event_id);
     return task;
   }
 
@@ -190,6 +196,7 @@ export class TasksService {
     if (data.status !== undefined) {
       await this.recomputeEventStatus(old.event_id);
     }
+    this.broadcastChange(old.event_id);
     return this.findOne(id);
   }
 
@@ -208,6 +215,7 @@ export class TasksService {
     await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
     await this.taskRepo.delete(id);
     await this.recomputeEventStatus(task.event_id);
+    this.broadcastChange(task.event_id);
     return { message: 'Task deleted' };
   }
 
@@ -361,6 +369,7 @@ export class TasksService {
       `You were removed from the task "${task.task_name}". / Bạn đã bị gỡ khỏi công việc "${task.task_name}".`,
       taskId,
     );
+    this.broadcastChange(task.event_id);
     return this.getAssigneesDetailed(taskId);
   }
 

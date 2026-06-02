@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Plus, CalendarDays } from 'lucide-react'
 import { eventsApi, getErrorMessage } from '@/lib/api'
+import { useLiveData } from '@/lib/useLiveData'
 import { Event, ManagerOption } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
@@ -60,6 +61,13 @@ export default function EventsPage() {
 
   const toggle = (list: string[], id: string) =>
     list.includes(id) ? list.filter(x => x !== id) : [...list, id]
+
+  // Live updates: refetch the event list (status badges + milestones) whenever
+  // anyone changes a task or event, no manual reload needed.
+  const liveRefresh = useCallback(() => {
+    eventsApi.getAll().then(setEvents).catch(() => {})
+  }, [])
+  useLiveData(liveRefresh)
 
   const handleCreate = async () => {
     if (!form.event_name || !form.startDate || !form.endDate) {

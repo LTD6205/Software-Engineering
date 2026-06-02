@@ -141,6 +141,23 @@ export class NotificationsService {
     });
   }
 
+  // Full history (read + unread), most recent first, capped so it stays light.
+  getAll(userId: string) {
+    return this.notifRepo.find({
+      where: { user_id: userId },
+      order: { created_at: 'DESC' },
+      take: 50,
+    });
+  }
+
+  async markAllRead(userId: string) {
+    await this.notifRepo.update(
+      { user_id: userId, is_read: false },
+      { is_read: true },
+    );
+    return { message: 'All notifications marked read' };
+  }
+
   markRead(notificationId: string) {
     return this.notifRepo.update(notificationId, { is_read: true });
   }
