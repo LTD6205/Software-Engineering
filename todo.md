@@ -52,6 +52,21 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
   `cancelReassign()`; the owner manager sees a red "Cancel request" button while a move is
   pending and can withdraw it before the target accepts/rejects (notifies all three parties).
 - **New-task notification** — adding a task announces it to the event manager (see Tasks above).
+- **Month/date/status/priority filters** — Events page filters by time scope (Nearby / Month /
+  Date / All) + status; Tasks page filters by time scope (Nearby / All) + status + priority.
+  Both default to **All** (shown first); **Nearby** = ±30 days around today
+  (`src/lib/filters.ts`). Frontend-only over the already role-scoped lists; empty-filter
+  states offer a one-click "Show all".
+- **Unified dropdown UI** — one `components/Dropdown.tsx` (button + popup menu, mirrors
+  EventPicker) replaced every native `<select>` (filters, create-task priority, create-user
+  role, reassign-manager, the task-status changer) so the look + mechanism are identical app-wide.
+- **Unified date/time/month inputs** — all date/time/month boxes (filters + create/edit forms +
+  the task deadline editor) share the one global input style, and are typable + selectable. The
+  month filter starts on the current month / today so it never shows an empty "----------" mask.
+- **Checked the "0-task event crashes Tasks" report** — could NOT reproduce. `findAllByEvent`
+  has an early return for 0 tasks (the only array query is safely behind it). Verified an event
+  manager fetching a 0-task event returns `[]` cleanly on both the current repo code and the
+  live server. No code change needed; if a crash recurs, capture the backend stack trace.
 - **Schema robustness: FKs now `ON DELETE CASCADE`** — every foreign key that points at a
   task (`task_logs`, `task_assignments`, `task_dependencies` ×2, `ai_task_map`,
   `notifications.task_id`) plus `tasks.event_id` was switched to `ON DELETE CASCADE`, so
@@ -77,9 +92,10 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
       (`events.service.ts:277`, `tasks.service.ts:209`). Nothing creates/reads a dependency,
       and `tasks.service.ts` injects `depRepo` but never uses it. Needed if AI milestone
       recalculation is built; otherwise remove the table, entity, and injection.
-- [ ] **Removing the last manager** leaves an event with 0 members (headcount 0).
-      `removeManager()` has no guard and no empty-state warning. Add a guard or a clear
-      empty-state.
+- [x] **Removing the last manager / empty event** → resolved (allow freely, warn the manager).
+      No backend guard/confirm; a 0-member event highlights its card amber (border + glow) with
+      a clickable "No members yet — add a manager" warning banner, shown only to those who can
+      manage members. Headcount chip also reads "No members" in amber.
 
 ## Features that could be improved / added (nice-to-have, not blocking)
 

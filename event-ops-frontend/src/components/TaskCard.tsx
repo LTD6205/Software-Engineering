@@ -5,6 +5,7 @@ import { Task } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 import Avatar from './Avatar'
+import Dropdown from './Dropdown'
 
 interface Props {
   task: Task
@@ -129,7 +130,7 @@ export default function TaskCard({ task, onStatusChange, isCreator, canManage, o
                   if (e.target.value && onDeadlineChange) onDeadlineChange(task.task_id, new Date(e.target.value).toISOString())
                   setEditingDeadline(false)
                 }}
-                style={{ fontSize: '11px', padding: '3px 6px', width: 'auto' }}
+                style={{ width: 'auto', padding: '4px 8px', fontSize: '12px' }}
               />
             ) : (
               <span
@@ -159,14 +160,14 @@ export default function TaskCard({ task, onStatusChange, isCreator, canManage, o
               </button>
             )}
           </div>
-          <select value={task.status} onChange={e => { e.stopPropagation(); onStatusChange(task.task_id, e.target.value) }}
+          <Dropdown
+            size="sm"
+            value={task.status}
             disabled={options.length <= 1}
-            style={{ fontSize: '11px', padding: '3px 6px', width: 'auto', cursor: options.length <= 1 ? 'not-allowed' : 'pointer' }}
-            onClick={e => e.stopPropagation()}>
-            {options.map(st => (
-              <option key={st} value={st}>{statusLabel(st)}</option>
-            ))}
-          </select>
+            onChange={st => onStatusChange(task.task_id, st)}
+            ariaLabel={t('Change status', 'Đổi trạng thái')}
+            options={options.map(st => ({ value: st, label: statusLabel(st), color: (STATUS[st] || STATUS.pending).color }))}
+          />
         </div>
       </div>
     </div>

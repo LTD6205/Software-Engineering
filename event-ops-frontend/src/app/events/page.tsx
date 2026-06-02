@@ -3,9 +3,11 @@ import { useEffect, useState, useCallback } from 'react'
 import { Plus, CalendarDays } from 'lucide-react'
 import { eventsApi, getErrorMessage } from '@/lib/api'
 import { useLiveData } from '@/lib/useLiveData'
+import { isEventNearby, isEventInMonth, isEventOnDate, NEARBY_DAYS } from '@/lib/filters'
 import { Event, ManagerOption } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
+import Dropdown from '@/components/Dropdown'
 import Modal from '@/components/Modal'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useRouter } from 'next/navigation'
@@ -40,6 +42,19 @@ export default function EventsPage() {
   const [detForm, setDetForm] = useState({ event_name: '', description: '' })
   const [detErr, setDetErr] = useState('')
   const [detSaving, setDetSaving] = useState(false)
+  // Filters — time scope (default "all") + status. The month/date pickers start
+  // on the current month / today so they never show an empty "----------" mask.
+  const [timeScope, setTimeScope] = useState<'all' | 'nearby' | 'month' | 'date'>('all')
+  const [monthVal, setMonthVal] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [dateVal, setDateVal] = useState(() => {
+    const d = new Date()
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  })
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all')
   const router = useRouter()
   const { canManageEvents } = useAuth()
   const { t, tError } = useLang()
@@ -236,6 +251,26 @@ export default function EventsPage() {
     </div>
   )
 
+  // Apply the active filters (status + time scope) to the visible events.
+  const filteredEvents = events.filter(ev => {
+    if (statusFilter !== 'all' && ev.status !== statusFilter) return false
+    if (timeScope === 'nearby') return isEventNearby(ev.start_time, ev.end_time)
+    if (timeScope === 'month')  return isEventInMonth(ev.start_time, ev.end_time, monthVal)
+    if (timeScope === 'date')   return isEventOnDate(ev.start_time, ev.end_time, dateVal)
+    return true // 'all'
+  })
+  const resetFilters = () => { setTimeScope('all'); setStatusFilter('all'); setMonthVal(''); setDateVal('') }
+
+  // A small pill button used by the filter bar.
+  const pill = (active: boolean, label: string, onClick: () => void) => (
+    <button onClick={onClick} style={{
+      fontSize: '12px', fontWeight: 600, padding: '6px 12px', borderRadius: '8px', cursor: 'pointer',
+      background: active ? 'var(--accent-blue)' : 'var(--bg-card)',
+      color: active ? 'white' : 'var(--text-secondary)',
+      border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border)'}`,
+    }}>{label}</button>
+  )
+
   return (
     <div>
       <TopBar title="Events" titleVi="Sự kiện" />
@@ -243,7 +278,8 @@ export default function EventsPage() {
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            {events.length} {t(events.length === 1 ? 'event total' : 'events total', 'sự kiện')}
+            {filteredEvents.length}{filteredEvents.length !== events.length ? ` / ${events.length}` : ''}{' '}
+            {t(events.length === 1 ? 'event' : 'events', 'sự kiện')}
           </p>
           {canManageEvents && (
             <button
@@ -258,6 +294,38 @@ export default function EventsPage() {
             </button>
           )}
         </div>
+
+        {/* Filter bar: time scope (default Nearby) + status. */}
+        {!loading && events.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+            {pill(timeScope === 'all', t('All', 'Tất cả'), () => setTimeScope('all'))}
+            {pill(timeScope === 'nearby', t('Nearby', 'Gần đây'), () => setTimeScope('nearby'))}
+            {pill(timeScope === 'month', t('Month', 'Tháng'), () => setTimeScope('month'))}
+            {pill(timeScope === 'date', t('Date', 'Ngày'), () => setTimeScope('date'))}
+            {timeScope === 'month' && (
+              <input type="month" value={monthVal} onChange={e => setMonthVal(e.target.value)}
+                style={{ width: 'auto', padding: '6px 10px', fontSize: '12px' }} />
+            )}
+            {timeScope === 'date' && (
+              <input type="date" value={dateVal} onChange={e => setDateVal(e.target.value)}
+                style={{ width: 'auto', padding: '6px 10px', fontSize: '12px' }} />
+            )}
+            <span style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+            <Dropdown size="sm" value={statusFilter} onChange={v => setStatusFilter(v as typeof statusFilter)}
+              ariaLabel={t('Filter by status', 'Lọc theo trạng thái')}
+              options={[
+                { value: 'all', label: t('All statuses', 'Mọi trạng thái') },
+                { value: 'pending', label: t('Pending', 'Chờ xử lý'), color: 'var(--accent-amber)' },
+                { value: 'in_progress', label: t('In Progress', 'Đang làm'), color: 'var(--accent-blue)' },
+                { value: 'completed', label: t('Completed', 'Hoàn thành'), color: 'var(--accent-green)' },
+              ]} />
+            {timeScope === 'nearby' && (
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {t(`±${NEARBY_DAYS} days around today`, `±${NEARBY_DAYS} ngày quanh hôm nay`)}
+              </span>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading...', 'Đang tải...')}</p>
@@ -279,9 +347,21 @@ export default function EventsPage() {
               </p>
             )}
           </div>
+        ) : filteredEvents.length === 0 ? (
+          <div style={{
+            background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
+            borderRadius: '12px', padding: '50px', textAlign: 'center',
+          }}>
+            <CalendarDays size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
+            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No events match this filter', 'Không có sự kiện khớp bộ lọc')}</p>
+            <button onClick={resetFilters} style={{
+              marginTop: '12px', background: 'var(--accent-blue)', color: 'white', border: 'none',
+              borderRadius: '8px', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+            }}>{t('Show all events', 'Hiện tất cả sự kiện')}</button>
+          </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '12px' }}>
-            {events.map(event => (
+            {filteredEvents.map(event => (
               <EventCard
                 key={event.event_id}
                 event={event}

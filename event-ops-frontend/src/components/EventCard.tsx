@@ -1,6 +1,6 @@
 'use client'
 import { useRef, useState } from 'react'
-import { Calendar, Trash2, ChevronRight, Users, Pencil } from 'lucide-react'
+import { Calendar, Trash2, ChevronRight, Users, Pencil, AlertTriangle } from 'lucide-react'
 import { Event } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
@@ -46,23 +46,29 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
+  // An event with no members needs a manager — warn whoever can manage members
+  // (an event manager) so they don't forget to staff it.
+  const needsMembers = event.people_count === 0 && !!onManageMembers
+  const borderIdle = needsMembers ? 'var(--accent-amber)' : 'var(--border)'
   return (
     <div
       onMouseDown={e => { downPos.current = { x: e.clientX, y: e.clientY } }}
       onClick={handleCardClick}
       style={{
-      background: 'var(--bg-card)', border: '1px solid var(--border)',
-      borderLeft: `3px solid ${accent}`,
+      background: 'var(--bg-card)',
+      border: `1px solid ${borderIdle}`,
+      borderLeft: `3px solid ${needsMembers ? 'var(--accent-amber)' : accent}`,
       borderRadius: '12px', padding: '16px 20px',
       display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '12px',
       cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s',
+      boxShadow: needsMembers ? '0 0 14px rgba(245,158,11,0.18)' : undefined,
     }}
     onMouseEnter={e => {
-      (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-light)'
+      (e.currentTarget as HTMLElement).style.borderColor = needsMembers ? 'var(--accent-amber)' : 'var(--border-light)'
       ;(e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'
     }}
     onMouseLeave={e => {
-      (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
+      (e.currentTarget as HTMLElement).style.borderColor = borderIdle
       ;(e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -103,12 +109,14 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
             title={onManageMembers ? t('Manage members', 'Quản lý thành viên') : t('People in this event', 'Số người trong sự kiện')}
             style={{
               display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
-              color: 'var(--text-secondary)', background: 'var(--bg-hover)',
+              // An empty event (no members) is flagged amber so it's obvious it needs a manager.
+              color: event.people_count === 0 ? 'var(--accent-amber)' : 'var(--text-secondary)',
+              background: 'var(--bg-hover)',
               padding: '4px 10px', borderRadius: '20px',
               border: `1px solid ${onManageMembers ? 'var(--border-light)' : 'var(--border)'}`,
               cursor: onManageMembers ? 'pointer' : 'default',
             }}>
-            <Users size={13} /> {event.people_count}
+            <Users size={13} /> {event.people_count === 0 ? t('No members', 'Chưa có thành viên') : event.people_count}
           </span>
         )}
         <StatusBadge status={event.status} />
@@ -122,6 +130,20 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
         )}
         <ChevronRight size={15} color="var(--text-muted)" />
       </div>
+      {/* Empty-event warning for managers: nudge them to add a member. */}
+      {needsMembers && (
+        <button
+          onClick={e => { e.stopPropagation(); onManageMembers!(event) }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '7px', width: '100%', textAlign: 'left',
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)',
+            borderRadius: '8px', padding: '8px 11px', cursor: 'pointer',
+            color: 'var(--accent-amber)', fontSize: '12px', fontWeight: 600,
+          }}>
+          <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+          {t('No members yet — add a manager to staff this event', 'Chưa có thành viên — thêm quản lý để bố trí nhân sự')}
+        </button>
+      )}
       {/* Optional description, collapsed behind "See more" when long. */}
       {desc && (
         <p className="selectable" onClick={e => e.stopPropagation()} style={{

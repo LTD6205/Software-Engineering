@@ -3,9 +3,11 @@ import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
+import { isDeadlineNearby, NEARBY_DAYS } from '@/lib/filters'
 import { Task, Event } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
+import Dropdown from '@/components/Dropdown'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
 import MilestoneBar from '@/components/MilestoneBar'
@@ -51,6 +53,10 @@ function TasksContent() {
   // Avatar re-select picker: the task whose assignees are being edited.
   const [editingAssignees, setEditingAssignees] = useState<Task | null>(null)
   const [pickedStaff, setPickedStaff] = useState<string[]>([])
+  // Filters — time scope (default "all") + status + priority.
+  const [taskScope, setTaskScope]       = useState<'all' | 'nearby'>('all')
+  const [taskStatus, setTaskStatus]     = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'overdue'>('all')
+  const [taskPriority, setTaskPriority] = useState<'all' | 'low' | 'medium' | 'high'>('all')
 
   // Staff this manager may assign: their own team (admins may assign any staff).
   const assignableStaff = teamMembers.filter(
@@ -253,10 +259,19 @@ function TasksContent() {
     }
   }
 
-  const pending    = tasks.filter(t => t.status === 'pending')
-  const inProgress = tasks.filter(t => t.status === 'in_progress')
-  const completed  = tasks.filter(t => t.status === 'completed')
-  const overdue    = tasks.filter(t => t.status === 'overdue')
+  // Apply the active filters (time scope + status + priority).
+  const filteredTasks = tasks.filter(tk => {
+    if (taskScope === 'nearby' && !isDeadlineNearby(tk.deadline)) return false
+    if (taskStatus !== 'all' && tk.status !== taskStatus) return false
+    if (taskPriority !== 'all' && tk.priority_label !== taskPriority) return false
+    return true
+  })
+  const resetTaskFilters = () => { setTaskScope('all'); setTaskStatus('all'); setTaskPriority('all') }
+
+  const pending    = filteredTasks.filter(t => t.status === 'pending')
+  const inProgress = filteredTasks.filter(t => t.status === 'in_progress')
+  const completed  = filteredTasks.filter(t => t.status === 'completed')
+  const overdue    = filteredTasks.filter(t => t.status === 'overdue')
 
   const col = (title: string, titleVi: string, items: Task[], color: string) => (
     <div style={{ flex: 1, minWidth: '220px' }}>
@@ -289,6 +304,16 @@ function TasksContent() {
     </div>
   )
 
+  // A small pill button used by the filter bar.
+  const pill = (active: boolean, label: string, onClick: () => void) => (
+    <button onClick={onClick} style={{
+      fontSize: '12px', fontWeight: 600, padding: '6px 12px', borderRadius: '8px', cursor: 'pointer',
+      background: active ? 'var(--accent-blue)' : 'var(--bg-card)',
+      color: active ? 'white' : 'var(--text-secondary)',
+      border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border)'}`,
+    }}>{label}</button>
+  )
+
   return (
     <div>
       <TopBar title="Tasks" titleVi="Công việc" />
@@ -319,6 +344,37 @@ function TasksContent() {
           </div>
         )}
 
+        {/* Filter bar: time scope (default Nearby) + status + priority. */}
+        {selectedEvent && !loading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+            {pill(taskScope === 'all', t('All', 'Tất cả'), () => setTaskScope('all'))}
+            {pill(taskScope === 'nearby', t('Nearby', 'Gần đây'), () => setTaskScope('nearby'))}
+            {taskScope === 'nearby' && (
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {t(`deadline ±${NEARBY_DAYS} days`, `hạn chót ±${NEARBY_DAYS} ngày`)}
+              </span>
+            )}
+            <span style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
+            <Dropdown size="sm" value={taskStatus} onChange={v => setTaskStatus(v as typeof taskStatus)}
+              ariaLabel={t('Filter by status', 'Lọc theo trạng thái')}
+              options={[
+                { value: 'all', label: t('All statuses', 'Mọi trạng thái') },
+                { value: 'pending', label: t('Pending', 'Chờ xử lý'), color: 'var(--accent-amber)' },
+                { value: 'in_progress', label: t('In Progress', 'Đang làm'), color: 'var(--accent-blue)' },
+                { value: 'completed', label: t('Completed', 'Hoàn thành'), color: 'var(--accent-green)' },
+                { value: 'overdue', label: t('Overdue', 'Quá hạn'), color: 'var(--accent-red)' },
+              ]} />
+            <Dropdown size="sm" value={taskPriority} onChange={v => setTaskPriority(v as typeof taskPriority)}
+              ariaLabel={t('Filter by priority', 'Lọc theo ưu tiên')}
+              options={[
+                { value: 'all', label: t('All priorities', 'Mọi mức ưu tiên') },
+                { value: 'high', label: t('High', 'Cao'), color: 'var(--accent-red)' },
+                { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
+                { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },
+              ]} />
+          </div>
+        )}
+
         {!selectedEvent ? (
           <div style={{
             background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
@@ -333,6 +389,18 @@ function TasksContent() {
           </div>
         ) : loading ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading tasks...', 'Đang tải công việc...')}</p>
+        ) : filteredTasks.length === 0 && tasks.length > 0 ? (
+          <div style={{
+            background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
+            borderRadius: '12px', padding: '50px', textAlign: 'center',
+          }}>
+            <CheckSquare size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
+            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No tasks match this filter', 'Không có công việc khớp bộ lọc')}</p>
+            <button onClick={resetTaskFilters} style={{
+              marginTop: '12px', background: 'var(--accent-blue)', color: 'white', border: 'none',
+              borderRadius: '8px', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+            }}>{t('Show all tasks', 'Hiện tất cả công việc')}</button>
+          </div>
         ) : (
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
             {col('Pending',     'Chờ xử lý',  pending,    'var(--accent-blue)')}
@@ -369,11 +437,12 @@ function TasksContent() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
               {t('Priority', 'Ưu tiên')}
             </label>
-            <select value={form.priority_label} onChange={e => setForm(f => ({ ...f, priority_label: e.target.value }))}>
-              <option value="low">{t('Low', 'Thấp')}</option>
-              <option value="medium">{t('Medium', 'Trung bình')}</option>
-              <option value="high">{t('High', 'Cao')}</option>
-            </select>
+            <Dropdown fullWidth value={form.priority_label} onChange={v => setForm(f => ({ ...f, priority_label: v }))}
+              options={[
+                { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },
+                { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
+                { value: 'high', label: t('High', 'Cao'), color: 'var(--accent-red)' },
+              ]} />
           </div>
 
           {/* Assign to one or many of the manager's own staff. */}

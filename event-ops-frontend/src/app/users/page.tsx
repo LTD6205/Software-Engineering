@@ -4,6 +4,7 @@ import { Plus, UserCheck, UserX, Phone, Mail, ArrowRightLeft, Check, X } from 'l
 import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
+import Dropdown from '@/components/Dropdown'
 import { useAuth } from '@/context/AuthContext'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
@@ -444,13 +445,14 @@ export default function UsersPage() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
               {t('Role', 'Vai trò')}
             </label>
-            <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="staff">{t('Staff', 'Nhân viên')}</option>
-              <option value="manager">{t('Manager', 'Quản lý')}</option>
-              {/* High-privilege roles can only be created by an admin */}
-              {isAdmin && <option value="eventmanager">{t('Event Manager', 'Quản lý sự kiện')}</option>}
-              {isAdmin && <option value="admin">{t('Admin', 'Quản trị viên')}</option>}
-            </select>
+            <Dropdown fullWidth value={form.role} onChange={v => setForm(f => ({ ...f, role: v }))}
+              options={[
+                { value: 'staff', label: t('Staff', 'Nhân viên'), color: ROLE_COLOR.staff },
+                { value: 'manager', label: t('Manager', 'Quản lý'), color: ROLE_COLOR.manager },
+                // High-privilege roles can only be created by an admin.
+                ...(isAdmin ? [{ value: 'eventmanager', label: t('Event Manager', 'Quản lý sự kiện'), color: ROLE_COLOR.eventmanager }] : []),
+                ...(isAdmin ? [{ value: 'admin', label: t('Admin', 'Quản trị viên'), color: ROLE_COLOR.admin }] : []),
+              ]} />
           </div>
           {error && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{error}</p>}
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
@@ -485,12 +487,9 @@ export default function UsersPage() {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
               {t('New manager', 'Quản lý mới')}
             </label>
-            <select value={targetMgr} onChange={e => setTargetMgr(e.target.value)}>
-              <option value="">{t('Select a manager...', 'Chọn quản lý...')}</option>
-              {otherManagers.map(m => (
-                <option key={m.user_id} value={m.user_id}>{m.name}</option>
-              ))}
-            </select>
+            <Dropdown fullWidth value={targetMgr} onChange={setTargetMgr}
+              placeholder={t('Select a manager...', 'Chọn quản lý...')}
+              options={otherManagers.map(m => ({ value: m.user_id, label: m.name }))} />
           </div>
           {reErr && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{reErr}</p>}
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
