@@ -110,7 +110,9 @@ export default function UsersPage() {
   // full roster (with emails + management); staff get the minimal directory.
   useEffect(() => {
     const load = canSeeRoster ? usersApi.getAll() : usersApi.directory()
-    load.then(setUsers).finally(() => setLoading(false))
+    // Swallow errors (e.g. a 401 before the auth guard redirects to login) so
+    // they don't surface as unhandled promise rejections.
+    load.then(setUsers).catch(() => {}).finally(() => setLoading(false))
     // Only a manager can be the target of a reassignment request.
     if (isManager) usersApi.reassignRequests().then(setRequests).catch(() => {})
   }, [canSeeRoster, isManager])
