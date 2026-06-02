@@ -158,7 +158,11 @@ export class NotificationsService {
     return { message: 'All notifications marked read' };
   }
 
-  markRead(notificationId: string) {
-    return this.notifRepo.update(notificationId, { is_read: true });
+  // Only marks the notification read if it belongs to the requesting user.
+  markRead(notificationId: string, userId: string) {
+    return this.notifRepo.update(
+      { notification_id: notificationId, user_id: userId },
+      { is_read: true },
+    );
   }
 }
