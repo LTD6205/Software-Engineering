@@ -47,7 +47,7 @@ CREATE TABLE AI_Requests (
 --  4. TASKS
 CREATE TABLE Tasks (
     task_id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    event_id        UUID                NOT NULL REFERENCES Events(event_id),
+    event_id        UUID                NOT NULL REFERENCES Events(event_id) ON DELETE CASCADE,
     task_name       VARCHAR(255)        NOT NULL,
     description     TEXT,
     priority_label  VARCHAR(10)         NOT NULL DEFAULT 'medium'
@@ -70,7 +70,7 @@ CREATE TABLE Tasks (
 --  Tracks every change to a task (by a user OR by AI)
 CREATE TABLE Task_Logs (
     log_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id) ON DELETE CASCADE,
     action_type     VARCHAR(50)         NOT NULL,   -- e.g. 'status_change', 'reassign', 'deadline_update'
     old_value       JSONB,
     new_value       JSONB,
@@ -92,7 +92,7 @@ CREATE TABLE Task_Logs (
 --  Links one or more users to a task
 CREATE TABLE Task_Assignments (
     assignment_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id) ON DELETE CASCADE,
     user_id         UUID                NOT NULL REFERENCES Users(user_id),
     assigned_at     TIMESTAMP           NOT NULL DEFAULT NOW(),
 
@@ -104,8 +104,8 @@ CREATE TABLE Task_Assignments (
 --  "task_id cannot start until depends_on_task is completed"
 CREATE TABLE Task_Dependencies (
     dependency_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
-    depends_on_task UUID                NOT NULL REFERENCES Tasks(task_id),
+    task_id         UUID                NOT NULL REFERENCES Tasks(task_id) ON DELETE CASCADE,
+    depends_on_task UUID                NOT NULL REFERENCES Tasks(task_id) ON DELETE CASCADE,
 
     CONSTRAINT task_dependencies_no_self CHECK (task_id <> depends_on_task),
     CONSTRAINT task_dependencies_unique  UNIQUE (task_id, depends_on_task)
@@ -116,7 +116,7 @@ CREATE TABLE Task_Dependencies (
 CREATE TABLE Notifications (
     notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID                NOT NULL REFERENCES Users(user_id),
-    task_id         UUID                REFERENCES Tasks(task_id),
+    task_id         UUID                REFERENCES Tasks(task_id) ON DELETE CASCADE,
     event_id        UUID                REFERENCES Events(event_id) ON DELETE CASCADE,
     type            VARCHAR(20)         NOT NULL
                         CHECK (type IN ('reminder', 'alert', 'overdue',
@@ -132,7 +132,7 @@ CREATE TABLE Notifications (
 CREATE TABLE AI_Task_Map (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     request_id  UUID    NOT NULL REFERENCES AI_Requests(request_id),
-    task_id     UUID    NOT NULL REFERENCES Tasks(task_id),
+    task_id     UUID    NOT NULL REFERENCES Tasks(task_id) ON DELETE CASCADE,
 
     CONSTRAINT ai_task_map_unique UNIQUE (request_id, task_id)
 );
@@ -220,3 +220,40 @@ CREATE TABLE IF NOT EXISTS event_managers (
     PRIMARY KEY (event_id, manager_id)
 );
 CREATE INDEX IF NOT EXISTS idx_event_managers_manager ON event_managers(manager_id);
+
+-- 7. Make task/event child foreign keys ON DELETE CASCADE, so deleting a task
+--    or event can never be blocked by (or orphan) its child rows. The CREATE
+--    TABLE statements above already include this for fresh installs; this block
+--    upgrades an EXISTING database. Idempotent — safe to re-run.
+--    (Same SQL as event-ops-backend/migrations/2026-06-02_fk_on_delete_cascade.sql;
+--     run it with `npm run db:migrate` or paste this block into pgAdmin.)
+CREATE OR REPLACE FUNCTION pg_temp.recreate_fk_cascade(
+    p_table text, p_col text, p_reftable text, p_refcol text
+) RETURNS void AS $$
+DECLARE c text;
+BEGIN
+    FOR c IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class      rel ON rel.oid = con.conrelid
+        JOIN pg_namespace  ns  ON ns.oid  = rel.relnamespace
+        JOIN pg_attribute  att ON att.attrelid = rel.oid AND att.attnum = ANY (con.conkey)
+        WHERE con.contype = 'f' AND ns.nspname = 'public'
+          AND rel.relname = p_table AND att.attname = p_col
+    LOOP
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', p_table, c);
+    END LOOP;
+    EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %I(%I) ON DELETE CASCADE',
+        p_table, p_table || '_' || p_col || '_fkey', p_col, p_reftable, p_refcol
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT pg_temp.recreate_fk_cascade('task_logs',         'task_id',         'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('task_assignments',  'task_id',         'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('task_dependencies', 'task_id',         'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('task_dependencies', 'depends_on_task', 'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('ai_task_map',       'task_id',         'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('notifications',     'task_id',         'tasks',  'task_id');
+SELECT pg_temp.recreate_fk_cascade('tasks',             'event_id',        'events', 'event_id');

@@ -292,6 +292,48 @@ export class UsersService {
     return this.findOne(staffId);
   }
 
+  // The requesting owner manager withdraws a pending request before the target
+  // acts. Only the current owner (or an admin) can cancel; the staff stays put.
+  async cancelReassign(staffId: string, actor: { sub: string; role: string }) {
+    const staff = await this.userRepo.findOne({ where: { user_id: staffId } });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (!staff.pending_manager_id) {
+      throw new BadRequestException(
+        'There is no pending reassignment to cancel / Không có yêu cầu chuyển nào để hủy',
+      );
+    }
+    // Only the manager who owns the staff (the requester) or an admin may cancel.
+    if (actor.role !== 'admin' && staff.manager_id !== actor.sub) {
+      throw new ForbiddenException(
+        'Only the requesting manager can cancel this reassignment / Chỉ quản lý đã gửi yêu cầu mới có thể hủy',
+      );
+    }
+    const targetId = staff.pending_manager_id;
+    const target = targetId
+      ? await this.userRepo.findOne({ where: { user_id: targetId } })
+      : null;
+    const targetName = target?.name ?? '—';
+    await this.userRepo.update(staffId, { pending_manager_id: null });
+    // Withdrawn: the staff stays with the current manager. Notify the parties.
+    await this.notifications.notifyUser(
+      staff.manager_id ?? '',
+      'reassignment',
+      `You withdrew the request to move ${staff.name} to ${targetName}'s team. / Bạn đã rút lại yêu cầu chuyển ${staff.name} sang đội của ${targetName}.`,
+    );
+    await this.notifications.notifyUser(
+      targetId ?? '',
+      'reassignment',
+      `The request to move ${staff.name} into your team was withdrawn. / Yêu cầu chuyển ${staff.name} vào đội của bạn đã được rút lại.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `Your pending move to ${targetName} was cancelled; you stay in your current team. / Yêu cầu chuyển bạn sang ${targetName} đã được hủy; bạn vẫn ở đội hiện tại.`,
+    );
+    return this.findOne(staffId);
+  }
+
   // Manager creates a new staff account
   async create(data: {
     name: string;

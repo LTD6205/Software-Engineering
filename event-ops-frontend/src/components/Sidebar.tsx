@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { LayoutDashboard, CalendarDays, CheckSquare, Bot, Users, LogOut } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
+import { roleColorOf, roleLabelOf } from '@/lib/roles'
 import Avatar from './Avatar'
 
 export default function Sidebar() {
@@ -11,16 +12,8 @@ export default function Sidebar() {
   const { user, logout, isManager } = useAuth()
   const { t } = useLang()
 
-  const roleLabel =
-    user?.role === 'manager' ? t('Manager', 'Quản lý')
-    : user?.role === 'admin' ? t('Admin', 'Quản trị viên')
-    : t('Staff', 'Nhân viên')
-
-  // Role colour by level: Admin (red) > Manager (yellow) > Staff (green).
-  const roleColor =
-    user?.role === 'admin' ? 'var(--accent-red)'
-    : user?.role === 'manager' ? 'var(--accent-amber)'
-    : 'var(--accent-green)'
+  const roleLabel = roleLabelOf(user?.role, t)
+  const roleColor = roleColorOf(user?.role)
 
   const nav = [
     { href: '/',              icon: LayoutDashboard, label: t('Dashboard', 'Tổng quan'),      show: true },

@@ -269,7 +269,9 @@ export class EventsService {
     return this.findOne(id);
   }
 
-  // Delete a task and all of its child rows (no ON DELETE CASCADE in the schema).
+  // Delete a task and all of its child rows. ON DELETE CASCADE handles these
+  // once the FK migration (npm run db:migrate) is applied; we still clear them
+  // by hand as a fallback for databases created before that migration.
   private async deleteTaskRow(taskId: string) {
     const m = this.eventRepo.manager;
     await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [taskId]);

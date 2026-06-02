@@ -54,6 +54,7 @@ export const usersApi = {
   reassign:        (staffId: string, mid: string)   => api.post(`/users/${staffId}/reassign`, { target_manager_id: mid }).then(r => r.data),
   acceptReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/accept`).then(r => r.data),
   rejectReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/reject`).then(r => r.data),
+  cancelReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/cancel`).then(r => r.data),
 }
 
 export const notificationsApi = {

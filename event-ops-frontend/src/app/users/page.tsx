@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
 import { usePresence } from '@/lib/usePresence'
+import { ROLE_COLOR, roleLabelOf } from '@/lib/roles'
 
 interface TeamUser {
   user_id: string
@@ -33,13 +34,9 @@ interface ReassignRequest {
 
 const empty = { name: '', email: '', phone: '', password: '', role: 'staff' }
 
-// Role colour by level: Admin (red) > Event Manager (purple) > Manager (amber) > Staff (green).
-const roleColor: Record<string, string> = {
-  admin:        'var(--accent-red)',
-  eventmanager: 'var(--accent-purple)',
-  manager:      'var(--accent-amber)',
-  staff:        'var(--accent-green)',
-}
+// Role colours come from the shared source of truth (@/lib/roles):
+// Admin (red) > Event Manager (purple) > Manager (amber) > Staff (green).
+const roleColor = ROLE_COLOR
 const OFFLINE = 'var(--text-muted)'
 
 // Ordering: Staff first, then Manager, Event Manager, then Admin.
@@ -123,11 +120,7 @@ export default function UsersPage() {
   // Managers the current user can hand a staff member off to (everyone but self).
   const otherManagers = users.filter(u => u.role === 'manager' && u.user_id !== user?.user_id)
 
-  const roleLabel = (role: string) =>
-    role === 'manager' ? t('Manager', 'Quản lý')
-    : role === 'admin' ? t('Admin', 'Quản trị viên')
-    : role === 'eventmanager' ? t('Event Manager', 'Quản lý sự kiện')
-    : t('Staff', 'Nhân viên')
+  const roleLabel = (role: string) => roleLabelOf(role, t)
 
   // Open the reassign picker for one of my staff members.
   const openReassign = (u: TeamUser) => {
@@ -146,6 +139,14 @@ export default function UsersPage() {
     } catch (e) {
       setReErr(tError(getErrorMessage(e, 'Could not send the request / Không thể gửi yêu cầu')))
     } finally { setReSaving(false) }
+  }
+
+  // Withdraw a pending request I sent, before the target manager acts.
+  const cancelReassign = async (staffId: string) => {
+    try {
+      await usersApi.cancelReassign(staffId)
+      setUsers(prev => prev.map(x => x.user_id === staffId ? { ...x, pending_manager_id: null } : x))
+    } catch { /* leave the pending state as-is if the call fails */ }
   }
 
   // Accept / reject an incoming request (I am the proposed new manager).
@@ -375,6 +376,17 @@ export default function UsersPage() {
                     fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
                   }}>
                     <ArrowRightLeft size={12} /> {t('Reassign', 'Chuyển')}
+                  </button>
+                )}
+                {/* Owner manager can withdraw a request they sent, before the
+                    target manager accepts or rejects it. */}
+                {isManager && u.role === 'staff' && u.manager_id === user?.user_id && u.pending_manager_id && (
+                  <button onClick={() => cancelReassign(u.user_id)} title={t('Cancel the pending move', 'Hủy yêu cầu chuyển')} style={{
+                    background: 'none', border: '1px solid var(--accent-red)', borderRadius: '6px',
+                    padding: '5px 9px', cursor: 'pointer', color: 'var(--accent-red)',
+                    fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <X size={12} /> {t('Cancel request', 'Hủy yêu cầu')}
                   </button>
                 )}
                 <span style={{

@@ -14,6 +14,7 @@
     "prestart:prod": "nest build",
     "start:prod": "node dist/main",
     "seed": "node seed.js",
+    "db:migrate": "node db-migrate.js",
     "db:backup": "node db-backup.js",
     "db:restore": "node db-restore.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",

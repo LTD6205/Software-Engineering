@@ -1,4 +1,5 @@
 'use client'
+import { useRef, useState } from 'react'
 import { Calendar, Trash2, ChevronRight, Users, Pencil } from 'lucide-react'
 import { Event } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
@@ -12,7 +13,11 @@ interface Props {
   canDelete?: boolean
   onManageMembers?: (event: Event) => void
   onEditDates?: (event: Event) => void
+  onEditDetails?: (event: Event) => void
 }
+
+// Collapse long descriptions behind a "See more" toggle.
+const DESC_LIMIT = 140
 
 // Status accent: pending=yellow, in_progress=blue, completed=green.
 const STATUS_COLOR: Record<string, string> = {
@@ -21,13 +26,31 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'var(--accent-green)',
 }
 
-export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onEditDates }: Props) {
+export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onEditDates, onEditDetails }: Props) {
   const { t, lang } = useLang()
+  const [expanded, setExpanded] = useState(false)
+  const desc = event.description?.trim()
+  const isLong = !!desc && desc.length > DESC_LIMIT
+
+  // Where the pointer went down, so we can tell a real click from the end of a
+  // text-selection drag.
+  const downPos = useRef<{ x: number; y: number } | null>(null)
+  const handleCardClick = (e: React.MouseEvent) => {
+    // If the user just selected text, releasing inside the card shouldn't open it.
+    if (window.getSelection?.()?.toString()) return
+    // Likewise ignore a click that ended a drag (pointer moved more than a few px).
+    const d = downPos.current
+    if (d && (Math.abs(e.clientX - d.x) > 6 || Math.abs(e.clientY - d.y) > 6)) return
+    onClick(event)
+  }
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
   return (
-    <div onClick={() => onClick(event)} style={{
+    <div
+      onMouseDown={e => { downPos.current = { x: e.clientX, y: e.clientY } }}
+      onClick={handleCardClick}
+      style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',
       borderLeft: `3px solid ${accent}`,
       borderRadius: '12px', padding: '16px 20px',
@@ -50,8 +73,17 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
           <Calendar size={18} color={accent} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-            {event.event_name}
+          <p
+            className="selectable"
+            onClick={onEditDetails ? (e => { e.stopPropagation(); onEditDetails(event) }) : undefined}
+            title={onEditDetails ? t('Edit name & description', 'Sửa tên & mô tả') : undefined}
+            style={{
+              fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px',
+              display: 'inline-flex', alignItems: 'center', gap: '6px', width: 'fit-content', maxWidth: '100%',
+              cursor: onEditDetails ? 'pointer' : 'default',
+            }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.event_name}</span>
+            {onEditDetails && <Pencil size={11} style={{ opacity: 0.7, flexShrink: 0 }} />}
           </p>
           <p
             onClick={onEditDates ? (e => { e.stopPropagation(); onEditDates(event) }) : undefined}
@@ -90,6 +122,24 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
         )}
         <ChevronRight size={15} color="var(--text-muted)" />
       </div>
+      {/* Optional description, collapsed behind "See more" when long. */}
+      {desc && (
+        <p className="selectable" onClick={e => e.stopPropagation()} style={{
+          fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0,
+        }}>
+          {isLong && !expanded ? desc.slice(0, DESC_LIMIT).trimEnd() + '… ' : desc + ' '}
+          {isLong && (
+            <button
+              onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                color: 'var(--accent-blue)', fontSize: '12px', fontWeight: 600,
+              }}>
+              {expanded ? t('See less', 'Thu gọn') : t('See more', 'Xem thêm')}
+            </button>
+          )}
+        </p>
+      )}
       {/* Milestone tracker: completed / total tasks for this event. */}
       {event.task_count != null && (
         <MilestoneBar completed={event.completed_count ?? 0} total={event.task_count} />

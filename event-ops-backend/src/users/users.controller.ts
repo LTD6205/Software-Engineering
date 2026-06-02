@@ -85,6 +85,17 @@ export class UsersController {
     return this.usersService.rejectReassign(id, req.user);
   }
 
+  // POST /api/users/:id/reassign/cancel — requesting owner manager withdraws a
+  // pending request before the target manager has accepted or rejected it.
+  @Post(':id/reassign/cancel')
+  @Roles('manager', 'admin')
+  cancelReassign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.usersService.cancelReassign(id, req.user);
+  }
+
   // POST /api/users — manager creates staff/manager; only admin creates admin
   @Post()
   @Roles('manager', 'admin')

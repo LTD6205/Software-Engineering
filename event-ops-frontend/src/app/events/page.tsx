@@ -35,6 +35,11 @@ export default function EventsPage() {
   const [dForm, setDForm] = useState({ startDate: '', startTime: '', endDate: '', endTime: '' })
   const [dErr, setDErr] = useState('')
   const [dSaving, setDSaving] = useState(false)
+  // Details editor (name + optional description).
+  const [editingDetails, setEditingDetails] = useState<Event | null>(null)
+  const [detForm, setDetForm] = useState({ event_name: '', description: '' })
+  const [detErr, setDetErr] = useState('')
+  const [detSaving, setDetSaving] = useState(false)
   const router = useRouter()
   const { canManageEvents } = useAuth()
   const { t, tError } = useLang()
@@ -156,6 +161,30 @@ export default function EventsPage() {
     } finally { setDSaving(false) }
   }
 
+  // Details editor: open prefilled with the current name + description.
+  const openDetailsEditor = (ev: Event) => {
+    setDetForm({ event_name: ev.event_name, description: ev.description || '' })
+    setEditingDetails(ev)
+    setDetErr('')
+  }
+  const submitDetails = async () => {
+    if (!editingDetails) return
+    if (!detForm.event_name.trim()) {
+      setDetErr(t('Event name is required', 'Vui lòng nhập tên sự kiện')); return
+    }
+    setDetSaving(true); setDetErr('')
+    try {
+      await eventsApi.update(editingDetails.event_id, {
+        event_name: detForm.event_name.trim(),
+        description: detForm.description.trim() || null,
+      })
+      setEditingDetails(null)
+      load()
+    } catch (e) {
+      setDetErr(tError(getErrorMessage(e, 'Could not update the event / Không thể cập nhật sự kiện')))
+    } finally { setDetSaving(false) }
+  }
+
   // A Date + Time row. Picking a date defaults the time to 08:00 (editable).
   const dateTimeRow = (
     labelEn: string, labelVi: string,
@@ -261,6 +290,7 @@ export default function EventsPage() {
                 canDelete={canManageEvents}
                 onManageMembers={canManageEvents ? openMembers : undefined}
                 onEditDates={canManageEvents ? openDateEditor : undefined}
+                onEditDetails={canManageEvents ? openDetailsEditor : undefined}
               />
             ))}
           </div>
@@ -446,6 +476,48 @@ export default function EventsPage() {
               border: 'none', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 600,
               opacity: dSaving ? 0.6 : 1,
             }}>{dSaving ? t('Saving...', 'Đang lưu...') : t('Shift tasks', 'Dời công việc')}</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Details editor — change the event's name and optional description. */}
+      {editingDetails && (
+        <Modal
+          title={t('Edit event', 'Sửa sự kiện')}
+          onClose={() => setEditingDetails(null)}
+        >
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              {t('Event Name', 'Tên sự kiện')}
+            </label>
+            <input
+              type="text"
+              value={detForm.event_name}
+              onChange={e => setDetForm(f => ({ ...f, event_name: e.target.value }))}
+            />
+          </div>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              {t('Description', 'Mô tả')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('optional', 'không bắt buộc')})</span>
+            </label>
+            <textarea
+              rows={4}
+              value={detForm.description}
+              onChange={e => setDetForm(f => ({ ...f, description: e.target.value }))}
+              style={{ resize: 'vertical' }}
+            />
+          </div>
+          {detErr && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{detErr}</p>}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button onClick={() => setEditingDetails(null)} disabled={detSaving} style={{
+              background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: '8px', padding: '9px 18px', fontSize: '13px',
+            }}>{t('Cancel', 'Hủy')}</button>
+            <button onClick={submitDetails} disabled={detSaving} style={{
+              background: 'var(--accent-blue)', color: 'white',
+              border: 'none', borderRadius: '8px', padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+              opacity: detSaving ? 0.6 : 1,
+            }}>{detSaving ? t('Saving...', 'Đang lưu...') : t('Save', 'Lưu')}</button>
           </div>
         </Modal>
       )}

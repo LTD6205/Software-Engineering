@@ -109,6 +109,20 @@ export class TasksService {
       );
     }
     const task = await this.taskRepo.save(this.taskRepo.create(data));
+    // Announce the new task to the event's owner (the event manager), unless
+    // they created it themselves.
+    const event = await this.eventRepo.findOne({
+      where: { event_id: task.event_id },
+    });
+    if (event?.created_by && event.created_by !== task.created_by) {
+      await this.notifications.notifyUser(
+        event.created_by,
+        'task',
+        `A new task "${task.task_name}" was added to "${event.event_name}". / Công việc mới "${task.task_name}" đã được thêm vào "${event.event_name}".`,
+        task.task_id,
+        task.event_id,
+      );
+    }
     // Adding a task moves its event into "in progress".
     await this.recomputeEventStatus(task.event_id);
     this.broadcastChange(task.event_id);
@@ -200,7 +214,10 @@ export class TasksService {
 
   async remove(id: string) {
     const task = await this.findOne(id);
-    // No ON DELETE CASCADE in the schema, so clear child rows first.
+    // Child rows are removed automatically by ON DELETE CASCADE once the FK
+    // migration (npm run db:migrate) has been applied. We still clear them here
+    // as a fallback so deletion also works on databases created before that
+    // migration; on an up-to-date schema these deletes simply find nothing.
     const m = this.taskRepo.manager;
     await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
     await m.query(

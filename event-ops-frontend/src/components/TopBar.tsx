@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
+import { roleLabelOf } from '@/lib/roles'
 import LangToggle from './LangToggle'
 import NotificationBell from './NotificationBell'
 import ProfileModal from './ProfileModal'
@@ -13,10 +14,7 @@ export default function TopBar({ title, titleVi }: Props) {
   const { t } = useLang()
   const [showProfile, setShowProfile] = useState(false)
 
-  const roleLabel =
-    user?.role === 'manager' ? t('Manager', 'Quản lý')
-    : user?.role === 'admin' ? t('Admin', 'Quản trị viên')
-    : t('Staff', 'Nhân viên')
+  const roleLabel = roleLabelOf(user?.role, t)
 
   return (
     <div style={{

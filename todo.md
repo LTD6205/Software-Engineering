@@ -19,10 +19,13 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 - Request: old manager ("you requested to move …"), new manager ("… wants to move … into your team"), staff ("you are being moved …, pending approval"). Staff stays in the old manager's projects until approval.
 - Accept: old manager ("… has moved to …'s team"), new manager ("you received …"), staff ("you are now in …'s team"). Membership flips automatically (staff leaves old projects, joins new).
 - Reject: old manager ("… declined; they stay in your team"), target ("you declined …"), staff ("your move was declined; you stay …").
+- Cancel (owner withdraws before the target acts): old manager ("you withdrew the request to move …"), target ("the request to move … was withdrawn"), staff ("your pending move was cancelled; you stay …").
 
 **Tasks**
 - Assigned to a task → the staff member.
 - Removed from a task → the staff member.
+- New task added to an event → the event manager (the event's `created_by`), unless they
+  created it themselves (`tasks.service.ts → create`).
 
 **Deadlines (cron, every 30 min)**
 - Reminder (due within 24h) and overdue alerts now reach the assigned staff **plus
@@ -42,7 +45,21 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
   all read (single tick = one read, double tick = all read). (commits `4b396f7`, `d9e1680`)
 - **Edit-event dates** — `PUT /events/:id/dates` + `eventsApi.updateDates`, with a
   `shift`/`delete` task strategy and a date editor modal on the Events page. (commit `532e369`)
-  (Name/description editing is still missing — see below.)
+- **Edit-event name/description** — clicking an event's name (event managers only) opens a
+  details editor wired to `eventsApi.update` → `PUT /events/:id`. Description is optional and
+  now shown on the card, collapsed behind "See more" when longer than 140 chars.
+- **Cancel a pending reassignment** — `POST /users/:id/reassign/cancel` +
+  `cancelReassign()`; the owner manager sees a red "Cancel request" button while a move is
+  pending and can withdraw it before the target accepts/rejects (notifies all three parties).
+- **New-task notification** — adding a task announces it to the event manager (see Tasks above).
+- **Schema robustness: FKs now `ON DELETE CASCADE`** — every foreign key that points at a
+  task (`task_logs`, `task_assignments`, `task_dependencies` ×2, `ai_task_map`,
+  `notifications.task_id`) plus `tasks.event_id` was switched to `ON DELETE CASCADE`, so
+  deleting a task/event can no longer be blocked by or orphan its child rows. Fresh installs
+  get this from `database_creating.txt`; existing DBs upgrade via
+  `event-ops-backend/migrations/2026-06-02_fk_on_delete_cascade.sql` (run `npm run db:migrate`,
+  idempotent). Applied + verified on the dev DB (all 8 FKs now cascade). The services still
+  clear child rows by hand as a harmless fallback for un-migrated databases.
 - **Dropped the unused `milestones` table feature** — the per-event "milestone" progress is
   derived by `MilestoneBar.tsx` (completed/total tasks); the separate `milestones` table had
   no UI and no data, so the entity, service methods, controller routes, `tasksApi`/`Milestone`
@@ -60,24 +77,9 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
       (`events.service.ts:277`, `tasks.service.ts:209`). Nothing creates/reads a dependency,
       and `tasks.service.ts` injects `depRepo` but never uses it. Needed if AI milestone
       recalculation is built; otherwise remove the table, entity, and injection.
-- [ ] **No edit UI for an event's name/description.** `PUT /events/:id` (backend `update()`)
-      and `eventsApi.update` exist but nothing in the dashboard calls them — only the *dates*
-      editor is wired. Add name/description editing or drop `eventsApi.update`.
-- [ ] **Owner can't cancel a pending reassignment.** There is no cancel/withdraw endpoint
-      (backend only has `reassign` / `accept` / `reject`), and the Reassign button is hidden
-      once `pending_manager_id` is set (`users/page.tsx:371`). The requesting manager has no
-      way to retract a request before the target acts.
-- [ ] **Schema robustness:** `notifications.task_id` has **no** `ON DELETE` clause (only
-      `event_id` is `ON DELETE CASCADE`). Give it `ON DELETE SET NULL`/`CASCADE` so task
-      deletion can't block/orphan on notifications without the manual `DELETE FROM
-      notifications WHERE task_id = …` the services currently run. Same idea for the
-      `task_assignments` / `milestones` / `task_logs` FKs (all deleted by hand in
-      `deleteTaskRow()` and friends).
 - [ ] **Removing the last manager** leaves an event with 0 members (headcount 0).
       `removeManager()` has no guard and no empty-state warning. Add a guard or a clear
       empty-state.
-- [ ] **New-task notification (optional):** notify an event's members when a task is added,
-      not just when they're personally assigned to it.
 
 ## Features that could be improved / added (nice-to-have, not blocking)
 
@@ -87,8 +89,6 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
       and would finally exercise `task_dependencies` / `milestones`.
 - [ ] **Notification pruning / pagination.** History is capped at 50 rows on read but rows
       are never deleted — the table grows unbounded. Add a retention job or paginate.
-- [ ] **Reassignment cancel button** (pairs with the open item above) — surface a
-      withdraw action while a request is pending.
 - [ ] **Event detail page.** `eventsApi.getOne`, `tasksApi.getOne`, `usersApi.getOne` all
       exist with no consumer; a per-event detail view could use them instead of leaving them dead.
 - [ ] **Bulk task assignment / filtering** on the Tasks page (by assignee, by status).
@@ -117,5 +117,5 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 
 **Frontend (`src/lib/api.ts` helpers defined but never called)**
 - `usersApi.deactivate`, `usersApi.getOne`
-- `eventsApi.getOne`, `eventsApi.update` (only `updateDates` is wired)
+- `eventsApi.getOne` (`eventsApi.update` is now wired by the details editor)
 - `tasksApi.getOne`, `tasksApi.assign`, `tasksApi.unassign`
