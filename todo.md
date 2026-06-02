@@ -57,6 +57,18 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
   Both default to **All** (shown first); **Nearby** = ±30 days around today
   (`src/lib/filters.ts`). Frontend-only over the already role-scoped lists; empty-filter
   states offer a one-click "Show all".
+- **Tasks timeline + merged tasks** — replaced the 4-status board with a zoom/pan Gantt
+  (`components/TaskTimeline.tsx`) from the event's start→end; each task is a block **coloured by
+  its status**. Interactions: wheel = pan, Ctrl+wheel / buttons = zoom (to cursor), hold-drag =
+  pan (mouse-left → content-right), right-click = context menu (empty → New Task; block → Edit /
+  Ungroup / Delete; Edit opens a status/deadline/assignees panel). Managers **drag a block onto
+  another to merge** into a **named parent task** (`task_groups` + `tasks.group_id`, migrated).
+  **Grouping keeps each member's own time** (no span unification) — members are lane-packed so
+  they never overlap (sequential A→B→C share a lane; overlapping ones stack). Ungroup just
+  unlinks (time already preserved); group dissolves under 2 members. Filters still apply; a group
+  stays visible if any member matches. `/tasks/groups/*` endpoints are manager-only.
+  > NOTE: restart the running backend to load `/tasks/groups` (DB already migrated). The
+  > `task_dependencies` table is still separate/unused — grouping ≠ ordering dependencies.
 - **Unified dropdown UI** — one `components/Dropdown.tsx` (button + popup menu, mirrors
   EventPicker) replaced every native `<select>` (filters, create-task priority, create-user
   role, reassign-manager, the task-status changer) so the look + mechanism are identical app-wide.

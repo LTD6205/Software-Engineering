@@ -30,6 +30,7 @@ export default function Dropdown({
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -38,6 +39,13 @@ export default function Dropdown({
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  // When opening a long list, scroll the current selection into view.
+  useEffect(() => {
+    if (!open || !menuRef.current) return
+    const el = menuRef.current.querySelector('[data-sel="1"]') as HTMLElement | null
+    el?.scrollIntoView({ block: 'center' })
   }, [open])
 
   const selected = options.find(o => o.value === value)
@@ -72,7 +80,7 @@ export default function Dropdown({
       </button>
 
       {open && !disabled && (
-        <div style={{
+        <div ref={menuRef} style={{
           position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: '100%',
           background: 'var(--bg-card)', border: '1px solid var(--border-light)',
           borderRadius: '10px', boxShadow: '0 12px 30px rgba(0,0,0,0.4)', zIndex: 60,
@@ -81,7 +89,7 @@ export default function Dropdown({
           {options.map(o => {
             const isSel = o.value === value
             return (
-              <button key={o.value} type="button"
+              <button key={o.value} type="button" data-sel={isSel ? '1' : undefined}
                 onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false) }}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: '10px',

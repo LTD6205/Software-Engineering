@@ -5,8 +5,9 @@ import { Plus, CheckSquare } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { isDeadlineNearby, NEARBY_DAYS } from '@/lib/filters'
 import { Task, Event } from '@/lib/types'
+import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
-import TaskCard from '@/components/TaskCard'
+import TaskTimeline from '@/components/TaskTimeline'
 import Dropdown from '@/components/Dropdown'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
@@ -19,7 +20,6 @@ import { useLiveData, type DataChange } from '@/lib/useLiveData'
 
 const emptyTask = {
   task_name: '', description: '',
-  priority_label: 'medium',
   startDate: '', startTime: '', deadlineDate: '', deadlineTime: '',
   assigned_to: [] as string[],
 }
@@ -144,8 +144,6 @@ function TasksContent() {
       const task = await tasksApi.create({
         task_name:      form.task_name,
         description:    form.description,
-        priority_label: form.priority_label,
-        priority_score: form.priority_label === 'high' ? 90 : form.priority_label === 'medium' ? 50 : 10,
         event_id:       selectedEvent,
         created_by:     user?.user_id || '',
         ...(deadline ? { deadline:   new Date(deadline).toISOString() }   : {}),
@@ -186,11 +184,7 @@ function TasksContent() {
             setForm(f => ({ ...f, [dateKey]: val, [timeKey]: f[timeKey] || (val ? '08:00' : '') }))
           }}
         />
-        <input
-          type="time"
-          value={form[timeKey]}
-          onChange={e => setForm(f => ({ ...f, [timeKey]: e.target.value }))}
-        />
+        <TimePicker value={form[timeKey]} onChange={v => setForm(f => ({ ...f, [timeKey]: v }))} />
       </div>
     </div>
   )
@@ -259,50 +253,67 @@ function TasksContent() {
     }
   }
 
-  // Apply the active filters (time scope + status + priority).
-  const filteredTasks = tasks.filter(tk => {
+  // Filter predicate (time scope + status + priority). Passed to the timeline,
+  // which keeps a whole merged group visible if any member matches.
+  const matches = (tk: Task) => {
     if (taskScope === 'nearby' && !isDeadlineNearby(tk.deadline)) return false
     if (taskStatus !== 'all' && tk.status !== taskStatus) return false
     if (taskPriority !== 'all' && tk.priority_label !== taskPriority) return false
     return true
-  })
+  }
   const resetTaskFilters = () => { setTaskScope('all'); setTaskStatus('all'); setTaskPriority('all') }
 
-  const pending    = filteredTasks.filter(t => t.status === 'pending')
-  const inProgress = filteredTasks.filter(t => t.status === 'in_progress')
-  const completed  = filteredTasks.filter(t => t.status === 'completed')
-  const overdue    = filteredTasks.filter(t => t.status === 'overdue')
-
-  const col = (title: string, titleVi: string, items: Task[], color: string) => (
-    <div style={{ flex: 1, minWidth: '220px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: color }} />
-        <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{t(title, titleVi)}</p>
-        <span style={{
-          marginLeft: 'auto', fontSize: '11px', fontWeight: 700,
-          background: 'var(--bg-hover)', color: 'var(--text-muted)',
-          padding: '1px 7px', borderRadius: '10px',
-        }}>{items.length}</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {items.map(t => (
-          <TaskCard
-            key={t.task_id}
-            task={t}
-            onStatusChange={handleStatusChange}
-            isCreator={t.created_by === user?.user_id}
-            canManage={isManager}
-            onDelete={setPendingTaskDelete}
-            onDeadlineChange={handleDeadlineChange}
-            onEditAssignees={openAssignees}
-          />
-        ))}
-        {items.length === 0 && (
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '12px 0' }}>{t('No tasks', 'Không có công việc')}</p>
-        )}
-      </div>
-    </div>
-  )
+  // Merge / group actions — refetch after each so the timeline reflects the
+  // new spans and grouping immediately (the live socket also broadcasts).
+  const reloadTasks = async () => {
+    if (selectedEvent) setTasks(await tasksApi.getByEvent(selectedEvent))
+    refreshEvents()
+  }
+  const handleMerge = async (sourceId: string, targetId: string) => {
+    try { await tasksApi.merge(sourceId, targetId); await reloadTasks() }
+    catch (e) { alert(tError(getErrorMessage(e, 'Could not merge the tasks / Không thể gộp công việc'))) }
+  }
+  const handleAddToGroup = async (groupId: string, taskId: string) => {
+    try { await tasksApi.addToGroup(groupId, taskId); await reloadTasks() }
+    catch (e) { alert(tError(getErrorMessage(e, 'Could not add to the group / Không thể thêm vào nhóm'))) }
+  }
+  const handleUngroup = async (taskId: string) => {
+    try { await tasksApi.ungroup(taskId); await reloadTasks() }
+    catch (e) { alert(tError(getErrorMessage(e, 'Could not ungroup / Không thể tách nhóm'))) }
+  }
+  const handleRenameGroup = async (groupId: string, title: string) => {
+    try { await tasksApi.renameGroup(groupId, title); await reloadTasks() }
+    catch (e) { alert(tError(getErrorMessage(e, 'Could not rename the group / Không thể đổi tên nhóm'))) }
+  }
+  // Manual priority override from a task's Edit panel (pins it to user-set).
+  const handleEditPriority = async (taskId: string, label: string) => {
+    const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10
+    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score } : t))
+    try { await tasksApi.update(taskId, { priority_label: label, priority_score: score }) }
+    catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
+  }
+  // Open the create modal. From a timeline right-click we get the clicked time:
+  // pre-fill Start there and End one hour later.
+  const openNewTask = (startISO?: string) => {
+    if (startISO) {
+      const s = new Date(startISO)
+      const e = new Date(s.getTime() + 3 * 60 * 60 * 1000)
+      const p = (n: number) => String(n).padStart(2, '0')
+      const dstr = (x: Date) => `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`
+      const tstr = (x: Date) => `${p(x.getHours())}:${p(x.getMinutes())}`
+      setForm({ ...emptyTask, startDate: dstr(s), startTime: tstr(s), deadlineDate: dstr(e), deadlineTime: tstr(e) })
+    } else {
+      setForm({ ...emptyTask })
+    }
+    setError('')
+    setShowModal(true)
+  }
+  // Drag a block along the timeline to reschedule it (keeps its length).
+  const handleReschedule = async (taskId: string, startISO: string, deadlineISO: string) => {
+    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, start_time: startISO, deadline: deadlineISO } : t))
+    try { await tasksApi.update(taskId, { start_time: startISO, deadline: deadlineISO }); refreshEvents() }
+    catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not move the task / Không thể di chuyển công việc'))) }
+  }
 
   // A small pill button used by the filter bar.
   const pill = (active: boolean, label: string, onClick: () => void) => (
@@ -323,7 +334,7 @@ function TasksContent() {
           <EventPicker events={events} value={selectedEvent} onChange={setSelectedEvent} />
           {selectedEvent && isManager && (
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => openNewTask()}
               style={{
                 display: 'flex', alignItems: 'center', gap: '7px',
                 background: 'var(--accent-blue)', color: 'white',
@@ -359,7 +370,6 @@ function TasksContent() {
               ariaLabel={t('Filter by status', 'Lọc theo trạng thái')}
               options={[
                 { value: 'all', label: t('All statuses', 'Mọi trạng thái') },
-                { value: 'pending', label: t('Pending', 'Chờ xử lý'), color: 'var(--accent-amber)' },
                 { value: 'in_progress', label: t('In Progress', 'Đang làm'), color: 'var(--accent-blue)' },
                 { value: 'completed', label: t('Completed', 'Hoàn thành'), color: 'var(--accent-green)' },
                 { value: 'overdue', label: t('Overdue', 'Quá hạn'), color: 'var(--accent-red)' },
@@ -387,27 +397,27 @@ function TasksContent() {
                 : t('Select an event to view tasks', 'Chọn sự kiện để xem công việc')}
             </p>
           </div>
-        ) : loading ? (
+        ) : loading || !selEvent ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading tasks...', 'Đang tải công việc...')}</p>
-        ) : filteredTasks.length === 0 && tasks.length > 0 ? (
-          <div style={{
-            background: 'var(--bg-card)', border: '1px dashed var(--border-light)',
-            borderRadius: '12px', padding: '50px', textAlign: 'center',
-          }}>
-            <CheckSquare size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No tasks match this filter', 'Không có công việc khớp bộ lọc')}</p>
-            <button onClick={resetTaskFilters} style={{
-              marginTop: '12px', background: 'var(--accent-blue)', color: 'white', border: 'none',
-              borderRadius: '8px', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-            }}>{t('Show all tasks', 'Hiện tất cả công việc')}</button>
-          </div>
         ) : (
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            {col('Pending',     'Chờ xử lý',  pending,    'var(--accent-blue)')}
-            {col('In Progress', 'Đang làm',   inProgress, 'var(--accent-teal)')}
-            {col('Completed',   'Hoàn thành', completed,  'var(--accent-green)')}
-            {col('Overdue',     'Quá hạn',    overdue,    'var(--accent-red)')}
-          </div>
+          <TaskTimeline
+            event={selEvent}
+            tasks={tasks}
+            matches={matches}
+            canManage={isManager}
+            onStatusChange={handleStatusChange}
+            onEditPriority={handleEditPriority}
+            onDeadlineChange={handleDeadlineChange}
+            onEditAssignees={openAssignees}
+            onDelete={setPendingTaskDelete}
+            onMerge={handleMerge}
+            onAddToGroup={handleAddToGroup}
+            onUngroup={handleUngroup}
+            onRenameGroup={handleRenameGroup}
+            onResetFilters={resetTaskFilters}
+            onNewTask={openNewTask}
+            onReschedule={handleReschedule}
+          />
         )}
       </div>
 
@@ -433,17 +443,8 @@ function TasksContent() {
               style={{ resize: 'vertical' }} />
           </div>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              {t('Priority', 'Ưu tiên')}
-            </label>
-            <Dropdown fullWidth value={form.priority_label} onChange={v => setForm(f => ({ ...f, priority_label: v }))}
-              options={[
-                { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },
-                { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
-                { value: 'high', label: t('High', 'Cao'), color: 'var(--accent-red)' },
-              ]} />
-          </div>
+          {/* Priority isn't set here — it's auto-derived from the task's place
+              in the event timeline, and can be changed later in a task's Edit. */}
 
           {/* Assign to one or many of the manager's own staff. */}
           <div style={{ marginBottom: '16px' }}>

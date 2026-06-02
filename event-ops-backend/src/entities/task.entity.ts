@@ -28,7 +28,7 @@ export class Task {
   @Column({ default: 'user' })
   priority_source: string;
 
-  @Column({ default: 'pending' })
+  @Column({ default: 'in_progress' })
   status: string;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -39,6 +39,10 @@ export class Task {
 
   @Column()
   created_by: string;
+
+  // Non-null when this task is merged into a task group (shared span).
+  @Column({ type: 'uuid', nullable: true })
+  group_id: string | null;
 
   @CreateDateColumn()
   created_at: Date;

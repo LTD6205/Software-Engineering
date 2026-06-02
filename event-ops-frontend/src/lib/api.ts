@@ -39,6 +39,11 @@ export const tasksApi = {
   assign:            (taskId: string, userId: string) => api.post(`/tasks/${taskId}/assign`, { user_id: userId }).then(r => r.data),
   setAssignees:      (taskId: string, userIds: string[]) => api.put(`/tasks/${taskId}/assignments`, { user_ids: userIds }).then(r => r.data),
   unassign:          (taskId: string, userId: string) => api.delete(`/tasks/${taskId}/assign/${userId}`).then(r => r.data),
+  // Merged tasks (groups)
+  merge:        (sourceId: string, targetId: string) => api.post('/tasks/groups/merge', { source_id: sourceId, target_id: targetId }).then(r => r.data),
+  addToGroup:   (groupId: string, taskId: string)     => api.post(`/tasks/groups/${groupId}/add`, { task_id: taskId }).then(r => r.data),
+  ungroup:      (taskId: string)                       => api.delete(`/tasks/groups/tasks/${taskId}`).then(r => r.data),
+  renameGroup:  (groupId: string, title: string)       => api.put(`/tasks/groups/${groupId}`, { title }).then(r => r.data),
 }
 
 export const usersApi = {

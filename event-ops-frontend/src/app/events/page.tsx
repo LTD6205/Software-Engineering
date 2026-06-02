@@ -5,6 +5,7 @@ import { eventsApi, getErrorMessage } from '@/lib/api'
 import { useLiveData } from '@/lib/useLiveData'
 import { isEventNearby, isEventInMonth, isEventOnDate, NEARBY_DAYS } from '@/lib/filters'
 import { Event, ManagerOption } from '@/lib/types'
+import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
 import Dropdown from '@/components/Dropdown'
@@ -223,11 +224,7 @@ export default function EventsPage() {
         </div>
         <div>
           <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>{t('Time', 'Giờ')}</span>
-          <input
-            type="time"
-            value={form[timeKey]}
-            onChange={e => setForm(f => ({ ...f, [timeKey]: e.target.value }))}
-          />
+          <TimePicker value={form[timeKey]} onChange={v => setForm(f => ({ ...f, [timeKey]: v }))} />
         </div>
       </div>
     </div>
@@ -528,8 +525,7 @@ export default function EventsPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px' }}>
                   <input type="date" value={dForm[dateKey]}
                     onChange={e => setDForm(f => ({ ...f, [dateKey]: e.target.value }))} />
-                  <input type="time" value={dForm[timeKey]}
-                    onChange={e => setDForm(f => ({ ...f, [timeKey]: e.target.value }))} />
+                  <TimePicker value={dForm[timeKey]} onChange={v => setDForm(f => ({ ...f, [timeKey]: v }))} />
                 </div>
               </div>
             )

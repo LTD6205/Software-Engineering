@@ -32,6 +32,38 @@ export class TasksController {
     });
   }
 
+  // ── Task groups (merged tasks). Declared before :id routes so the literal
+  // "groups" segment is never swallowed by a param route. ──
+  @Post('groups/merge')
+  @Roles('manager')
+  merge(@Body() body: { source_id: string; target_id: string }) {
+    return this.tasksService.merge(body.source_id, body.target_id);
+  }
+
+  @Post('groups/:groupId/add')
+  @Roles('manager')
+  addToGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: { task_id: string },
+  ) {
+    return this.tasksService.addToGroup(groupId, body.task_id);
+  }
+
+  @Put('groups/:groupId')
+  @Roles('manager')
+  renameGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: { title: string },
+  ) {
+    return this.tasksService.renameGroup(groupId, body.title);
+  }
+
+  @Delete('groups/tasks/:taskId')
+  @Roles('manager')
+  ungroup(@Param('taskId') taskId: string) {
+    return this.tasksService.ungroup(taskId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tasksService.findOne(id);

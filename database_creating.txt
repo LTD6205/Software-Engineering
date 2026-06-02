@@ -54,7 +54,7 @@ CREATE TABLE Tasks (
                         CHECK (priority_label IN ('low', 'medium', 'high')),
     priority_score  INT                 NOT NULL DEFAULT 0,  -- calculated & sorted by backend
     priority_source VARCHAR(10)         NOT NULL DEFAULT 'user'
-                        CHECK (priority_source IN ('user', 'ai')),
+                        CHECK (priority_source IN ('user', 'ai', 'auto')),
     status          VARCHAR(20)         NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'in_progress', 'completed', 'overdue')),
     start_time      TIMESTAMP,
@@ -257,3 +257,27 @@ SELECT pg_temp.recreate_fk_cascade('task_dependencies', 'depends_on_task', 'task
 SELECT pg_temp.recreate_fk_cascade('ai_task_map',       'task_id',         'tasks',  'task_id');
 SELECT pg_temp.recreate_fk_cascade('notifications',     'task_id',         'tasks',  'task_id');
 SELECT pg_temp.recreate_fk_cascade('tasks',             'event_id',        'events', 'event_id');
+
+-- 8. Merged tasks: a "task group" is a named parent several tasks belong to.
+--    (Same SQL as event-ops-backend/migrations/2026-06-02_task_groups.sql.)
+CREATE TABLE IF NOT EXISTS task_groups (
+    group_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id   UUID         NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+    title      VARCHAR(255) NOT NULL DEFAULT '',
+    created_at TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS group_id UUID;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_group_id_fkey') THEN
+        ALTER TABLE tasks ADD CONSTRAINT tasks_group_id_fkey
+            FOREIGN KEY (group_id) REFERENCES task_groups(group_id) ON DELETE SET NULL;
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_id);
+
+-- 9. Allow 'auto' priority source (priority derived from the task's timeline
+--    position; recomputed on change). Upgrades an existing database.
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_priority_source_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_priority_source_check
+    CHECK (priority_source IN ('user', 'ai', 'auto'));

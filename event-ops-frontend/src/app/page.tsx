@@ -55,7 +55,7 @@ export default function DashboardPage() {
           marginBottom: '32px',
         }}>
           <StatCard label="Total Events"  labelVi="Tổng sự kiện"  value={total}     icon={CalendarDays}  color="var(--accent-blue)"  />
-          <StatCard label="Active"        labelVi="Đang diễn ra"  value={active}    icon={Clock}         color="var(--accent-teal)"  />
+          <StatCard label="In Progress"   labelVi="Đang diễn ra"  value={active}    icon={Clock}         color="var(--accent-teal)"  />
           <StatCard label="Completed"     labelVi="Hoàn thành"    value={completed} icon={CheckSquare}   color="var(--accent-green)" />
           <StatCard label="Pending"       labelVi="Chờ xử lý"     value={pending}   icon={AlertTriangle} color="var(--accent-amber)" />
         </div>

@@ -48,6 +48,10 @@ export interface Task {
   created_by: string
   created_at: string
   assignees?: Assignee[]
+  // Merged-task grouping: non-null group_id means this task shares a span with
+  // its group mates; group_title is the parent label.
+  group_id?: string | null
+  group_title?: string | null
 }
 
 export interface Notification {

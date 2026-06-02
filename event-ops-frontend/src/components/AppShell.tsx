@@ -64,6 +64,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <main style={{
         marginLeft: '240px', flex: 1,
+        // min-width: 0 lets this flex item shrink to the viewport instead of
+        // being pushed wider by scrollable content (e.g. the Tasks timeline),
+        // which would add a second, page-level horizontal scrollbar.
+        minWidth: 0,
         minHeight: '100vh', background: 'var(--bg-primary)',
       }}>
         {children}
