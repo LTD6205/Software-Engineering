@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, CheckSquare, ArrowRightLeft, Info, History } from 'lucide-react'
+import { Bell, Check, CheckCheck, AlertTriangle, Clock, Calendar, CheckSquare, ArrowRightLeft, Info, History } from 'lucide-react'
 import { useNotifications } from '@/lib/useNotifications'
 import { useLang } from '@/context/LanguageContext'
 import { Notification } from '@/lib/types'
@@ -178,7 +178,7 @@ export default function NotificationBell() {
                       style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '2px', display: 'flex', flexShrink: 0, cursor: 'pointer' }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--accent-green)'}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
-                      <CheckCheck size={15} />
+                      <Check size={15} />
                     </button>
                   )}
                 </div>
