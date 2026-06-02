@@ -11,6 +11,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
+    "prestart:prod": "nest build",
     "start:prod": "node dist/main",
     "seed": "node seed.js",
     "db:backup": "node db-backup.js",

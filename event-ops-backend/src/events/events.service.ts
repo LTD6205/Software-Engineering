@@ -170,6 +170,105 @@ export class EventsService {
     return this.findOne(id);
   }
 
+  // Change an event's dates. The caller chooses what happens to its tasks:
+  //   'delete' — remove all tasks.
+  //   'shift'  — move every task by the same offset the event start moved;
+  //              any task whose shifted deadline lands past the new end is deleted.
+  async updateDates(
+    id: string,
+    start_time: string,
+    end_time: string,
+    strategy: 'delete' | 'shift',
+  ) {
+    const event = await this.findOne(id);
+    if (!start_time || !end_time) {
+      throw new BadRequestException(
+        'Start and end time are required / Vui lòng nhập thời gian bắt đầu và kết thúc',
+      );
+    }
+    const newStart = new Date(start_time);
+    const newEnd = new Date(end_time);
+    this.assertValidDateRange(newStart, newEnd);
+    const delta = newStart.getTime() - new Date(event.start_time).getTime();
+    const m = this.eventRepo.manager;
+
+    if (strategy === 'delete') {
+      const rows: Array<{ task_id: string }> = await m.query(
+        `SELECT task_id FROM tasks WHERE event_id = $1`,
+        [id],
+      );
+      for (const { task_id } of rows) await this.deleteTaskRow(task_id);
+    } else {
+      // shift
+      const rows: Array<{
+        task_id: string;
+        start_time: Date | null;
+        deadline: Date | null;
+      }> = await m.query(
+        `SELECT task_id, start_time, deadline FROM tasks WHERE event_id = $1`,
+        [id],
+      );
+      for (const tk of rows) {
+        const shiftedDeadline = tk.deadline
+          ? new Date(new Date(tk.deadline).getTime() + delta)
+          : null;
+        const shiftedStart = tk.start_time
+          ? new Date(new Date(tk.start_time).getTime() + delta)
+          : null;
+        if (shiftedDeadline && shiftedDeadline > newEnd) {
+          await this.deleteTaskRow(tk.task_id);
+        } else {
+          await m.query(
+            `UPDATE tasks SET start_time = $2, deadline = $3 WHERE task_id = $1`,
+            [tk.task_id, shiftedStart, shiftedDeadline],
+          );
+        }
+      }
+    }
+
+    // Re-derive status from whatever tasks remain.
+    const remaining: Array<{ status: string }> = await m.query(
+      `SELECT status FROM tasks WHERE event_id = $1`,
+      [id],
+    );
+    let status = 'pending';
+    if (remaining.length > 0) {
+      status = remaining.every((t) => t.status === 'completed')
+        ? 'completed'
+        : 'in_progress';
+    }
+    await this.eventRepo.update(id, {
+      start_time,
+      end_time,
+      status,
+    });
+
+    const members = await this.getMemberIds(id);
+    await this.notifications.notifyUsers(
+      members,
+      'event',
+      `The event "${event.event_name}" dates were updated. / Sự kiện "${event.event_name}" đã được đổi thời gian.`,
+      null,
+      id,
+    );
+    return this.findOne(id);
+  }
+
+  // Delete a task and all of its child rows (no ON DELETE CASCADE in the schema).
+  private async deleteTaskRow(taskId: string) {
+    const m = this.eventRepo.manager;
+    await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [taskId]);
+    await m.query(
+      'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
+      [taskId],
+    );
+    await m.query('DELETE FROM milestones WHERE task_id = $1', [taskId]);
+    await m.query('DELETE FROM task_logs WHERE task_id = $1', [taskId]);
+    await m.query('DELETE FROM task_assignments WHERE task_id = $1', [taskId]);
+    await m.query('DELETE FROM notifications WHERE task_id = $1', [taskId]);
+    await m.query('DELETE FROM tasks WHERE task_id = $1', [taskId]);
+  }
+
   // The end time must come after the start time (also enforced by a DB CHECK).
   private assertValidDateRange(start?: Date, end?: Date) {
     if (start && end && new Date(end) <= new Date(start)) {
@@ -190,20 +289,7 @@ export class EventsService {
       `SELECT task_id FROM tasks WHERE event_id = $1`,
       [id],
     );
-    for (const { task_id } of taskRows) {
-      await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [task_id]);
-      await m.query(
-        'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
-        [task_id],
-      );
-      await m.query('DELETE FROM milestones WHERE task_id = $1', [task_id]);
-      await m.query('DELETE FROM task_logs WHERE task_id = $1', [task_id]);
-      await m.query('DELETE FROM task_assignments WHERE task_id = $1', [
-        task_id,
-      ]);
-      await m.query('DELETE FROM notifications WHERE task_id = $1', [task_id]);
-    }
-    await m.query('DELETE FROM tasks WHERE event_id = $1', [id]);
+    for (const { task_id } of taskRows) await this.deleteTaskRow(task_id);
     await this.eventRepo.delete(id);
     await this.notifications.notifyUsers(
       members,

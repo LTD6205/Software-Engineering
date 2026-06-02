@@ -4,6 +4,7 @@ import { Bot, Send, User, CheckCircle, XCircle, Loader } from 'lucide-react'
 import { aiApi, eventsApi } from '@/lib/api'
 import { Event, Task } from '@/lib/types'
 import TopBar from '@/components/TopBar'
+import EventPicker from '@/components/EventPicker'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 
@@ -41,7 +42,14 @@ export default function AiPage() {
     t(p === 'high' ? 'High' : p === 'medium' ? 'Medium' : 'Low',
       p === 'high' ? 'Cao' : p === 'medium' ? 'Trung bình' : 'Thấp')
 
-  useEffect(() => { eventsApi.getAll().then(setEvents) }, [])
+  useEffect(() => { eventsApi.getAll().then(setEvents).catch(() => {}) }, [])
+  // Land on an event by default instead of forcing a manual pick.
+  useEffect(() => {
+    if (!eventId && events.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEventId(events[0].event_id)
+    }
+  }, [events, eventId])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const send = async () => {
@@ -86,10 +94,7 @@ export default function AiPage() {
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
             {t('Select Event', 'Chọn sự kiện')}
           </label>
-          <select value={eventId} onChange={e => setEventId(e.target.value)}>
-            <option value="">{t('— Select an event first —', '— Chọn sự kiện trước —')}</option>
-            {events.map(e => <option key={e.event_id} value={e.event_id}>{e.event_name}</option>)}
-          </select>
+          <EventPicker events={events} value={eventId} onChange={setEventId} />
         </div>
       </div>
 

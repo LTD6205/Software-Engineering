@@ -29,9 +29,24 @@ export default function EventsPage() {
   const [pickedManagers, setPickedManagers] = useState<string[]>([])
   const [editing, setEditing] = useState<Event | null>(null) // member editor
   const [memberIds, setMemberIds] = useState<string[]>([])
+  // Date editor.
+  const [editingDates, setEditingDates] = useState<Event | null>(null)
+  const [dForm, setDForm] = useState({ startDate: '', startTime: '', endDate: '', endTime: '' })
+  const [dErr, setDErr] = useState('')
+  const [dSaving, setDSaving] = useState(false)
   const router = useRouter()
   const { canManageEvents } = useAuth()
   const { t, tError } = useLang()
+
+  // Split an ISO timestamp into local date + time inputs.
+  const splitDT = (iso: string) => {
+    const d = new Date(iso)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return {
+      date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+      time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -99,6 +114,38 @@ export default function EventsPage() {
     } catch {
       setMemberIds(prev => toggle(prev, managerId)) // revert
     }
+  }
+
+  // Date editor: open prefilled, then save with a task strategy.
+  const openDateEditor = (ev: Event) => {
+    const s = splitDT(ev.start_time)
+    const e = splitDT(ev.end_time)
+    setDForm({ startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time })
+    setEditingDates(ev)
+    setDErr('')
+  }
+  const submitDates = async (strategy: 'delete' | 'shift') => {
+    if (!editingDates) return
+    if (!dForm.startDate || !dForm.startTime || !dForm.endDate || !dForm.endTime) {
+      setDErr(t('All date and time fields are required', 'Vui lòng nhập đầy đủ ngày và giờ')); return
+    }
+    const startLocal = `${dForm.startDate}T${dForm.startTime}`
+    const endLocal = `${dForm.endDate}T${dForm.endTime}`
+    if (new Date(endLocal) <= new Date(startLocal)) {
+      setDErr(t('End time must be after start time', 'Thời gian kết thúc phải sau thời gian bắt đầu')); return
+    }
+    setDSaving(true); setDErr('')
+    try {
+      await eventsApi.updateDates(editingDates.event_id, {
+        start_time: new Date(startLocal).toISOString(),
+        end_time: new Date(endLocal).toISOString(),
+        task_strategy: strategy,
+      })
+      setEditingDates(null)
+      load()
+    } catch (e) {
+      setDErr(tError(getErrorMessage(e, 'Could not update the dates / Không thể cập nhật thời gian')))
+    } finally { setDSaving(false) }
   }
 
   // A Date + Time row. Picking a date defaults the time to 08:00 (editable).
@@ -205,6 +252,7 @@ export default function EventsPage() {
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
                 canDelete={canManageEvents}
                 onManageMembers={canManageEvents ? openMembers : undefined}
+                onEditDates={canManageEvents ? openDateEditor : undefined}
               />
             ))}
           </div>
@@ -341,6 +389,55 @@ export default function EventsPage() {
               }}>
               {t('Done', 'Xong')}
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Date editor — change an event's dates and decide what happens to tasks. */}
+      {editingDates && (
+        <Modal
+          title={t('Change dates', 'Đổi thời gian') + ' — ' + editingDates.event_name}
+          onClose={() => setEditingDates(null)}
+        >
+          {(['start', 'end'] as const).map(which => {
+            const dateKey = which === 'start' ? 'startDate' : 'endDate'
+            const timeKey = which === 'start' ? 'startTime' : 'endTime'
+            return (
+              <div key={which} style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  {which === 'start' ? t('Start', 'Bắt đầu') : t('End', 'Kết thúc')}
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px' }}>
+                  <input type="date" value={dForm[dateKey]}
+                    onChange={e => setDForm(f => ({ ...f, [dateKey]: e.target.value }))} />
+                  <input type="time" value={dForm[timeKey]}
+                    onChange={e => setDForm(f => ({ ...f, [timeKey]: e.target.value }))} />
+                </div>
+              </div>
+            )
+          })}
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px', lineHeight: 1.5 }}>
+            {t(
+              'Choose what happens to this event’s tasks: shift them all by the same change (any task that ends past the new end date is removed), or delete them all.',
+              'Chọn điều xảy ra với công việc của sự kiện: dời tất cả theo cùng mức thay đổi (công việc kết thúc sau ngày kết thúc mới sẽ bị xóa), hoặc xóa tất cả.',
+            )}
+          </p>
+          {dErr && <p style={{ color: 'var(--accent-red)', fontSize: '13px', marginBottom: '12px' }}>{dErr}</p>}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <button onClick={() => setEditingDates(null)} disabled={dSaving} style={{
+              background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: '8px', padding: '9px 16px', fontSize: '13px',
+            }}>{t('Cancel', 'Hủy')}</button>
+            <button onClick={() => submitDates('delete')} disabled={dSaving} style={{
+              background: 'transparent', color: 'var(--accent-red)',
+              border: '1px solid var(--accent-red)', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 600,
+              opacity: dSaving ? 0.6 : 1,
+            }}>{t('Delete all tasks', 'Xóa tất cả công việc')}</button>
+            <button onClick={() => submitDates('shift')} disabled={dSaving} style={{
+              background: 'var(--accent-blue)', color: 'white',
+              border: 'none', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 600,
+              opacity: dSaving ? 0.6 : 1,
+            }}>{dSaving ? t('Saving...', 'Đang lưu...') : t('Shift tasks', 'Dời công việc')}</button>
           </div>
         </Modal>
       )}

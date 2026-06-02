@@ -21,6 +21,8 @@ export const eventsApi = {
   getOne:  (id: string)               => api.get(`/events/${id}`).then(r => r.data),
   create:  (data: object)             => api.post('/events', data).then(r => r.data),
   update:  (id: string, data: object) => api.put(`/events/${id}`, data).then(r => r.data),
+  updateDates: (id: string, data: { start_time: string; end_time: string; task_strategy: 'delete' | 'shift' }) =>
+    api.put(`/events/${id}/dates`, data).then(r => r.data),
   remove:  (id: string)               => api.delete(`/events/${id}`).then(r => r.data),
   availableManagers: ()                       => api.get('/events/available-managers').then(r => r.data),
   getManagers:       (id: string)             => api.get(`/events/${id}/managers`).then(r => r.data),

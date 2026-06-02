@@ -67,6 +67,26 @@ export class EventsController {
     return this.eventsService.update(id, body);
   }
 
+  // Change an event's dates, choosing whether to delete or shift its tasks.
+  @Put(':id/dates')
+  @Roles('eventmanager')
+  updateDates(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      start_time: string;
+      end_time: string;
+      task_strategy: 'delete' | 'shift';
+    },
+  ) {
+    return this.eventsService.updateDates(
+      id,
+      body.start_time,
+      body.end_time,
+      body.task_strategy === 'delete' ? 'delete' : 'shift',
+    );
+  }
+
   @Delete(':id')
   @Roles('eventmanager')
   remove(@Param('id') id: string) {

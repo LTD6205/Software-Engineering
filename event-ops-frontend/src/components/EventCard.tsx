@@ -1,5 +1,5 @@
 'use client'
-import { Calendar, Trash2, ChevronRight, Users } from 'lucide-react'
+import { Calendar, Trash2, ChevronRight, Users, Pencil } from 'lucide-react'
 import { Event } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
@@ -11,6 +11,7 @@ interface Props {
   onClick: (event: Event) => void
   canDelete?: boolean
   onManageMembers?: (event: Event) => void
+  onEditDates?: (event: Event) => void
 }
 
 // Status accent: pending=yellow, in_progress=blue, completed=green.
@@ -20,7 +21,7 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'var(--accent-green)',
 }
 
-export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers }: Props) {
+export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onEditDates }: Props) {
   const { t, lang } = useLang()
   const fmt = (d: string) =>
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -52,8 +53,16 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
           <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
             {event.event_name}
           </p>
-          <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          <p
+            onClick={onEditDates ? (e => { e.stopPropagation(); onEditDates(event) }) : undefined}
+            title={onEditDates ? t('Change dates', 'Đổi thời gian') : undefined}
+            style={{
+              fontSize: '12px', color: 'var(--text-muted)', width: 'fit-content',
+              display: 'flex', alignItems: 'center', gap: '5px',
+              cursor: onEditDates ? 'pointer' : 'default',
+            }}>
             {fmt(event.start_time)} — {fmt(event.end_time)}
+            {onEditDates && <Pencil size={11} style={{ opacity: 0.7 }} />}
           </p>
         </div>
         {event.people_count != null && (
