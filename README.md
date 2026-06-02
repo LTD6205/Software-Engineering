@@ -45,13 +45,31 @@ event-ops-frontend/   Next.js dashboard (port 3001)
 
 ## Quick Start
 
-> **Windows one-click:** with Docker Desktop and Node.js 20+ installed, double-click
-> **`setup-once.bat`** once (installs deps, creates env files, starts Postgres, applies
-> the schema, seeds accounts — safe to re-run), then **`start-all.bat`** to launch
-> Docker + backend + frontend + the public share link, each in its own window. The
-> manual steps below do the same thing and work on any OS.
-
 Clone, then set up each project once.
+
+### Windows one-click (optional)
+
+If you're on **Windows** with **Docker Desktop** and **Node.js 20+** installed, you can skip the
+manual steps below and use the bundled scripts (in the repo root):
+
+1. **Double-click `setup-once.bat`** — run this once after cloning. It is idempotent (safe to
+   re-run) and:
+   - checks that Docker and npm are installed,
+   - runs `npm install --legacy-peer-deps` in both `event-ops-backend` and `event-ops-frontend`
+     (only when `node_modules` is missing),
+   - creates `event-ops-backend/.env` and `event-ops-frontend/.env.local` from the `.example` files,
+   - starts Postgres, applies `database_creating.txt` (only if the schema isn't there), and
+     seeds the login accounts (only if the database is empty).
+2. **Double-click `start-all.bat`** — run this each time you want to work. It launches, in order
+   and each in its own window: **Docker + Postgres → backend (:3000) → frontend (:3001) → public
+   share link (ngrok via :8080)**, waiting for each to be ready before starting the next. If a
+   port is already in use it skips that one; if the clone isn't set up yet it tells you to run
+   `setup-once.bat` first.
+
+> The public share link needs ngrok configured once: `ngrok config add-authtoken <your-token>`.
+> Without it, backend and frontend still run locally; only the share window will complain.
+>
+> macOS/Linux users: follow the manual steps below (they do the same thing).
 
 ### 1. Database (Docker)
 ```bash
