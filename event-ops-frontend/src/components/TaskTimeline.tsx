@@ -223,11 +223,18 @@ export default function TaskTimeline(props: Props) {
 
     for (const g of groupList) {
       const title = g.members.find(m => m.group_title)?.group_title || ''
-      const undatedHere = g.members.filter(m => { const [s, e] = spanOf(m); return isNaN(s) || isNaN(e) })
-      unscheduled.push(...undatedHere)
-      const items = g.dated.map(m => { const [s, e] = spanOf(m); return { start: s, end: visEnd(s, e), realEnd: e, task: m } })
+      // Only show members that pass the filter. The group band is drawn only
+      // when the WHOLE group is shown; when a filter (e.g. priority) hides some
+      // members, just the matching blocks appear — not the whole group block.
+      const shownMembers = g.members.filter(matches)
+      const fullyShown = shownMembers.length === g.members.length
+      unscheduled.push(...shownMembers.filter(m => { const [s, e] = spanOf(m); return isNaN(s) || isNaN(e) }))
+      const dated = shownMembers.filter(m => { const [s, e] = spanOf(m); return !isNaN(s) && !isNaN(e) })
+      if (dated.length === 0) continue
+      const items = dated.map(m => { const [s, e] = spanOf(m); return { start: s, end: visEnd(s, e), realEnd: e, task: m } })
       const { placed, lanes } = packLanes(items)
-      const innerTop = cursorTop + GROUP_TITLE_H
+      const titleH = fullyShown ? GROUP_TITLE_H : 0
+      const innerTop = cursorTop + titleH
       let minL = Infinity, maxR = -Infinity
       for (const it of items) {
         const lane = placed.get(it) ?? 0
@@ -236,8 +243,8 @@ export default function TaskTimeline(props: Props) {
         minL = Math.min(minL, x(it.start))
         maxR = Math.max(maxR, x(it.start) + Math.max(LABEL_PX, ((it.realEnd - it.start) / DAY) * pxPerDay))
       }
-      const height = GROUP_TITLE_H + lanes * (ROW_H + LANE_GAP) - LANE_GAP + 8
-      if (isFinite(minL)) bands.push({ gid: g.gid, title, left: minL - 6, width: (maxR - minL) + 12, top: cursorTop, height })
+      const height = titleH + lanes * (ROW_H + LANE_GAP) - LANE_GAP + 8
+      if (fullyShown && isFinite(minL)) bands.push({ gid: g.gid, title, left: minL - 6, width: (maxR - minL) + 12, top: cursorTop, height })
       cursorTop += height + GROUP_GAP
     }
 

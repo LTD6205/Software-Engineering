@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
-import { isDeadlineNearby, NEARBY_DAYS } from '@/lib/filters'
 import { Task, Event } from '@/lib/types'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
@@ -53,8 +52,7 @@ function TasksContent() {
   // Avatar re-select picker: the task whose assignees are being edited.
   const [editingAssignees, setEditingAssignees] = useState<Task | null>(null)
   const [pickedStaff, setPickedStaff] = useState<string[]>([])
-  // Filters — time scope (default "all") + status + priority.
-  const [taskScope, setTaskScope]       = useState<'all' | 'nearby'>('all')
+  // Filters — status + priority.
   const [taskStatus, setTaskStatus]     = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'overdue'>('all')
   const [taskPriority, setTaskPriority] = useState<'all' | 'low' | 'medium' | 'high'>('all')
 
@@ -253,15 +251,13 @@ function TasksContent() {
     }
   }
 
-  // Filter predicate (time scope + status + priority). Passed to the timeline,
-  // which keeps a whole merged group visible if any member matches.
+  // Filter predicate (status + priority).
   const matches = (tk: Task) => {
-    if (taskScope === 'nearby' && !isDeadlineNearby(tk.deadline)) return false
     if (taskStatus !== 'all' && tk.status !== taskStatus) return false
     if (taskPriority !== 'all' && tk.priority_label !== taskPriority) return false
     return true
   }
-  const resetTaskFilters = () => { setTaskScope('all'); setTaskStatus('all'); setTaskPriority('all') }
+  const resetTaskFilters = () => { setTaskStatus('all'); setTaskPriority('all') }
 
   // Merge / group actions — refetch after each so the timeline reflects the
   // new spans and grouping immediately (the live socket also broadcasts).
@@ -315,16 +311,6 @@ function TasksContent() {
     catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not move the task / Không thể di chuyển công việc'))) }
   }
 
-  // A small pill button used by the filter bar.
-  const pill = (active: boolean, label: string, onClick: () => void) => (
-    <button onClick={onClick} style={{
-      fontSize: '12px', fontWeight: 600, padding: '6px 12px', borderRadius: '8px', cursor: 'pointer',
-      background: active ? 'var(--accent-blue)' : 'var(--bg-card)',
-      color: active ? 'white' : 'var(--text-secondary)',
-      border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border)'}`,
-    }}>{label}</button>
-  )
-
   return (
     <div>
       <TopBar title="Tasks" titleVi="Công việc" />
@@ -355,17 +341,9 @@ function TasksContent() {
           </div>
         )}
 
-        {/* Filter bar: time scope (default Nearby) + status + priority. */}
+        {/* Filter bar: status + priority. */}
         {selectedEvent && !loading && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
-            {pill(taskScope === 'all', t('All', 'Tất cả'), () => setTaskScope('all'))}
-            {pill(taskScope === 'nearby', t('Nearby', 'Gần đây'), () => setTaskScope('nearby'))}
-            {taskScope === 'nearby' && (
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                {t(`deadline ±${NEARBY_DAYS} days`, `hạn chót ±${NEARBY_DAYS} ngày`)}
-              </span>
-            )}
-            <span style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 4px' }} />
             <Dropdown size="sm" value={taskStatus} onChange={v => setTaskStatus(v as typeof taskStatus)}
               ariaLabel={t('Filter by status', 'Lọc theo trạng thái')}
               options={[

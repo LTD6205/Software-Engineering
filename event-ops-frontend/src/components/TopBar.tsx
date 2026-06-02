@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 import { roleLabelOf } from '@/lib/roles'
 import LangToggle from './LangToggle'
+import ThemeToggle from './ThemeToggle'
 import NotificationBell from './NotificationBell'
 import ProfileModal from './ProfileModal'
 
@@ -27,6 +28,7 @@ export default function TopBar({ title, titleVi }: Props) {
         <h1 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{t(title, titleVi)}</h1>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <ThemeToggle />
         <LangToggle />
         {/* Click to open the personal profile editor */}
         <button

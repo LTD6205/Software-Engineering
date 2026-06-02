@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
   --bg-primary:    #0f1117;
   --bg-secondary:  #161b27;
   --bg-card:       #1c2333;
@@ -16,6 +17,27 @@
   --accent-red:    #ef4444;
   --accent-green:  #22c55e;
   --accent-purple: #8b5cf6;
+}
+
+/* Light theme — applied when <html data-theme="light">. Accents stay the same;
+   only the surfaces/text invert. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary:    #f4f6fb;
+  --bg-secondary:  #ffffff;
+  --bg-card:       #ffffff;
+  --bg-hover:      #eef1f7;
+  --border:        #e2e6ef;
+  --border-light:  #cdd4e1;
+  --text-primary:  #1b2333;
+  --text-secondary:#516079;
+  --text-muted:    #8a95a8;
+  --accent-blue:   #2563eb;
+  --accent-teal:   #0d9488;
+  --accent-amber:  #d97706;
+  --accent-red:    #dc2626;
+  --accent-green:  #16a34a;
+  --accent-purple: #7c3aed;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -64,8 +86,8 @@ input, textarea, select {
   outline: none;
   width: 100%;
   transition: border-color 0.15s;
-  /* Render native date/time pickers (and their icons) in dark mode. */
-  color-scheme: dark;
+  /* Native date/time pickers follow the active theme (color-scheme inherits
+     from :root, which is set per theme above). */
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent-blue); }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
