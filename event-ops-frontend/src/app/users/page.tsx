@@ -447,7 +447,8 @@ export default function UsersPage() {
             <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
               <option value="staff">{t('Staff', 'Nhân viên')}</option>
               <option value="manager">{t('Manager', 'Quản lý')}</option>
-              {/* Only an admin can create another admin */}
+              {/* High-privilege roles can only be created by an admin */}
+              {isAdmin && <option value="eventmanager">{t('Event Manager', 'Quản lý sự kiện')}</option>}
               {isAdmin && <option value="admin">{t('Admin', 'Quản trị viên')}</option>}
             </select>
           </div>

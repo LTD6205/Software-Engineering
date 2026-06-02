@@ -156,11 +156,15 @@ export class UsersController {
     return this.usersService.update(id, body);
   }
 
-  // Only an admin may grant the admin role.
+  // Only an admin may grant the high-privilege roles (admin, event manager).
+  // A plain manager must not be able to create a peer or a higher role.
   private assertCanAssignRole(actorRole: string, targetRole?: string) {
-    if (targetRole === 'admin' && actorRole !== 'admin') {
+    if (
+      (targetRole === 'admin' || targetRole === 'eventmanager') &&
+      actorRole !== 'admin'
+    ) {
       throw new ForbiddenException(
-        'Only an admin can assign the admin role / Chỉ quản trị viên mới có thể cấp vai trò admin',
+        'Only an admin can assign the admin or event manager role / Chỉ quản trị viên mới có thể cấp vai trò admin hoặc quản lý sự kiện',
       );
     }
   }
