@@ -4,7 +4,6 @@ import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskLog } from '../entities/task-log.entity';
-import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
 import { TasksController } from './tasks.controller';
@@ -20,7 +19,6 @@ import { EventsModule } from '../events/events.module';
       TaskAssignment,
       TaskDependency,
       TaskLog,
-      Milestone,
       User,
       Event,
     ]),

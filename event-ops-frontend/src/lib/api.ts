@@ -39,9 +39,6 @@ export const tasksApi = {
   assign:            (taskId: string, userId: string) => api.post(`/tasks/${taskId}/assign`, { user_id: userId }).then(r => r.data),
   setAssignees:      (taskId: string, userIds: string[]) => api.put(`/tasks/${taskId}/assignments`, { user_ids: userIds }).then(r => r.data),
   unassign:          (taskId: string, userId: string) => api.delete(`/tasks/${taskId}/assign/${userId}`).then(r => r.data),
-  getMilestones:     (taskId: string)                 => api.get(`/tasks/${taskId}/milestones`).then(r => r.data),
-  addMilestone:      (taskId: string, data: object)   => api.post(`/tasks/${taskId}/milestones`, data).then(r => r.data),
-  completeMilestone: (milestoneId: string)            => api.put(`/tasks/milestones/${milestoneId}/complete`).then(r => r.data),
 }
 
 export const usersApi = {

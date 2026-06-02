@@ -112,21 +112,7 @@ CREATE TABLE Task_Dependencies (
 );
 
 
---  8. MILESTONES
---  Percentage checkpoints for a task (must sum to 100)
-CREATE TABLE Milestones (
-    milestone_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id         UUID                NOT NULL REFERENCES Tasks(task_id),
-    title           VARCHAR(255),                   -- e.g. "Setup done", "Draft submitted"
-    percentage      INT                 NOT NULL
-                        CHECK (percentage > 0 AND percentage <= 100),
-    due_time        TIMESTAMP,
-    is_completed    BOOLEAN             NOT NULL DEFAULT FALSE,
-    created_at      TIMESTAMP           NOT NULL DEFAULT NOW()
-);
-
-
---  9. NOTIFICATIONS
+--  8. NOTIFICATIONS
 CREATE TABLE Notifications (
     notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID                NOT NULL REFERENCES Users(user_id),
@@ -141,7 +127,7 @@ CREATE TABLE Notifications (
 );
 
 
---  10. AI_TASK_MAP
+--  9. AI_TASK_MAP
 --  Links an AI request to the tasks it created or modified
 CREATE TABLE AI_Task_Map (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

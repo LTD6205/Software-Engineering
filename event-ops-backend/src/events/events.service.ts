@@ -277,7 +277,6 @@ export class EventsService {
       'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
       [taskId],
     );
-    await m.query('DELETE FROM milestones WHERE task_id = $1', [taskId]);
     await m.query('DELETE FROM task_logs WHERE task_id = $1', [taskId]);
     await m.query('DELETE FROM task_assignments WHERE task_id = $1', [taskId]);
     await m.query('DELETE FROM notifications WHERE task_id = $1', [taskId]);

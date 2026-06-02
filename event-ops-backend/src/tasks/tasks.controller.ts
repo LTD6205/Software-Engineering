@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { Task } from '../entities/task.entity';
-import { Milestone } from '../entities/milestone.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -103,23 +102,5 @@ export class TasksController {
   @Roles('manager')
   unassign(@Param('id') id: string, @Param('userId') userId: string) {
     return this.tasksService.unassignUser(id, userId);
-  }
-
-  // Milestones
-  @Get(':id/milestones')
-  getMilestones(@Param('id') id: string) {
-    return this.tasksService.getMilestones(id);
-  }
-
-  @Post(':id/milestones')
-  @Roles('manager')
-  addMilestone(@Param('id') id: string, @Body() body: Partial<Milestone>) {
-    return this.tasksService.addMilestone(id, body);
-  }
-
-  @Put('milestones/:milestoneId/complete')
-  @Roles('manager')
-  completeMilestone(@Param('milestoneId') milestoneId: string) {
-    return this.tasksService.completeMilestone(milestoneId);
   }
 }

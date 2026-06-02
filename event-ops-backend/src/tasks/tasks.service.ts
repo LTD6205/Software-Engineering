@@ -9,7 +9,6 @@ import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskLog } from '../entities/task-log.entity';
-import { Milestone } from '../entities/milestone.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
 import { EventsGateway } from '../websocket/events.gateway';
@@ -28,7 +27,6 @@ export class TasksService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Event) private eventRepo: Repository<Event>,
     private readonly gateway: EventsGateway,
-    @InjectRepository(Milestone) private milestoneRepo: Repository<Milestone>,
     private readonly notifications: NotificationsService,
     private readonly events: EventsService,
   ) {}
@@ -209,7 +207,6 @@ export class TasksService {
       'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
       [id],
     );
-    await m.query('DELETE FROM milestones WHERE task_id = $1', [id]);
     await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
     await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
     await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
@@ -371,23 +368,5 @@ export class TasksService {
     );
     this.broadcastChange(task.event_id);
     return this.getAssigneesDetailed(taskId);
-  }
-
-  // ── Milestones ─────────────────────────────────────────────
-
-  getMilestones(taskId: string) {
-    return this.milestoneRepo.find({
-      where: { task_id: taskId },
-      order: { percentage: 'ASC' },
-    });
-  }
-
-  addMilestone(taskId: string, data: Partial<Milestone>) {
-    const milestone = this.milestoneRepo.create({ ...data, task_id: taskId });
-    return this.milestoneRepo.save(milestone);
-  }
-
-  completeMilestone(milestoneId: string) {
-    return this.milestoneRepo.update(milestoneId, { is_completed: true });
   }
 }

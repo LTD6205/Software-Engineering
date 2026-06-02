@@ -26,7 +26,7 @@ Each layer only communicates with the layer directly below it.
 ### 2. Modular Monolith
 The backend is one application divided into independent feature modules:
 - EventsModule — manage events
-- TasksModule — tasks, assignments, milestones, dependencies
+- TasksModule — tasks, assignments, dependencies
 - NotificationsModule — deadline monitoring, alerts
 - WebsocketModule — real-time push notifications
 - AiModule — natural language command processing
@@ -92,7 +92,6 @@ event-ops-backend/
     │   ├── task-log.entity.ts
     │   ├── task-assignment.entity.ts
     │   ├── task-dependency.entity.ts
-    │   ├── milestone.entity.ts
     │   ├── notification.entity.ts
     │   ├── ai-request.entity.ts
     │   └── ai-task-map.entity.ts
@@ -100,7 +99,7 @@ event-ops-backend/
     │   ├── events.module.ts
     │   ├── events.service.ts
     │   └── events.controller.ts
-    ├── tasks/                    ← CRUD, assignments, milestones
+    ├── tasks/                    ← CRUD, assignments
     │   ├── tasks.module.ts
     │   ├── tasks.service.ts
     │   └── tasks.controller.ts
@@ -124,9 +123,9 @@ event-ops-backend/
 - Engine: PostgreSQL 13
 - Database name: event_ops
 - Managed via: pgAdmin 4
-- Tables (10 total):
+- Tables (9 total):
   users, events, tasks, task_logs, task_assignments,
-  task_dependencies, milestones, notifications, ai_requests, ai_task_map
+  task_dependencies, notifications, ai_requests, ai_task_map
 - Schema file: event_ops_schema.sql (already applied, synchronize: false)
 
 ### Package versions (compatible set — do not upgrade without testing)
@@ -159,9 +158,6 @@ typeorm:          0.3.20
 | PUT    | /api/tasks/:id                           | Update task             |
 | POST   | /api/tasks/:id/assign                    | Assign user to task     |
 | DELETE | /api/tasks/:id/assign/:userId            | Unassign user           |
-| GET    | /api/tasks/:id/milestones                | Get milestones          |
-| POST   | /api/tasks/:id/milestones                | Add milestone           |
-| PUT    | /api/tasks/milestones/:id/complete       | Mark milestone done     |
 
 ### Notifications
 | Method | URL                              | Description             |
@@ -232,10 +228,10 @@ PORT=3000
 - [x] NestJS v11 project scaffolded
 - [x] All packages installed (compatible versions)
 - [x] .env configured and connected to PostgreSQL
-- [x] All 10 entity files created
+- [x] All 9 entity files created
 - [x] main.ts and app.module.ts configured
 - [x] Events module (CRUD working — tested with Thunder Client ✅)
-- [x] Tasks module (CRUD + assignments + milestones)
+- [x] Tasks module (CRUD + assignments)
 - [x] Notifications module (cron job + WebSocket push)
 - [x] WebSocket gateway (Socket.io)
 - [x] AI module (DeepSeek integration)
@@ -246,7 +242,7 @@ PORT=3000
 - [ ] Task creation panel
 - [ ] AI chat button (Copilot-style)
 - [ ] Notification bell (real-time)
-- [ ] Milestone tracker
+- [x] Milestone tracker (per-event progress: completed / total tasks)
 
 ### Phase 4 — External Services ⬜ PENDING
 - [ ] Upstash Redis (for BullMQ job queue)

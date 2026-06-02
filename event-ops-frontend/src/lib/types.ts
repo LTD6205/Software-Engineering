@@ -50,16 +50,6 @@ export interface Task {
   assignees?: Assignee[]
 }
 
-export interface Milestone {
-  milestone_id: string
-  task_id: string
-  title: string
-  percentage: number
-  due_time: string
-  is_completed: boolean
-  created_at: string
-}
-
 export interface Notification {
   notification_id: string
   user_id: string

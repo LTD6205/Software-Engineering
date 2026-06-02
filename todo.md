@@ -1,7 +1,7 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-02.
+Last updated 2026-06-02 (re-verified against source).
 
 ## Notifications now implemented
 
@@ -13,6 +13,7 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 - Removed from an event via the member editor → that manager + their staff.
 - Event completed (all tasks done) → every member.
 - Event deleted → everyone who was a member.
+- Event dates changed (shift/delete tasks) → every member.
 
 **Staff → manager reassignment** (3 parties each, professional wording)
 - Request: old manager ("you requested to move …"), new manager ("… wants to move … into your team"), staff ("you are being moved …, pending approval"). Staff stays in the old manager's projects until approval.
@@ -23,57 +24,98 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 - Assigned to a task → the staff member.
 - Removed from a task → the staff member.
 
+**Deadlines (cron, every 30 min)**
+- Reminder (due within 24h) and overdue alerts now reach the assigned staff **plus
+  their owning managers plus the event manager** (`deadlineRecipients()` in
+  `notifications.service.ts`). De-duplicated so the cron won't re-spam an unread alert.
+
 > Bug fixed along the way: deleting a task/event now also clears its `notifications`
 > rows (the `notifications.task_id` FK was blocking deletes once task notifications existed).
 
-## Missing / needs fixing
+## Verified DONE since last pass (removed from the concern list)
 
-- [ ] **Deadline alerts don't reach managers.** The project brief says reminders/overdue
-      alerts go to "both the assigned individuals **and** general event managers." The cron
-      (`notifications.service.ts → sendNotification`) only notifies task assignees. It should
-      also notify the event's member managers + event managers.
-- [ ] **AI is create-only.** The brief wants natural-language commands to "recalculate
-      milestones, reassign responsibilities, or restructure task lists dynamically."
-      `ai.service.ts` only turns a prompt into new tasks — no update/reassign/restructure or
-      milestone recalculation. Largest gap vs. the spec.
-- [ ] **Milestones have no UI.** Entity, service, controller routes, and `tasksApi`
-      helpers all exist, but nothing in the frontend shows/creates/completes milestones.
-      Either build the UI or drop the feature.
+- **Deadline alerts now reach managers** — `notifications.service.ts → deadlineRecipients()`
+  unions task assignees + each assignee's `manager_id` + the event's `created_by`. Matches
+  the brief ("assigned individuals **and** general event managers"). (commit `dacfaeb`)
+- **"Mark all read" + notification history** — backend `getAll()` (capped at 50) and
+  `markAllRead()` with a `/read-all` route; `NotificationBell.tsx` lists history and marks
+  all read (single tick = one read, double tick = all read). (commits `4b396f7`, `d9e1680`)
+- **Edit-event dates** — `PUT /events/:id/dates` + `eventsApi.updateDates`, with a
+  `shift`/`delete` task strategy and a date editor modal on the Events page. (commit `532e369`)
+  (Name/description editing is still missing — see below.)
+- **Dropped the unused `milestones` table feature** — the per-event "milestone" progress is
+  derived by `MilestoneBar.tsx` (completed/total tasks); the separate `milestones` table had
+  no UI and no data, so the entity, service methods, controller routes, `tasksApi`/`Milestone`
+  type helpers, and the DDL table were all removed. For an existing dev DB you can
+  `DROP TABLE IF EXISTS milestones;` (harmless to leave; it just sits empty).
+
+## Missing / needs fixing (still open, verified)
+
+- [ ] **AI is create-only.** `ai.service.ts → processCommand` still only parses a prompt into
+      a JSON array of *new* tasks and creates them. No update / reassign / restructure,
+      despite the brief asking the AI to "reassign responsibilities, or restructure task lists
+      dynamically." **Largest gap vs. the spec.**
 - [ ] **Task dependencies are unused.** `task_dependencies` table + `TaskDependency` entity
-      exist but no code reads/writes them. Needed if AI milestone recalculation is built;
-      otherwise remove.
-- [ ] **No "edit event" UI.** `PUT /events/:id` (+ `eventsApi.update`) exist but there's no
-      way to edit an event's name/dates from the dashboard.
-- [ ] **No "mark all read" / notification history.** Bell only lists unread and marks one at
-      a time; read notifications are never shown again and never pruned (unbounded growth).
-- [ ] **Owner can't cancel a pending reassignment.** Once requested, the Reassign button is
-      hidden; there's no way to withdraw a pending request before the target acts.
-- [ ] **Schema robustness:** give `notifications.task_id` an `ON DELETE SET NULL` (or CASCADE)
-      FK so task deletion can't orphan/block on notifications without manual cleanup. Same idea
-      for `task_assignments`/`milestones`/`task_logs` (currently deleted by hand in services).
+      exist, but the only code that touches the table is cleanup-on-delete
+      (`events.service.ts:277`, `tasks.service.ts:209`). Nothing creates/reads a dependency,
+      and `tasks.service.ts` injects `depRepo` but never uses it. Needed if AI milestone
+      recalculation is built; otherwise remove the table, entity, and injection.
+- [ ] **No edit UI for an event's name/description.** `PUT /events/:id` (backend `update()`)
+      and `eventsApi.update` exist but nothing in the dashboard calls them — only the *dates*
+      editor is wired. Add name/description editing or drop `eventsApi.update`.
+- [ ] **Owner can't cancel a pending reassignment.** There is no cancel/withdraw endpoint
+      (backend only has `reassign` / `accept` / `reject`), and the Reassign button is hidden
+      once `pending_manager_id` is set (`users/page.tsx:371`). The requesting manager has no
+      way to retract a request before the target acts.
+- [ ] **Schema robustness:** `notifications.task_id` has **no** `ON DELETE` clause (only
+      `event_id` is `ON DELETE CASCADE`). Give it `ON DELETE SET NULL`/`CASCADE` so task
+      deletion can't block/orphan on notifications without the manual `DELETE FROM
+      notifications WHERE task_id = …` the services currently run. Same idea for the
+      `task_assignments` / `milestones` / `task_logs` FKs (all deleted by hand in
+      `deleteTaskRow()` and friends).
+- [ ] **Removing the last manager** leaves an event with 0 members (headcount 0).
+      `removeManager()` has no guard and no empty-state warning. Add a guard or a clear
+      empty-state.
 - [ ] **New-task notification (optional):** notify an event's members when a task is added,
-      not just when they're assigned to it.
-- [ ] **Removing the last manager** leaves an event with 0 members (headcount 0); consider a
-      guard or a clear empty-state.
+      not just when they're personally assigned to it.
 
-## Unused / dead code to review (verify before deleting)
+## Features that could be improved / added (nice-to-have, not blocking)
+
+- [ ] **AI conversational editing** (the big one): let a prompt target existing tasks —
+      "push everything back two days", "move Bob's tasks to Carol", "split setup into 3
+      milestones". Requires AI access to the current task list + a verb other than "create",
+      and would finally exercise `task_dependencies` / `milestones`.
+- [ ] **Notification pruning / pagination.** History is capped at 50 rows on read but rows
+      are never deleted — the table grows unbounded. Add a retention job or paginate.
+- [ ] **Reassignment cancel button** (pairs with the open item above) — surface a
+      withdraw action while a request is pending.
+- [ ] **Event detail page.** `eventsApi.getOne`, `tasksApi.getOne`, `usersApi.getOne` all
+      exist with no consumer; a per-event detail view could use them instead of leaving them dead.
+- [ ] **Bulk task assignment / filtering** on the Tasks page (by assignee, by status).
+- [ ] **Deadline reminder cadence** is fixed at 24h / 30-min cron. Make the reminder window
+      configurable per event or per task priority.
+- [ ] **Email / push delivery.** Notifications are in-app + WebSocket only; an email or
+      browser-push channel would help managers who aren't logged in.
+
+## Unused / dead code to review (verified — confirm before deleting)
 
 **Backend**
-- `TasksService.findOverdue()` — no caller (the cron runs its own query). Dead.
-- `TasksService` injects `depRepo` (`TaskDependency` repo) but never uses it. Dead injection
+- `TasksService.findOverdue()` (`tasks.service.ts:265`) — no caller anywhere (the cron runs
+  its own query). Dead.
+- `TasksService` injects `depRepo` (`tasks.service.ts:26`) but never uses it. Dead injection
   (tied to the unused task-dependencies feature above).
-- `POST /tasks/:id/assign` / `assignUser()` and `DELETE /tasks/:id/assign/:userId` /
-  `unassignUser()` — the app now assigns exclusively through `PUT /tasks/:id/assignments`
-  (`setAssignees`). Single assign/unassign endpoints are no longer called by the frontend.
-- `GET /tasks/:id/assignments` / `getAssignments()` — not called by the frontend (the task
-  list embeds assignees instead).
-- `PUT /users/:id/deactivate` / `UsersService.deactivate()` — the Team page toggles active
-  state via `usersApi.update({ is_active })`; this endpoint is unused.
-- Milestone routes/methods (`getMilestones`, `addMilestone`, `completeMilestone`) — no UI
-  consumes them (see "Milestones have no UI").
+- **NOTE — not dead:** `TasksService.assignUser()` *is* still used — `ai.service.ts:136` calls
+  it when the AI names an assignee. Only the **HTTP endpoint** `POST /tasks/:id/assign`
+  (`tasks.controller.ts:82`) is unused by the frontend (which assigns via
+  `PUT /tasks/:id/assignments` → `setAssignees`). Keep the method; the route can go.
+- `DELETE /tasks/:id/assign/:userId` → `unassignUser()` (`tasks.controller.ts:105`,
+  `tasks.service.ts:334`) — no internal caller, not called by the frontend. Dead.
+- `GET /tasks/:id/assignments` → `getAssignments()` (`tasks.controller.ts:71`,
+  `tasks.service.ts:276`) — not called by the frontend (the task list embeds assignees). Dead.
+- `PUT /users/:id/deactivate` → `UsersService.deactivate()` (`users.controller.ts:158`) —
+  the Team page toggles active state via `usersApi.update({ is_active })`; this endpoint is unused.
 
 **Frontend (`src/lib/api.ts` helpers defined but never called)**
 - `usersApi.deactivate`, `usersApi.getOne`
-- `eventsApi.getOne`, `eventsApi.update`
+- `eventsApi.getOne`, `eventsApi.update` (only `updateDates` is wired)
 - `tasksApi.getOne`, `tasksApi.assign`, `tasksApi.unassign`
-- `tasksApi.getMilestones` / `addMilestone` / `completeMilestone` (no UI)

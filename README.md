@@ -176,7 +176,7 @@ Access reflects the level-based guard, so "manager+" also admits event managers 
 | Events | `GET /events` (viewer-scoped), `GET /events/:id` | any |
 | | `GET /events/available-managers`, `GET /events/:id/managers`, `POST/PUT/DELETE /events`, `POST/DELETE /events/:id/managers` | event manager+ |
 | Tasks | `GET /tasks/event/:eventId` (assignees included), `PUT /tasks/:id` | any |
-| | `POST /tasks`, `PUT /tasks/:id/assignments`, assign/unassign, milestones | manager+ |
+| | `POST /tasks`, `PUT /tasks/:id/assignments`, assign/unassign | manager+ |
 | Notifications | `GET /notifications/user/:userId`, `PUT /notifications/:id/read` | any |
 | AI | `POST /ai/command` | manager+ |
 
