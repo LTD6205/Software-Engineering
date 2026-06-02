@@ -72,14 +72,28 @@ export default function UsersPage() {
   // A plain manager (not admin/eventmanager) can filter down to just their own
   // team to reassign members quickly.
   const isPlainManager = user?.role === 'manager'
+  const isStaff = user?.role === 'staff'
+  // For staff, find their own manager so "My Team" can show everyone who reports
+  // to that same manager.
+  const myManagerId = isStaff
+    ? users.find(u => u.user_id === user?.user_id)?.manager_id ?? null
+    : null
+  // Show the "My Team" filter to a manager (their staff) or to a staff member
+  // who has a manager (their teammates).
+  const showMyTeam = isPlainManager || (isStaff && !!myManagerId)
 
   // Current user first, then Staff > Manager > Admin (then by name), with the
   // optional role filter applied.
   const visibleUsers = users
     .filter(u => {
       if (roleFilter === 'all') return true
-      // "My Team" = the staff that report to the current manager.
-      if (roleFilter === 'myteam') return u.role === 'staff' && u.manager_id === user?.user_id
+      if (roleFilter === 'myteam') {
+        // Manager: the staff that report to me.
+        if (isPlainManager) return u.role === 'staff' && u.manager_id === user?.user_id
+        // Staff: my manager + everyone who reports to the same manager.
+        if (isStaff) return u.user_id === myManagerId || (!!u.manager_id && u.manager_id === myManagerId)
+        return false
+      }
       return u.role === roleFilter
     })
     .sort((a, b) => {
@@ -218,8 +232,8 @@ export default function UsersPage() {
         <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
           {([
             ['all', t('All', 'Tất cả')],
-            // "My Team" only makes sense for a manager reassigning their own staff.
-            ...(isPlainManager ? [['myteam', t('My Team', 'Đội của tôi')] as [RoleFilter, string]] : []),
+            // "My Team": a manager's own staff, or a staff member's teammates.
+            ...(showMyTeam ? [['myteam', t('My Team', 'Đội của tôi')] as [RoleFilter, string]] : []),
             ['staff', t('Staff', 'Nhân viên')],
             ['manager', t('Manager', 'Quản lý')],
             ['eventmanager', t('Event Manager', 'Quản lý sự kiện')],

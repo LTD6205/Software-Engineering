@@ -8,6 +8,7 @@ import TopBar from '@/components/TopBar'
 import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
+import MilestoneBar from '@/components/MilestoneBar'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
@@ -287,6 +288,14 @@ function TasksContent() {
             </button>
           )}
         </div>
+
+        {/* Live milestone tracker for the selected event (updates as task
+            statuses change). 0% with no tasks, 100% when all are completed. */}
+        {selectedEvent && !loading && (
+          <div style={{ maxWidth: '440px', marginBottom: '22px' }}>
+            <MilestoneBar completed={completed.length} total={tasks.length} />
+          </div>
+        )}
 
         {!selectedEvent ? (
           <div style={{

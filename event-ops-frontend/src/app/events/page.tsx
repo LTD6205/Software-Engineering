@@ -184,9 +184,16 @@ export default function EventsPage() {
           }}>
             <CalendarDays size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
             <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>{t('No events yet', 'Chưa có sự kiện nào')}</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
-              {t('Click "New Event" to create your first event', 'Nhấn "Tạo sự kiện" để tạo sự kiện đầu tiên')}
-            </p>
+            {/* Only those who can create events get the "create your first" hint. */}
+            {canManageEvents ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
+                {t('Click "New Event" to create your first event', 'Nhấn "Tạo sự kiện" để tạo sự kiện đầu tiên')}
+              </p>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '6px' }}>
+                {t('You will see events here once you are added to one', 'Bạn sẽ thấy sự kiện ở đây khi được thêm vào')}
+              </p>
+            )}
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '12px' }}>

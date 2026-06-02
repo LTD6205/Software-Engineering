@@ -3,6 +3,7 @@ import { Calendar, Trash2, ChevronRight, Users } from 'lucide-react'
 import { Event } from '@/lib/types'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
+import MilestoneBar from './MilestoneBar'
 
 interface Props {
   event: Event
@@ -29,7 +30,7 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
       background: 'var(--bg-card)', border: '1px solid var(--border)',
       borderLeft: `3px solid ${accent}`,
       borderRadius: '12px', padding: '16px 20px',
-      display: 'flex', alignItems: 'center', gap: '16px',
+      display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '12px',
       cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s',
     }}
     onMouseEnter={e => {
@@ -40,44 +41,50 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
       (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
       ;(e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'
     }}>
-      <div style={{
-        width: '40px', height: '40px', borderRadius: '10px',
-        background: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      }}>
-        <Calendar size={18} color={accent} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{
+          width: '40px', height: '40px', borderRadius: '10px',
+          background: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          <Calendar size={18} color={accent} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+            {event.event_name}
+          </p>
+          <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            {fmt(event.start_time)} — {fmt(event.end_time)}
+          </p>
+        </div>
+        {event.people_count != null && (
+          <span
+            onClick={onManageMembers ? (e => { e.stopPropagation(); onManageMembers(event) }) : undefined}
+            title={onManageMembers ? t('Manage members', 'Quản lý thành viên') : t('People in this event', 'Số người trong sự kiện')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
+              color: 'var(--text-secondary)', background: 'var(--bg-hover)',
+              padding: '4px 10px', borderRadius: '20px',
+              border: `1px solid ${onManageMembers ? 'var(--border-light)' : 'var(--border)'}`,
+              cursor: onManageMembers ? 'pointer' : 'default',
+            }}>
+            <Users size={13} /> {event.people_count}
+          </span>
+        )}
+        <StatusBadge status={event.status} />
+        {canDelete && (
+          <button onClick={e => { e.stopPropagation(); onDelete(event.event_id) }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--accent-red)'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
+            <Trash2 size={15} />
+          </button>
+        )}
+        <ChevronRight size={15} color="var(--text-muted)" />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p className="selectable" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-          {event.event_name}
-        </p>
-        <p className="selectable" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          {fmt(event.start_time)} — {fmt(event.end_time)}
-        </p>
-      </div>
-      {event.people_count != null && (
-        <span
-          onClick={onManageMembers ? (e => { e.stopPropagation(); onManageMembers(event) }) : undefined}
-          title={onManageMembers ? t('Manage members', 'Quản lý thành viên') : t('People in this event', 'Số người trong sự kiện')}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
-            color: 'var(--text-secondary)', background: 'var(--bg-hover)',
-            padding: '4px 10px', borderRadius: '20px',
-            border: `1px solid ${onManageMembers ? 'var(--border-light)' : 'var(--border)'}`,
-            cursor: onManageMembers ? 'pointer' : 'default',
-          }}>
-          <Users size={13} /> {event.people_count}
-        </span>
+      {/* Milestone tracker: completed / total tasks for this event. */}
+      {event.task_count != null && (
+        <MilestoneBar completed={event.completed_count ?? 0} total={event.task_count} />
       )}
-      <StatusBadge status={event.status} />
-      {canDelete && (
-        <button onClick={e => { e.stopPropagation(); onDelete(event.event_id) }}
-          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--accent-red)'}
-          onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
-          <Trash2 size={15} />
-        </button>
-      )}
-      <ChevronRight size={15} color="var(--text-muted)" />
     </div>
   )
 }

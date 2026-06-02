@@ -41,7 +41,9 @@ export class UsersService {
   // (not phone numbers) of others — so phone is intentionally excluded here.
   directory() {
     return this.userRepo.find({
-      select: ['user_id', 'name', 'role', 'email', 'avatar'],
+      // manager_id is included so a staff member can see their own team
+      // (everyone who reports to the same manager).
+      select: ['user_id', 'name', 'role', 'email', 'avatar', 'manager_id'],
       where: { is_active: true },
       order: { role: 'ASC', name: 'ASC' },
     });

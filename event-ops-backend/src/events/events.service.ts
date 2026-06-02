@@ -67,7 +67,9 @@ export class EventsService {
          (SELECT count(*)::int FROM event_managers em WHERE em.event_id = e.event_id) AS manager_count,
          (SELECT count(*)::int FROM event_managers em WHERE em.event_id = e.event_id)
            + (SELECT count(*)::int FROM users u WHERE u.role = 'staff'
-                AND u.manager_id IN (SELECT manager_id FROM event_managers em2 WHERE em2.event_id = e.event_id)) AS people_count
+                AND u.manager_id IN (SELECT manager_id FROM event_managers em2 WHERE em2.event_id = e.event_id)) AS people_count,
+         (SELECT count(*)::int FROM tasks t WHERE t.event_id = e.event_id) AS task_count,
+         (SELECT count(*)::int FROM tasks t WHERE t.event_id = e.event_id AND t.status = 'completed') AS completed_count
        FROM events e
        WHERE ${where}
        ORDER BY e.start_time ASC`,

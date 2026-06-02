@@ -17,6 +17,8 @@ export interface Event {
   created_at: string
   manager_count?: number
   people_count?: number
+  task_count?: number
+  completed_count?: number
 }
 
 export interface ManagerOption {
