@@ -23,8 +23,14 @@ export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   @Get('event/:eventId')
-  findByEvent(@Param('eventId') eventId: string) {
-    return this.tasksService.findAllByEvent(eventId);
+  findByEvent(
+    @Request() req: { user: JwtPayload },
+    @Param('eventId') eventId: string,
+  ) {
+    return this.tasksService.findAllByEvent(eventId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Get(':id')

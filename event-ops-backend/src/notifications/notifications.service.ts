@@ -94,15 +94,22 @@ export class NotificationsService {
     type: string,
     message: string,
     taskId: string | null = null,
+    eventId: string | null = null,
   ) {
     if (!userId) return;
     const saved = await this.notifRepo.save({
       user_id: userId,
       task_id: taskId,
+      event_id: eventId,
       type,
       message,
     });
-    this.gateway.sendToUser(userId, { type, message, task_id: taskId });
+    this.gateway.sendToUser(userId, {
+      type,
+      message,
+      task_id: taskId,
+      event_id: eventId,
+    });
     return saved;
   }
 
@@ -112,11 +119,19 @@ export class NotificationsService {
     type: string,
     message: string,
     taskId: string | null = null,
+    eventId: string | null = null,
   ) {
     const unique = Array.from(new Set((userIds ?? []).filter(Boolean)));
     for (const id of unique) {
-      await this.notifyUser(id, type, message, taskId);
+      await this.notifyUser(id, type, message, taskId, eventId);
     }
+  }
+
+  // Remove a specific event notification (e.g. the "completed" notice once the
+  // event is reverted to in-progress). Matched by event + exact message so
+  // membership notices for the same event are left untouched.
+  async deleteEventNotificationsByMessage(eventId: string, message: string) {
+    await this.notifRepo.delete({ event_id: eventId, message });
   }
 
   getUnread(userId: string) {

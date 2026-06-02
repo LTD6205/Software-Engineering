@@ -216,7 +216,7 @@ export default function EventsPage() {
           {field('Event Name', 'Tên sự kiện', 'event_name')}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              {t('Description', 'Mô tả')}
+              {t('Description', 'Mô tả')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('optional', 'không bắt buộc')})</span>
             </label>
             <textarea
               rows={3}

@@ -131,6 +131,7 @@ CREATE TABLE Notifications (
     notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID                NOT NULL REFERENCES Users(user_id),
     task_id         UUID                REFERENCES Tasks(task_id),
+    event_id        UUID                REFERENCES Events(event_id) ON DELETE CASCADE,
     type            VARCHAR(20)         NOT NULL
                         CHECK (type IN ('reminder', 'alert', 'overdue',
                                         'event', 'task', 'reassignment', 'info')),

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
@@ -9,6 +9,7 @@ import TaskCard from '@/components/TaskCard'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
 import MilestoneBar from '@/components/MilestoneBar'
+import EventPicker from '@/components/EventPicker'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
@@ -57,14 +58,27 @@ function TasksContent() {
   const toggle = (list: string[], id: string) =>
     list.includes(id) ? list.filter(x => x !== id) : [...list, id]
 
-  useEffect(() => {
+  const refreshEvents = useCallback(() => {
     eventsApi.getAll().then(setEvents).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshEvents()
     if (isManager) {
       usersApi.getAll()
         .then(setTeamMembers)
         .catch(() => {})
     }
-  }, [isManager])
+  }, [isManager, refreshEvents])
+
+  // Land directly on an event instead of forcing a manual pick: if none is
+  // chosen yet, default to the first one the viewer can see.
+  useEffect(() => {
+    if (!selectedEvent && events.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedEvent(events[0].event_id)
+    }
+  }, [events, selectedEvent])
 
   // Reload tasks whenever the selected event changes. setLoading(true) up front
   // is intentional so the spinner shows immediately while the fetch runs.
@@ -88,10 +102,10 @@ function TasksContent() {
       setError(t('Please select an event', 'Vui lòng chọn sự kiện'))
       return
     }
-    // Every field is required (at least one assignee).
-    if (!form.task_name || !form.description || form.assigned_to.length === 0 ||
+    // Description is optional; everything else (incl. at least one assignee) is required.
+    if (!form.task_name || form.assigned_to.length === 0 ||
         !form.startDate || !form.startTime || !form.deadlineDate || !form.deadlineTime) {
-      setError(t('Please fill in every field', 'Vui lòng điền tất cả các trường'))
+      setError(t('Please fill in every field except description', 'Vui lòng điền tất cả các trường trừ mô tả'))
       return
     }
     const start = `${form.startDate}T${form.startTime}`
@@ -128,6 +142,7 @@ function TasksContent() {
       setShowModal(false)
       setForm({ ...emptyTask })
       setTasks(await tasksApi.getByEvent(selectedEvent))
+      refreshEvents() // task count changed -> refresh the milestone
     } catch (e) {
       setError(tError(getErrorMessage(e, 'Could not create the task / Không thể tạo công việc')))
     } finally { setSaving(false) }
@@ -171,6 +186,7 @@ function TasksContent() {
     setTasks(p => p.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
     try {
       await tasksApi.update(id, { status })
+      refreshEvents() // completion count changed -> refresh the milestone
     } catch (e) {
       setTasks(p => p.map(t => t.task_id === id ? { ...t, status: prev } : t))
       alert(tError(getErrorMessage(e, 'Could not update status / Không thể cập nhật trạng thái')))
@@ -192,6 +208,7 @@ function TasksContent() {
     try {
       await tasksApi.remove(id)
       setTasks(p => p.filter(t => t.task_id !== id))
+      refreshEvents() // task count changed -> refresh the milestone
     } catch (e) {
       alert(tError(getErrorMessage(e, 'Could not delete the task / Không thể xóa công việc')))
     }
@@ -267,14 +284,7 @@ function TasksContent() {
       <div style={{ padding: '28px' }}>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '200px', maxWidth: '340px' }}>
-            <select value={selectedEvent} onChange={e => setSelectedEvent(e.target.value)}>
-              <option value="">{t('— Select an event —', '— Chọn sự kiện —')}</option>
-              {events.map(e => (
-                <option key={e.event_id} value={e.event_id}>{e.event_name}</option>
-              ))}
-            </select>
-          </div>
+          <EventPicker events={events} value={selectedEvent} onChange={setSelectedEvent} />
           {selectedEvent && isManager && (
             <button
               onClick={() => setShowModal(true)}
@@ -282,18 +292,19 @@ function TasksContent() {
                 display: 'flex', alignItems: 'center', gap: '7px',
                 background: 'var(--accent-blue)', color: 'white',
                 border: 'none', borderRadius: '9px',
-                padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+                padding: '10px 18px', fontSize: '13px', fontWeight: 600,
               }}>
               <Plus size={15} /> {t('New Task', 'Tạo công việc')}
             </button>
           )}
         </div>
 
-        {/* Live milestone tracker for the selected event (updates as task
-            statuses change). 0% with no tasks, 100% when all are completed. */}
-        {selectedEvent && !loading && (
+        {/* Milestone tracker for the selected event — uses the event's
+            authoritative task counts so it's the same for everyone (staff only
+            see their own tasks, but the milestone reflects the whole event). */}
+        {selEvent && !loading && (
           <div style={{ maxWidth: '440px', marginBottom: '22px' }}>
-            <MilestoneBar completed={completed.length} total={tasks.length} />
+            <MilestoneBar completed={selEvent.completed_count ?? 0} total={selEvent.task_count ?? 0} />
           </div>
         )}
 
@@ -304,7 +315,9 @@ function TasksContent() {
           }}>
             <CheckSquare size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
             <p style={{ color: 'var(--text-secondary)', fontSize: '15px', fontWeight: 600 }}>
-              {t('Select an event to view tasks', 'Chọn sự kiện để xem công việc')}
+              {events.length === 0
+                ? t('You are not part of any event yet', 'Bạn chưa thuộc sự kiện nào')
+                : t('Select an event to view tasks', 'Chọn sự kiện để xem công việc')}
             </p>
           </div>
         ) : loading ? (
@@ -334,7 +347,7 @@ function TasksContent() {
 
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              {t('Description', 'Mô tả')}
+              {t('Description', 'Mô tả')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('optional', 'không bắt buộc')})</span>
             </label>
             <textarea rows={3} value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}

@@ -35,11 +35,22 @@ export class TasksService {
 
   // ── Tasks ──────────────────────────────────────────────────
 
-  async findAllByEvent(eventId: string) {
-    const tasks = await this.taskRepo.find({
+  async findAllByEvent(
+    eventId: string,
+    viewer?: { sub: string; role: string },
+  ) {
+    let tasks = await this.taskRepo.find({
       where: { event_id: eventId },
       order: { priority_score: 'DESC', deadline: 'ASC' },
     });
+    // Staff only see tasks they are assigned to; managers+ see all of them.
+    if (viewer?.role === 'staff') {
+      const mine = await this.assignRepo.find({
+        where: { user_id: viewer.sub },
+      });
+      const myTaskIds = new Set(mine.map((a) => a.task_id));
+      tasks = tasks.filter((tk) => myTaskIds.has(tk.task_id));
+    }
     if (tasks.length === 0) return tasks;
     // Attach each task's assignees (id, name, avatar) so the UI can show
     // avatars without a request per task.
@@ -115,6 +126,7 @@ export class TasksService {
         ? 'completed'
         : 'in_progress';
     }
+    const completeMsg = `The event "${event.event_name}" is now complete. / Sự kiện "${event.event_name}" đã hoàn thành.`;
     if (event.status !== status) {
       await this.eventRepo.update(eventId, { status });
       // Celebrate an event that just completed, and notify every member.
@@ -127,7 +139,16 @@ export class TasksService {
         await this.notifications.notifyUsers(
           members,
           'event',
-          `The event "${event.event_name}" is now complete. / Sự kiện "${event.event_name}" đã hoàn thành.`,
+          completeMsg,
+          null,
+          eventId,
+        );
+      } else if (event.status === 'completed') {
+        // Reverted from completed (a task reopened/added/deleted): the
+        // "completed" notice is now stale, so clear it for everyone.
+        await this.notifications.deleteEventNotificationsByMessage(
+          eventId,
+          completeMsg,
         );
       }
     }

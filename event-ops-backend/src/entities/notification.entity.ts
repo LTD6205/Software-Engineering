@@ -16,6 +16,11 @@ export class Notification {
   @Column({ type: 'uuid', nullable: true })
   task_id: string | null;
 
+  // Links a notification to an event (membership / completion alerts). Lets the
+  // app clear an event's "completed" notice when the event is reverted.
+  @Column({ type: 'uuid', nullable: true })
+  event_id: string | null;
+
   @Column({ length: 20 })
   type: string;
 
