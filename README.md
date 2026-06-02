@@ -45,6 +45,12 @@ event-ops-frontend/   Next.js dashboard (port 3001)
 
 ## Quick Start
 
+> **Windows one-click:** with Docker Desktop and Node.js 20+ installed, double-click
+> **`setup-once.bat`** once (installs deps, creates env files, starts Postgres, applies
+> the schema, seeds accounts — safe to re-run), then **`start-all.bat`** to launch
+> Docker + backend + frontend + the public share link, each in its own window. The
+> manual steps below do the same thing and work on any OS.
+
 Clone, then set up each project once.
 
 ### 1. Database (Docker)
