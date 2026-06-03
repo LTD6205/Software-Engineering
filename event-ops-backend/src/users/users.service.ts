@@ -233,6 +233,13 @@ export class UsersService {
       manager_id: newId,
       pending_manager_id: null,
     });
+    // The staff member leaves the old manager's projects: drop their existing
+    // task assignments so a reassigned staffer can't retain access to the old
+    // team's event tasks. They start fresh under the new manager.
+    await this.userRepo.manager.query(
+      'DELETE FROM task_assignments WHERE user_id = $1',
+      [staffId],
+    );
     // Confirmation: the staff now leaves the old manager's projects and joins
     // the new manager's. Notify the same three parties.
     const newManager = newId
@@ -335,13 +342,16 @@ export class UsersService {
   }
 
   // Manager creates a new staff account
-  async create(data: {
-    name: string;
-    email: string;
-    password: string;
-    phone?: string;
-    role?: string;
-  }) {
+  async create(
+    data: {
+      name: string;
+      email: string;
+      password: string;
+      phone?: string;
+      role?: string;
+    },
+    actor?: { sub: string; role: string },
+  ) {
     if (!data.name || !data.email || !data.password || !data.phone) {
       throw new BadRequestException(
         'Name, email, phone and password are required / Vui lòng nhập tên, email, số điện thoại và mật khẩu',
@@ -357,20 +367,30 @@ export class UsersService {
       );
     }
 
+    const role = data.role || 'staff';
     const password_hash = await bcrypt.hash(data.password, 10);
     const user = this.userRepo.create({
       name: data.name,
       email: data.email,
       phone: data.phone,
-      role: data.role || 'staff',
+      role,
       password_hash,
+      // A manager's new staff belongs to that manager (so later team/own-staff
+      // checks work without a separate assignment step).
+      manager_id:
+        actor && actor.role === 'manager' && role === 'staff'
+          ? actor.sub
+          : undefined,
     });
     const saved = await this.userRepo.save(user);
     // Re-fetch through findOne so the password_hash is never returned.
     return this.findOne(saved.user_id);
   }
 
-  // Manager updates a user (name, role, active status)
+  // Update a user (name, role, active status). A non-admin actor (a manager)
+  // may only edit their own staff, and may not change roles or reset passwords —
+  // those are admin-only. With no actor (internal callers/tests) no extra
+  // restriction is applied.
   async update(
     id: string,
     data: {
@@ -379,8 +399,26 @@ export class UsersService {
       is_active?: boolean;
       password?: string;
     },
+    actor?: { sub: string; role: string },
   ) {
-    await this.findOne(id);
+    const target = await this.findOne(id);
+    if (actor && actor.role !== 'admin') {
+      if (target.role !== 'staff' || target.manager_id !== actor.sub) {
+        throw new ForbiddenException(
+          'You can only manage your own staff / Bạn chỉ có thể quản lý nhân viên của mình',
+        );
+      }
+      if (data.role !== undefined && data.role !== target.role) {
+        throw new ForbiddenException(
+          "Only an admin can change a user's role / Chỉ quản trị viên mới có thể đổi vai trò",
+        );
+      }
+      if (data.password !== undefined) {
+        throw new ForbiddenException(
+          "Only an admin can reset another user's password / Chỉ quản trị viên mới có thể đặt lại mật khẩu",
+        );
+      }
+    }
     const updateData: Partial<User> = {};
     if (data.name) updateData.name = data.name;
     if (data.role) updateData.role = data.role;

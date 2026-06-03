@@ -44,6 +44,9 @@ export class TasksService {
     eventId: string,
     viewer?: { sub: string; role: string },
   ) {
+    // Tasks are only readable to people on the event: a manager must belong to
+    // it, a staff member's manager must, and admins/event managers see all.
+    if (viewer) await this.events.assertCanViewEvent(viewer, eventId);
     let tasks = await this.taskRepo.find({
       where: { event_id: eventId },
       order: { priority_score: 'DESC', deadline: 'ASC' },
@@ -102,7 +105,7 @@ export class TasksService {
     return task;
   }
 
-  async create(data: Partial<Task>) {
+  async create(data: Partial<Task>, actor?: { sub: string; role: string }) {
     if (!data.task_name) {
       throw new BadRequestException(
         'Task name is required / Vui lòng nhập tên công việc',
@@ -122,17 +125,25 @@ export class TasksService {
         'Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu',
       );
     }
+    // The caller may only add tasks to an event they manage.
+    if (actor) await this.events.assertCanManageEvent(actor, data.event_id);
+    // The creator is always the authenticated actor — never a client-supplied
+    // value — so a task can't be attributed to someone else.
+    if (actor) data.created_by = actor.sub;
     // Managers don't set priority — it's auto-derived from the timeline unless
     // the caller (e.g. AI) explicitly provided a source.
     if (!data.priority_source) data.priority_source = 'auto';
     // No "pending" stage: a new task starts In Progress.
     if (!data.status) data.status = 'in_progress';
+    // A task's start/deadline must fall inside its event's window.
+    const event = await this.eventRepo.findOne({
+      where: { event_id: data.event_id },
+    });
+    if (event)
+      this.assertWithinEventWindow(event, data.start_time, data.deadline);
     const task = await this.taskRepo.save(this.taskRepo.create(data));
     // Announce the new task to the event's owner (the event manager), unless
     // they created it themselves.
-    const event = await this.eventRepo.findOne({
-      where: { event_id: task.event_id },
-    });
     if (event?.created_by && event.created_by !== task.created_by) {
       await this.notifications.notifyUser(
         event.created_by,
@@ -148,6 +159,50 @@ export class TasksService {
     await this.recomputeAutoPriorities(task.event_id);
     this.broadcastChange(task.event_id);
     return this.findOne(task.task_id);
+  }
+
+  // A task's start/deadline must sit inside its event's [start, end] window.
+  private assertWithinEventWindow(
+    event: Event,
+    start?: Date | string | null,
+    deadline?: Date | string | null,
+  ) {
+    const es = event.start_time ? new Date(event.start_time).getTime() : null;
+    const ee = event.end_time ? new Date(event.end_time).getTime() : null;
+    for (const v of [start, deadline]) {
+      if (!v) continue;
+      const t = new Date(v).getTime();
+      if (isNaN(t)) continue;
+      if ((es !== null && t < es) || (ee !== null && t > ee)) {
+        throw new BadRequestException(
+          'Task times must be within the event window / Thời gian công việc phải nằm trong khoảng thời gian của sự kiện',
+        );
+      }
+    }
+  }
+
+  // Fields a client may set through create/update. Anything else (event_id,
+  // created_by, task_id, group_id, created_at) is server-controlled and dropped
+  // so a task can't be moved between events or re-attributed via the body.
+  private static readonly UPDATABLE_FIELDS: ReadonlyArray<keyof Task> = [
+    'task_name',
+    'description',
+    'priority_label',
+    'priority_score',
+    'priority_source',
+    'status',
+    'start_time',
+    'deadline',
+  ];
+
+  private pickUpdatable(data: Partial<Task>): Partial<Task> {
+    const out: Partial<Task> = {};
+    for (const key of TasksService.UPDATABLE_FIELDS) {
+      if (data[key] !== undefined) {
+        (out[key] as unknown) = data[key];
+      }
+    }
+    return out;
   }
 
   // Auto priority: bucket each 'auto' task into High/Medium/Low by where its
@@ -232,6 +287,38 @@ export class TasksService {
   ) {
     const old = await this.findOne(id);
 
+    // Drop any server-controlled fields the client tried to set (event_id,
+    // created_by, etc.) so an update can't move a task between events or
+    // re-attribute it.
+    data = this.pickUpdatable(data);
+
+    // Editing anything other than `status` is a manager action and requires
+    // managing the task's event. The status field has its own per-actor rules
+    // below (creator/assignee), so a plain assignee can still progress a task.
+    const editsMetadata = Object.keys(data).some((k) => k !== 'status');
+    if (editsMetadata) {
+      if (!actor || actor.role === 'staff') {
+        throw new BadRequestException(
+          'You are not allowed to edit this task / Bạn không có quyền chỉnh sửa công việc này',
+        );
+      }
+      await this.events.assertCanManageEvent(actor, old.event_id);
+    }
+
+    // A reschedule must keep the task inside its event's window.
+    if (data.start_time !== undefined || data.deadline !== undefined) {
+      const event = await this.eventRepo.findOne({
+        where: { event_id: old.event_id },
+      });
+      if (event) {
+        this.assertWithinEventWindow(
+          event,
+          data.start_time ?? old.start_time,
+          data.deadline ?? old.deadline,
+        );
+      }
+    }
+
     // A manual priority edit pins the task to 'user' so auto-recompute won't
     // overwrite it (and fill in the matching score if not given).
     if (data.priority_label !== undefined) {
@@ -283,8 +370,9 @@ export class TasksService {
     return this.findOne(id);
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor?: { sub: string; role: string }) {
     const task = await this.findOne(id);
+    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     // Child rows are removed automatically by ON DELETE CASCADE once the FK
     // migration (npm run db:migrate) has been applied. We still clear them here
     // as a fallback so deletion also works on databases created before that
@@ -406,13 +494,15 @@ export class TasksService {
     userId: string,
     actor?: { sub: string; role: string },
   ) {
+    const task = await this.findOne(taskId);
+    // The actor must manage the task's event before touching its assignments.
+    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     await this.assertAssignable(userId, actor);
     const assignment = this.assignRepo.create({
       task_id: taskId,
       user_id: userId,
     });
     const saved = await this.assignRepo.save(assignment);
-    const task = await this.findOne(taskId);
     await this.notifications.notifyUser(
       userId,
       'task',
@@ -422,7 +512,13 @@ export class TasksService {
     return saved;
   }
 
-  unassignUser(taskId: string, userId: string) {
+  async unassignUser(
+    taskId: string,
+    userId: string,
+    actor?: { sub: string; role: string },
+  ) {
+    const task = await this.findOne(taskId);
+    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     return this.assignRepo.delete({ task_id: taskId, user_id: userId });
   }
 
@@ -434,6 +530,7 @@ export class TasksService {
     actor?: { sub: string; role: string },
   ) {
     const task = await this.findOne(taskId);
+    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     const ids = Array.from(new Set(userIds ?? []));
     for (const uid of ids) await this.assertAssignable(uid, actor);
     // Diff against the current set so only genuine changes get notified.
@@ -478,7 +575,11 @@ export class TasksService {
 
   // Drop the "source" task onto the "target": both end up in one group (the
   // target's existing group, or a brand-new one). Times are left untouched.
-  async merge(sourceId: string, targetId: string) {
+  async merge(
+    sourceId: string,
+    targetId: string,
+    actor?: { sub: string; role: string },
+  ) {
     if (sourceId === targetId) {
       throw new BadRequestException(
         'Cannot merge a task with itself / Không thể gộp một công việc với chính nó',
@@ -491,6 +592,7 @@ export class TasksService {
         'Tasks must be in the same event / Công việc phải thuộc cùng một sự kiện',
       );
     }
+    if (actor) await this.events.assertCanManageEvent(actor, target.event_id);
     let groupId = target.group_id;
     if (!groupId) {
       const group = await this.groupRepo.save(
@@ -509,12 +611,17 @@ export class TasksService {
   }
 
   // Add an existing task to an existing group (drop onto a group band).
-  async addToGroup(groupId: string, taskId: string) {
+  async addToGroup(
+    groupId: string,
+    taskId: string,
+    actor?: { sub: string; role: string },
+  ) {
     const group = await this.groupRepo.findOne({
       where: { group_id: groupId },
     });
     if (!group)
       throw new NotFoundException('Group not found / Không tìm thấy nhóm');
+    if (actor) await this.events.assertCanManageEvent(actor, group.event_id);
     const task = await this.findOne(taskId);
     if (task.event_id !== group.event_id) {
       throw new BadRequestException(
@@ -532,8 +639,9 @@ export class TasksService {
   }
 
   // Remove a task from its group; dissolve the group if it drops below 2.
-  async ungroup(taskId: string) {
+  async ungroup(taskId: string, actor?: { sub: string; role: string }) {
     const task = await this.findOne(taskId);
+    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     const groupId = task.group_id;
     if (!groupId) return { ok: true };
     await this.taskRepo.update(taskId, { group_id: null });
@@ -542,13 +650,20 @@ export class TasksService {
     return { ok: true };
   }
 
-  async renameGroup(groupId: string, title: string) {
+  async renameGroup(
+    groupId: string,
+    title: string,
+    actor?: { sub: string; role: string },
+  ) {
     const group = await this.groupRepo.findOne({
       where: { group_id: groupId },
     });
     if (!group)
       throw new NotFoundException('Group not found / Không tìm thấy nhóm');
-    await this.groupRepo.update(groupId, { title: (title ?? '').slice(0, 255) });
+    if (actor) await this.events.assertCanManageEvent(actor, group.event_id);
+    await this.groupRepo.update(groupId, {
+      title: (title ?? '').slice(0, 255),
+    });
     this.broadcastChange(group.event_id);
     return this.groupRepo.findOne({ where: { group_id: groupId } });
   }

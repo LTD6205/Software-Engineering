@@ -7,14 +7,17 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtPayload } from './jwt.strategy';
 
-// Role hierarchy: Admin > Manager > Staff. A higher level can do everything a
-// lower level can, so @Roles('manager') allows managers AND admins.
-export const ROLE_LEVELS: Record<string, number> = {
-  staff: 1,
-  manager: 2,
-  eventmanager: 3,
-  admin: 4,
-};
+// Access control is by EXACT role match. A route's `@Roles(...)` list is an
+// explicit allow-list of the roles permitted on it — there is NO level
+// hierarchy and NO inheritance between roles. An Event Manager is NOT a Manager
+// (and vice-versa): `@Roles('manager')` admits managers only, so an Event
+// Manager cannot reach Manager-only endpoints (create tasks, manage staff, AI),
+// and `@Roles('eventmanager')` admits event managers only.
+//
+// The single exception is `admin`, the system superuser, which is permitted on
+// every role-guarded route. This mirrors the frontend's role flags
+// (isManager = manager||admin, canManageEvents = eventmanager||admin, isAdmin).
+export const ADMIN_ROLE = 'admin';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -29,16 +32,16 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles || requiredRoles.length === 0) return true;
 
     const { user } = context.switchToHttp().getRequest<{ user?: JwtPayload }>();
-    const userLevel = user ? (ROLE_LEVELS[user.role] ?? 0) : 0;
-    const requiredLevel = Math.min(
-      ...requiredRoles.map((r) => ROLE_LEVELS[r] ?? 99),
-    );
+    const role = user?.role;
 
-    if (userLevel < requiredLevel) {
-      throw new ForbiddenException(
-        'You do not have permission to perform this action / Bạn không có quyền thực hiện hành động này',
-      );
+    // admin is the superuser; every other role must be listed explicitly
+    // (exact match — no inheritance between roles).
+    if (role && (role === ADMIN_ROLE || requiredRoles.includes(role))) {
+      return true;
     }
-    return true;
+
+    throw new ForbiddenException(
+      'You do not have permission to perform this action / Bạn không có quyền thực hiện hành động này',
+    );
   }
 }

@@ -55,7 +55,10 @@ CREATE TABLE Tasks (
     priority_score  INT                 NOT NULL DEFAULT 0,  -- calculated & sorted by backend
     priority_source VARCHAR(10)         NOT NULL DEFAULT 'user'
                         CHECK (priority_source IN ('user', 'ai', 'auto')),
-    status          VARCHAR(20)         NOT NULL DEFAULT 'pending'
+    -- A new task starts In Progress (there is no "pending" task stage); the
+    -- 'pending' value is kept in the CHECK only for rows created before this
+    -- policy. See migrations/2026-06-02_drop_pending_status.sql.
+    status          VARCHAR(20)         NOT NULL DEFAULT 'in_progress'
                         CHECK (status IN ('pending', 'in_progress', 'completed', 'overdue')),
     start_time      TIMESTAMP,
     deadline        TIMESTAMP,

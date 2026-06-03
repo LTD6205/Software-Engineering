@@ -6,11 +6,13 @@ import { User } from '../entities/user.entity';
 import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
 import { TasksModule } from '../tasks/tasks.module';
+import { EventsModule } from '../events/events.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([AiRequest, AiTaskMap, User]),
     TasksModule,
+    EventsModule,
   ],
   providers: [AiService],
   controllers: [AiController],

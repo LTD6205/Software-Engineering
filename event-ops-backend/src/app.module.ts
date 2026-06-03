@@ -3,6 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 import { User } from './entities/user.entity';
 import { Event } from './entities/event.entity';
 import { Task } from './entities/task.entity';
@@ -61,5 +63,7 @@ import { WebsocketModule } from './websocket/websocket.module';
     AiModule,
     WebsocketModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

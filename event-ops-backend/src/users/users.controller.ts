@@ -111,7 +111,7 @@ export class UsersController {
     },
   ) {
     this.assertCanAssignRole(req.user.role, body.role);
-    return this.usersService.create(body);
+    return this.usersService.create(body, req.user);
   }
 
   // PUT /api/users/me — any signed-in user edits their own profile.
@@ -153,18 +153,16 @@ export class UsersController {
         'Only an admin can activate or deactivate accounts / Chỉ quản trị viên mới có thể kích hoạt hoặc vô hiệu hóa tài khoản',
       );
     }
-    return this.usersService.update(id, body);
+    return this.usersService.update(id, body, req.user);
   }
 
-  // Only an admin may grant the high-privilege roles (admin, event manager).
-  // A plain manager must not be able to create a peer or a higher role.
+  // Only an admin may grant any non-staff role. A plain manager may only create
+  // staff — never a peer manager, an event manager, or an admin.
   private assertCanAssignRole(actorRole: string, targetRole?: string) {
-    if (
-      (targetRole === 'admin' || targetRole === 'eventmanager') &&
-      actorRole !== 'admin'
-    ) {
+    if (!targetRole || actorRole === 'admin') return;
+    if (targetRole !== 'staff') {
       throw new ForbiddenException(
-        'Only an admin can assign the admin or event manager role / Chỉ quản trị viên mới có thể cấp vai trò admin hoặc quản lý sự kiện',
+        'Only an admin can assign a non-staff role / Chỉ quản trị viên mới có thể cấp vai trò ngoài nhân viên',
       );
     }
   }

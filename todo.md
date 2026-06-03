@@ -1,7 +1,140 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-02 (re-verified against source).
+Last updated 2026-06-03 (full test stack: backend unit + DB-backed e2e/integration,
+frontend RTL, and Playwright happy paths — see "Testing" below).
+
+## Testing
+
+Four layers, all green:
+
+| Layer | Where | Run | Count |
+|---|---|---|---|
+| Backend unit (mocked) | `event-ops-backend/src/**/*.spec.ts` | `npm test` | 10 suites / **120** |
+| Backend e2e + integration (real Postgres) | `event-ops-backend/test/*.e2e-spec.ts` | `npm run test:e2e` | 5 suites / **48** |
+| Frontend unit + RTL (jsdom) | `event-ops-frontend/src/**/*.test.ts(x)` | `npm test` | 3 suites / **21** |
+| Frontend Playwright (browser) | `event-ops-frontend/e2e/*.spec.ts` | `npm run test:e2e` | **6** |
+
+### Backend unit tests (no DB)
+
+Jest unit specs for the core backend logic. **Run from `event-ops-backend/`:**
+`npm test` (all), `npm run test:cov` (coverage), or `npm test -- roles.guard`
+(single suite by name filter). Default Nest Jest config (`rootDir: src`,
+`testRegex: .*\.spec\.ts$`).
+
+All are **pure unit tests** — every repository, the JWT service, the WebSocket
+gateway, bcrypt and axios are mocked, so **no database or running server is
+needed** and they don't touch the user's dev backend on port 3000.
+
+**Result: 10 suites, 120 tests, all passing (~4 s).**
+
+| Spec file | Tests | What it covers |
+|---|---|---|
+| `auth/roles.guard.spec.ts` | 10 | The `ROLE_LEVELS` hierarchy: no-`@Roles` passes any authed user; `@Roles('manager')` admits manager/eventmanager/admin but rejects staff; **minimum** level is used across multiple listed roles; unknown role / no user → `ForbiddenException`. |
+| `auth/auth.service.spec.ts` | 6 | `validateUser` (active-only lookup, wrong password, missing hash, no user → `Unauthorized`); `login` returns a signed token + sanitized user (no `password_hash`) and propagates auth failures without signing. |
+| `tasks/tasks.service.spec.ts` | 11 | `create` validation (name/event required, deadline-after-start, default `in_progress`/`auto`); `recomputeAutoPriorities` thirds bucketing high/medium/low and **not** overwriting `user`/`ai` priorities; assignment rules (staff-only, manager's-own-staff, missing user); status-change permission (non-creator/non-assignee blocked, only creator reopens); `merge` guards (self, cross-event). |
+| `notifications/notifications.service.spec.ts` | 8 | `notifyUser` saves + sockets, skips blank id; `notifyUsers` de-dupes & drops blanks/null; `markRead` is user-scoped; `getAll` capped at 50 newest-first; `checkDeadlines` cron marks overdue + alerts, and suppresses a duplicate when an unread alert already exists. |
+| `events/events.service.spec.ts` | 7 | `create` validation + member notify; `findOne` not-found; `update`/`updateDates` date-range guard; `updateDates` **shift** strategy moves task times by the start delta and drops tasks landing past the new end. |
+| `ai/ai.service.spec.ts` | 5 | `processCommand`: creates a task per array item (priority→score mapping, `priority_source: 'ai'`); assigns when a named user resolves; non-array reply → structured **rejected** (no tasks); invalid JSON → `BadRequest` + request marked rejected; invalid deadline string is dropped (no "Invalid Date" persisted). |
+| `users/users.service.spec.ts` | 17 | The staff→manager **reassignment** flow (request/accept/reject/cancel) + all NotFound/Forbidden/BadRequest guards. |
+| `users/users.service.crud.spec.ts` | 26 | The rest of `users.service`: `updateProfile` (current-password check, email/phone validation, email-conflict, password hashing), `create` (required fields, dup email, default role, hashing, returns via findOne), `update`, `deactivate`, `findAll` (admin-only `is_active`), `directory`. |
+| `tasks/tasks.service.groups.spec.ts` | 20 | Task **groups**: `merge` happy paths (new group / join existing / dissolve old), `addToGroup`, `ungroup`, `renameGroup` (255-char truncate), `dissolveIfTooSmall` (count<2 deletes); `assignUser` notify; `setAssignees` add/remove diff + dedupe; assigned-staff forward-only status rules via `update`. |
+| `app.controller.spec.ts` | 1 | Root health (now actually wired — see fix below). |
+
+**Coverage** (`npm run test:cov`, statements): `roles.guard` 100%, `ai.service` 100%,
+`auth.service` 95%, `notifications.service` 90%, `users.service` ~90%, `events.service` 63%
+(rest covered by e2e), `tasks.service` ~70%.
+
+> **Bug fixed during this work:** `AppController`/`AppService` were **defined but never
+> registered** in `app.module.ts` (no `controllers`/`providers` keys), so the documented
+> "root health" route 404'd and the scaffold `app.e2e-spec.ts` failed. Re-registered them
+> in `AppModule` — the root route works again and the e2e scaffold passes.
+
+### Backend e2e + integration tests (real Postgres)
+
+Added 2026-06-03. **Run from `event-ops-backend/`:** `npm run test:e2e`. These boot the
+full Nest app (global `/api` prefix, JWT, guards, cron, WS) via supertest and hit a
+**dedicated `event_ops_test` database** — never the developer's `event_ops` data.
+
+**Test-DB setup (one-time, recreate anytime):**
+```
+# schema cloned from the live DB (keeps entities in sync without the stale DDL file)
+docker exec event_ops_db psql -U postgres -c "DROP DATABASE IF EXISTS event_ops_test;"
+docker exec event_ops_db psql -U postgres -c "CREATE DATABASE event_ops_test;"
+docker exec event_ops_db sh -c "pg_dump -U postgres -s event_ops | psql -U postgres -d event_ops_test"
+# seed the known login accounts into it
+cd event-ops-backend && DB_NAME=event_ops_test node seed.js   # (PowerShell: $env:DB_NAME='event_ops_test'; node seed.js)
+```
+`test/setup-e2e.ts` (a Jest `setupFiles`) sets `process.env.DB_NAME='event_ops_test'`
+*before* ConfigModule loads `.env`, so the app connects to the test DB. `test/utils.ts`
+provides `createTestApp()` (mirrors main.ts's `/api` prefix) + `login()` + seeded `ACCOUNTS`.
+
+| Spec | Tests | What it covers |
+|---|---|---|
+| `test/auth.e2e-spec.ts` | 12 | Login (valid/wrong-pw/unknown-email), `JwtAuthGuard` (no/garbage token → 401), `/me`, and the **RolesGuard hierarchy over HTTP** via the `@Roles('eventmanager')` route: staff/manager → 403, eventmanager/admin → 200; an unguarded read still needs auth. |
+| `test/events.e2e-spec.ts` | 11 | Event **permissions**: only eventmanager/admin create/edit/delete + manage members (manager/staff → 403); invalid date range → 400; `GET /events` membership scoping (member manager + admin see the event). Creates one event and deletes it in `afterAll`. |
+| `test/raw-sql.e2e-spec.ts` | 10 | The hand-written **raw SQL** paths against real Postgres with a built-then-torn-down fixture: `getMemberIds`/`getManagerMemberIds`/`findForViewer`/`getEventManagers`, `findAllByEvent` assignee join + staff scoping, `deadlineRecipients` (assignee ∪ their manager ∪ event creator), `incomingReassignRequests`. |
+| `test/role-hierarchy-access.e2e-spec.ts` | 14 | **RBAC boundary regression test (see below):** proves exact-match roles — Event Manager is denied Manager-only routes, Manager is denied Event-Manager routes, each role keeps its own, Admin is superuser. |
+| `test/app.e2e-spec.ts` | 1 | Pre-existing root health scaffold (now passes after the AppModule fix). |
+
+> ### ✅ Security fix: RBAC is now EXACT role match (was a level hierarchy)
+> **Was:** `RolesGuard` checked the *minimum* level among the listed roles with
+> `eventmanager(3) > manager(2)`, so an Event Manager's JWT was accepted on every
+> Manager-gated route — they could create tasks, manage staff, and use the AI API even
+> though the UI hid those buttons. UI hiding (`isManager`) was not a security boundary.
+>
+> **Now:** `roles.guard.ts` uses **exact role matching** — a route's `@Roles(...)` is an
+> explicit allow-list with **no inheritance** between roles. `admin` is the only
+> cross-role rule (system **superuser**, allowed everywhere). No decorator changes were
+> needed — each route already listed exactly the non-admin role(s) intended; the guard
+> just stops *unlisted* roles (e.g. eventmanager on a `@Roles('manager')` route) passing.
+> Mirrors the frontend flags (`isManager = manager||admin`, `canManageEvents =
+> eventmanager||admin`, `isAdmin`).
+>
+> `test/role-hierarchy-access.e2e-spec.ts` is the regression guard: Event Manager → **403**
+> on `POST /tasks`, `GET/POST /users`, `POST /ai/command`; Manager → 403 on `POST /events`;
+> Manager/Admin keep their own writes (201/200); Event Manager keeps event routes; Staff
+> denied. Also covered by `auth/roles.guard.spec.ts` (unit) and `test/auth.e2e-spec.ts`.
+> Docs corrected: `CLAUDE.md` Auth section + `README.md` (tech-stack row, Roles &
+> Permissions intro, API access legend).
+
+### Frontend unit + RTL tests (jsdom)
+
+Added 2026-06-03 with `next/jest` (SWC transform, `@/`→`src` alias, jsdom). **Run from
+`event-ops-frontend/`:** `npm test`. Config: `jest.config.ts` + `jest.setup.ts`
+(`@testing-library/jest-dom`).
+
+| Spec | Tests | What it covers |
+|---|---|---|
+| `src/lib/filters.test.ts` | 12 | `isEventNearby`/`isEventInMonth`/`isEventOnDate`/`isDeadlineNearby` with a fixed `now`: window edges, no-filter fallbacks, deadline-less tasks never hidden. |
+| `src/lib/roles.test.ts` | 6 | `roleColorOf` (known + fallback) and `roleLabelOf` EN/VI + default. |
+| `src/components/StatusBadge.test.tsx` | 3 | Renders the EN label per status/priority and falls back to Pending — rendered inside the real `LanguageProvider`. |
+
+### Frontend Playwright happy paths (browser)
+
+Added 2026-06-03. **Run from `event-ops-frontend/`:** `npm run test:e2e` (`playwright.config.ts`,
+chromium). **PREREQ:** backend (3000) + frontend (3001) running — `reuseExistingServer` uses the
+already-running dev frontend. All flows are **READ-ONLY** (login + navigation), forcing
+`lang='en'` for deterministic text, so they don't mutate data.
+
+`e2e/happy-path.spec.ts` (6): UI login → dashboard (`Total Events`); invalid creds show error +
+stay on `/login`; dashboard's four stat cards; an authed manager opens `/events` and `/tasks`
+(no bounce); an unauthenticated visit to `/tasks` redirects to `/login`. Navigation tests seed a
+real JWT (fetched via the login API) into `localStorage` to skip the UI.
+
+### Test gaps / next steps
+- [x] **Controller/guard-wiring** — DONE via the backend e2e suite (auth + events).
+- [x] **Raw-SQL paths** — DONE via `test/raw-sql.e2e-spec.ts` against `event_ops_test`.
+- [x] **`users.service` full coverage** — DONE (reassignment + CRUD).
+- [x] **Frontend tests** — DONE (RTL + Playwright).
+- [ ] **e2e against a throwaway/Testcontainers DB in CI.** Today `event_ops_test` is a
+      manually-created sibling DB in the same container; a CI job should create + seed it
+      automatically (or use Testcontainers) so `npm run test:e2e` is self-contained.
+- [ ] **Deeper Playwright flows** (create/edit an event or task end-to-end). Skipped here
+      to stay non-destructive against the live dev DB; needs a dedicated test stack
+      (backend on the test DB) so writes are safe.
+- [ ] **Coverage thresholds + a combined CI test script** (backend unit+e2e, frontend
+      unit, then Playwright) are not wired yet.
 
 ## Notifications now implemented
 

@@ -6,7 +6,13 @@ import { AiRequest } from '../entities/ai-request.entity';
 import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
+import { EventsService } from '../events/events.service';
 import axios from 'axios';
+
+interface Actor {
+  sub: string;
+  role: string;
+}
 
 interface ParsedTask {
   task_name: string;
@@ -27,6 +33,7 @@ export class AiService {
     @InjectRepository(AiTaskMap) private aiTaskMapRepo: Repository<AiTaskMap>,
     @InjectRepository(User) private userRepo: Repository<User>,
     private readonly tasksService: TasksService,
+    private readonly events: EventsService,
   ) {}
 
   // Resolve an AI-provided "assigned_to" string (name or email) to a real,
@@ -43,10 +50,28 @@ export class AiService {
   }
 
   async processCommand(
-    userId: string,
+    actor: Actor,
     eventId: string,
     userMessage: string,
   ): Promise<object> {
+    const userId = actor.sub;
+    if (!userMessage || !userMessage.trim()) {
+      throw new BadRequestException(
+        'A command message is required / Vui lòng nhập nội dung lệnh',
+      );
+    }
+    // The actor may only drive AI changes on an event they manage — checked
+    // before we spend a DeepSeek call.
+    await this.events.assertCanManageEvent(actor, eventId);
+    // Don't attempt an external call with a missing key (would send
+    // "Bearer undefined" and leak a confusing provider error to the client).
+    const apiKey = this.config.get<string>('DEEPSEEK_API_KEY');
+    if (!apiKey) {
+      throw new BadRequestException(
+        'The AI assistant is not configured / Trợ lý AI chưa được cấu hình',
+      );
+    }
+
     const systemPrompt = `You are an event operations assistant.
 The user will describe tasks for an event.
 Return ONLY a valid JSON array — no explanation, no markdown, no preamble.
@@ -78,12 +103,15 @@ If the user provides insufficient information, return instead:
             { role: 'user', content: userMessage },
           ],
           temperature: 0.2,
+          max_tokens: 2000,
         },
         {
           headers: {
-            Authorization: `Bearer ${this.config.get('DEEPSEEK_API_KEY')}`,
+            Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
+          // Don't hang the request indefinitely on a slow provider.
+          timeout: 30000,
         },
       );
 
@@ -95,7 +123,10 @@ If the user provides insufficient information, return instead:
       try {
         parsed = JSON.parse(raw);
       } catch {
-        throw new BadRequestException('AI returned invalid JSON: ' + raw);
+        // Don't echo the raw model output back to the client.
+        throw new BadRequestException(
+          'The AI returned an unexpected response. Please try rephrasing. / Trợ lý AI trả về phản hồi không hợp lệ. Vui lòng thử lại.',
+        );
       }
 
       // Not an array means AI returned an error object
@@ -120,20 +151,34 @@ If the user provides insufficient information, return instead:
             ? parsedDeadline
             : undefined;
 
-        const task = await this.tasksService.create({
-          event_id: eventId,
-          task_name: item.task_name,
-          priority_label: item.priority,
-          priority_score: priorityScore,
-          priority_source: 'ai',
-          deadline,
-          created_by: userId,
-        });
+        const task = await this.tasksService.create(
+          {
+            event_id: eventId,
+            task_name: item.task_name,
+            priority_label: item.priority,
+            priority_score: priorityScore,
+            priority_source: 'ai',
+            deadline,
+          },
+          actor,
+        );
 
-        // Assign the task if the AI named a user we can match.
+        // Assign the task if the AI named a user we can match. The assignment
+        // obeys the same rules as a manual one (actor must manage the event and,
+        // for a plain manager, the assignee must be their own staff), so an
+        // AI-suggested assignee outside the team is skipped rather than failing
+        // the whole command.
         const assignee = await this.resolveAssignee(item.assigned_to);
         if (assignee) {
-          await this.tasksService.assignUser(task.task_id, assignee.user_id);
+          try {
+            await this.tasksService.assignUser(
+              task.task_id,
+              assignee.user_id,
+              actor,
+            );
+          } catch {
+            // Leave the task unassigned if the suggestion isn't permitted.
+          }
         }
 
         await this.aiTaskMapRepo.save({

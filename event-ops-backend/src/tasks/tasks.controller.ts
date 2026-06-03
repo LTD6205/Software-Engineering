@@ -36,32 +36,52 @@ export class TasksController {
   // "groups" segment is never swallowed by a param route. ──
   @Post('groups/merge')
   @Roles('manager')
-  merge(@Body() body: { source_id: string; target_id: string }) {
-    return this.tasksService.merge(body.source_id, body.target_id);
+  merge(
+    @Request() req: { user: JwtPayload },
+    @Body() body: { source_id: string; target_id: string },
+  ) {
+    return this.tasksService.merge(body.source_id, body.target_id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Post('groups/:groupId/add')
   @Roles('manager')
   addToGroup(
+    @Request() req: { user: JwtPayload },
     @Param('groupId') groupId: string,
     @Body() body: { task_id: string },
   ) {
-    return this.tasksService.addToGroup(groupId, body.task_id);
+    return this.tasksService.addToGroup(groupId, body.task_id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Put('groups/:groupId')
   @Roles('manager')
   renameGroup(
+    @Request() req: { user: JwtPayload },
     @Param('groupId') groupId: string,
     @Body() body: { title: string },
   ) {
-    return this.tasksService.renameGroup(groupId, body.title);
+    return this.tasksService.renameGroup(groupId, body.title, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Delete('groups/tasks/:taskId')
   @Roles('manager')
-  ungroup(@Param('taskId') taskId: string) {
-    return this.tasksService.ungroup(taskId);
+  ungroup(
+    @Request() req: { user: JwtPayload },
+    @Param('taskId') taskId: string,
+  ) {
+    return this.tasksService.ungroup(taskId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Get(':id')
@@ -71,8 +91,13 @@ export class TasksController {
 
   @Post()
   @Roles('manager')
-  create(@Body() body: Partial<Task>) {
-    return this.tasksService.create(body);
+  create(@Request() req: { user: JwtPayload }, @Body() body: Partial<Task>) {
+    // created_by and event membership are enforced from the verified JWT, not
+    // the request body.
+    return this.tasksService.create(body, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Put(':id')
@@ -93,8 +118,11 @@ export class TasksController {
 
   @Delete(':id')
   @Roles('manager')
-  remove(@Param('id') id: string) {
-    return this.tasksService.remove(id);
+  remove(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.tasksService.remove(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // Assignments
@@ -132,7 +160,14 @@ export class TasksController {
 
   @Delete(':id/assign/:userId')
   @Roles('manager')
-  unassign(@Param('id') id: string, @Param('userId') userId: string) {
-    return this.tasksService.unassignUser(id, userId);
+  unassign(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.tasksService.unassignUser(id, userId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 }

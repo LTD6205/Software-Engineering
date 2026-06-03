@@ -54,10 +54,11 @@ export class AuthService {
     };
   }
 
-  // Get current user from token
+  // Get current user from token. Requires the account to still be active so a
+  // deactivated user can't keep reading their profile with an old token.
   async getMe(userId: string) {
     return this.userRepo.findOne({
-      where: { user_id: userId },
+      where: { user_id: userId, is_active: true },
       select: [
         'user_id',
         'name',

@@ -51,6 +51,12 @@ export class NotificationsService {
         'overdue',
         `OVERDUE: "${task.task_name}" has passed its deadline. / QUÁ HẠN: "${task.task_name}" đã quá hạn chót.`,
       );
+      // Tell connected clients so the board reflects the system status change
+      // without waiting for a manual refresh.
+      this.gateway.broadcast('data_changed', {
+        kind: 'task',
+        event_id: task.event_id,
+      });
     }
   }
 
@@ -77,14 +83,15 @@ export class NotificationsService {
   private async sendNotification(task: Task, type: string, message: string) {
     const recipients = await this.deadlineRecipients(task.task_id);
     for (const userId of recipients) {
-      // Skip if this user already has an unread notification of the same type
-      // for this task — prevents the cron from spamming duplicate reminders.
+      // Skip if this user already has a notification of the same type for this
+      // task — regardless of whether they've read it. Deduping on read state
+      // alone let a user who cleared their inbox get re-notified every 30
+      // minutes for the same still-pending task.
       const existing = await this.notifRepo.findOne({
         where: {
           user_id: userId,
           task_id: task.task_id,
           type,
-          is_read: false,
         },
       });
       if (existing) continue;

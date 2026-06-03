@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -53,6 +54,81 @@ export class EventsService {
       [managerId],
     );
     return rows.map((r) => r.id);
+  }
+
+  // ── Access policy ──────────────────────────────────────────
+  // Central authorization helpers so every event/task/membership route shares
+  // the same membership rules instead of trusting raw IDs.
+
+  // True when the manager is a member of the event.
+  async isEventMember(managerId: string, eventId: string): Promise<boolean> {
+    const rows: unknown[] = await this.eventRepo.manager.query(
+      `SELECT 1 FROM event_managers WHERE event_id = $1 AND manager_id = $2 LIMIT 1`,
+      [eventId, managerId],
+    );
+    return rows.length > 0;
+  }
+
+  // May this actor WRITE within the event (create/edit/assign/delete tasks)?
+  //   admin / eventmanager: any event; manager: only events they belong to;
+  //   staff: never.
+  async canManageEvent(actor: Viewer, eventId: string): Promise<boolean> {
+    if (!actor) return false;
+    if (actor.role === 'admin' || actor.role === 'eventmanager') return true;
+    if (actor.role === 'manager') return this.isEventMember(actor.sub, eventId);
+    return false;
+  }
+
+  async assertCanManageEvent(actor: Viewer, eventId: string): Promise<void> {
+    // Surface a 404 for a non-existent event rather than leaking existence
+    // through a 403, then enforce membership.
+    await this.findOne(eventId);
+    if (!(await this.canManageEvent(actor, eventId))) {
+      throw new ForbiddenException(
+        'You do not manage this event / Bạn không quản lý sự kiện này',
+      );
+    }
+  }
+
+  // May this actor VIEW the event and its tasks/members?
+  //   admin / eventmanager: any; manager: member; staff: their manager is one.
+  async canViewEvent(actor: Viewer, eventId: string): Promise<boolean> {
+    if (!actor) return false;
+    if (actor.role === 'admin' || actor.role === 'eventmanager') return true;
+    if (actor.role === 'manager') return this.isEventMember(actor.sub, eventId);
+    if (actor.role === 'staff') {
+      const rows: unknown[] = await this.eventRepo.manager.query(
+        `SELECT 1 FROM event_managers em
+           WHERE em.event_id = $1
+             AND em.manager_id = (SELECT manager_id FROM users WHERE user_id = $2)
+           LIMIT 1`,
+        [eventId, actor.sub],
+      );
+      return rows.length > 0;
+    }
+    return false;
+  }
+
+  async assertCanViewEvent(actor: Viewer, eventId: string): Promise<void> {
+    await this.findOne(eventId);
+    if (!(await this.canViewEvent(actor, eventId))) {
+      throw new ForbiddenException(
+        'You do not have access to this event / Bạn không có quyền truy cập sự kiện này',
+      );
+    }
+  }
+
+  // Viewer-scoped single-event read (GET /events/:id) — same visibility as the
+  // list, so a raw ID can't fetch an event outside the viewer's scope.
+  async findOneForViewer(id: string, viewer: Viewer) {
+    await this.assertCanViewEvent(viewer, id);
+    return this.findOne(id);
+  }
+
+  // Viewer-scoped membership read (GET /events/:id/managers).
+  async getEventManagersForViewer(id: string, viewer: Viewer) {
+    await this.assertCanViewEvent(viewer, id);
+    return this.getEventManagers(id);
   }
 
   // Events visible to the viewer, each with manager + total people counts.
@@ -142,6 +218,20 @@ export class EventsService {
   // notify=true is used by the membership editor (a manager added after the
   // event exists); create() inserts in bulk and notifies the whole set itself.
   async addManager(eventId: string, managerId: string, notify = false) {
+    // Only an active user with the 'manager' role may be added — membership and
+    // headcount queries assume manager rows + their staff, so staff/admins/event
+    // managers must never land in event_managers.
+    const rows: Array<{ role: string; is_active: boolean }> =
+      await this.eventRepo.manager.query(
+        `SELECT role, is_active FROM users WHERE user_id = $1`,
+        [managerId],
+      );
+    const target = rows[0];
+    if (!target || target.role !== 'manager' || !target.is_active) {
+      throw new BadRequestException(
+        'Only an active manager can be added to an event / Chỉ có thể thêm quản lý đang hoạt động vào sự kiện',
+      );
+    }
     await this.eventRepo.manager.query(
       `INSERT INTO event_managers (event_id, manager_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING`,

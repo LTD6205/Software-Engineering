@@ -38,13 +38,22 @@ export class EventsController {
   }
 
   @Get(':id/managers')
-  getEventManagers(@Param('id') id: string) {
-    return this.eventsService.getEventManagers(id);
+  getEventManagers(
+    @Request() req: { user: JwtPayload },
+    @Param('id') id: string,
+  ) {
+    return this.eventsService.getEventManagersForViewer(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.eventsService.findOne(id);
+  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.eventsService.findOneForViewer(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // Only event managers (and admins) create events.

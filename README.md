@@ -1,6 +1,6 @@
 # Intelligent Event Operations & Task Management System
 
-A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (Admin > Event Manager > Manager > Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
+A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (four roles: Admin, Event Manager, Manager, Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
 
 ## Tech Stack
 
@@ -9,7 +9,7 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 | Frontend | Next.js 16, React 19, TypeScript |
 | Backend | NestJS 11, TypeScript |
 | Database | PostgreSQL 16 (via Docker), TypeORM 0.3 |
-| Auth | JWT + Passport (role hierarchy) |
+| Auth | JWT + Passport (exact-match RBAC; admin = superuser) |
 | Real-time | Socket.io (presence + notifications) |
 | AI | DeepSeek Chat API |
 
@@ -83,6 +83,7 @@ docker exec -i event_ops_db psql -U postgres -d event_ops < database_creating.tx
 cd event-ops-backend
 npm install --legacy-peer-deps
 copy .env.example .env        # (macOS/Linux: cp .env.example .env) — defaults match docker-compose
+npm run db:migrate            # apply schema migrations on top of database_creating.txt (idempotent)
 npm run seed                  # create login accounts
 npm run start:dev             # http://localhost:3000/api
 ```
@@ -117,9 +118,9 @@ npm run db:restore                # restore the most recent backup
 npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specific file
 ```
 
-## Roles & Permissions (Admin > Event Manager > Manager > Staff)
+## Roles & Permissions (Admin · Event Manager · Manager · Staff)
 
-The table shows each role's **intended** capabilities (what the UI exposes). Separately, the backend enforces a **level hierarchy** (Admin > Event Manager > Manager > Staff), so a higher-level account can technically call a lower level's API endpoint even when the UI does not offer it. Staff and task management require owning a staff team, so they belong to Managers (and Admins, who act as super-users); Event Managers focus on events and membership.
+The table below is **authoritative**: the backend enforces it with **exact role matching** (`RolesGuard`), so the API and the UI agree. There is **no level hierarchy / no inheritance** between roles — an Event Manager is *not* a Manager and cannot call Manager-only endpoints (create tasks, manage staff, AI), and a Manager cannot call Event-Manager-only endpoints. The **only** cross-role rule is that **Admin is the superuser**, permitted on every role-guarded route. Staff and task management belong to Managers (they own a staff team); Event Managers focus on events and membership.
 
 | Action | Admin | Event Manager | Manager | Staff |
 |---|---|---|---|---|
@@ -164,7 +165,7 @@ Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use
 
 All routes are under `/api` and require a JWT (except `POST /api/auth/login`).
 
-Access reflects the level-based guard, so "manager+" also admits event managers and admins, and "event manager+" admits admins.
+Access is by **exact role match** with Admin as the superuser. In the table below, "manager+" means **manager or admin**, and "event manager+" means **event manager or admin** — the `+` is only ever Admin (the superuser), never another role. An event manager **cannot** call "manager+" endpoints, and a manager **cannot** call "event manager+" endpoints.
 
 | Area | Endpoints | Access |
 |---|---|---|
