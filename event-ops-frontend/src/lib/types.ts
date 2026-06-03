@@ -41,7 +41,9 @@ export interface Task {
   description: string
   priority_label: 'low' | 'medium' | 'high'
   priority_score: number
-  priority_source: 'user' | 'ai'
+  // 'auto' = derived from the timeline by the backend; 'user' = manually pinned;
+  // 'ai' = set by an AI command.
+  priority_source: 'user' | 'ai' | 'auto'
   status: 'pending' | 'in_progress' | 'completed' | 'overdue'
   start_time: string
   deadline: string
@@ -58,6 +60,7 @@ export interface Notification {
   notification_id: string
   user_id: string
   task_id: string | null
+  event_id: string | null
   type: 'reminder' | 'alert' | 'overdue' | 'event' | 'task' | 'reassignment' | 'info'
   message: string
   is_read: boolean

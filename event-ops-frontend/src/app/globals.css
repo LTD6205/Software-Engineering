@@ -101,3 +101,35 @@ button { cursor: pointer; font-family: inherit; transition: all 0.15s; }
   50%      { box-shadow: 0 0 0 1px rgba(239,68,68,0.75), 0 0 18px rgba(239,68,68,0.40); }
 }
 .overdue-glow { animation: overduePulse 2s ease-in-out infinite; }
+
+/* ─── Responsive navigation (desktop-first) ──────────────────────────────
+   Desktop is unchanged: a fixed 240px sidebar with the content offset by it.
+   On narrow screens (≤768px) the sidebar becomes an off-canvas drawer that a
+   top-bar hamburger slides in, and the content reclaims the full width. The
+   top bar and dimming overlay only exist below the breakpoint. */
+.app-main    { margin-left: 240px; }
+.app-topbar  { display: none; }
+.app-overlay { display: none; }
+
+@media (max-width: 768px) {
+  .app-main { margin-left: 0; padding-top: 52px; }
+
+  /* The sidebar keeps its fixed position + 240px width (inline); here we just
+     slide it off-canvas and back. The .app-sidebar-open modifier is a no-op on
+     desktop because this transform rule only exists inside the media query, so
+     resizing back to desktop restores it automatically. */
+  .app-sidebar { transform: translateX(-100%); transition: transform 0.25s ease; }
+  .app-sidebar.app-sidebar-open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,0.5); }
+
+  .app-topbar {
+    display: flex; align-items: center; gap: 12px;
+    position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 38;
+    padding: 0 12px;
+    background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  }
+
+  .app-overlay {
+    display: block; position: fixed; inset: 0; z-index: 39;
+    background: rgba(0,0,0,0.5);
+  }
+}

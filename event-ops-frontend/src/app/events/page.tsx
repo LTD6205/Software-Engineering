@@ -357,7 +357,7 @@ export default function EventsPage() {
             }}>{t('Show all events', 'Hiện tất cả sự kiện')}</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))', gap: '12px' }}>
             {filteredEvents.map(event => (
               <EventCard
                 key={event.event_id}

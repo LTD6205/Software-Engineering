@@ -16,6 +16,32 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Global auth handling: a 401 means the token is missing/expired or the account
+// was deactivated (the backend now re-checks the user on every request). Drop
+// the stale session and send the user to login. A 403 (authenticated but not
+// allowed) is left for the calling component to surface — it is not a logout.
+api.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (
+      typeof window !== 'undefined' &&
+      error?.response?.status === 401 &&
+      !window.location.pathname.startsWith('/login')
+    ) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  },
+)
+
+export const authApi = {
+  // Validate the session and fetch the current server-side user (role/active
+  // status reflect the DB, not whatever is cached in localStorage).
+  me: () => api.get('/auth/me').then((r) => r.data),
+}
+
 export const eventsApi = {
   getAll:  ()                         => api.get('/events').then(r => r.data),
   getOne:  (id: string)               => api.get(`/events/${id}`).then(r => r.data),

@@ -1,8 +1,30 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-03 (full test stack: backend unit + DB-backed e2e/integration,
-frontend RTL, and Playwright happy paths — see "Testing" below).
+Last updated 2026-06-04 (frontend audit hardening + responsive pass — see below).
+
+## 2026-06-04 — frontend hardening & responsive (audit follow-ups)
+
+Backend audit fixes landed earlier (`a47a0b0`: JWT-derived identity, event-membership
+policy, exact-match RBAC, etc.). This pass closes the remaining **frontend** findings:
+
+- **Session validation (audit #18).** `AuthContext` now treats the cached `localStorage`
+  user as an optimistic placeholder only — on mount it calls `/auth/me` and refreshes the
+  authoritative role/active state, clearing the session if validation fails. `lib/api.ts`
+  gained a response interceptor that drops the session and redirects to `/login` on any
+  `401` (a `403` is left for the component — it is not a logout).
+- **Type drift (audit #23).** `Task.priority_source` now includes `'auto'`; `Notification`
+  now includes `event_id` — both match what the backend actually sends.
+- **Responsive / mobile (audit #34, desktop preserved).** The fixed 240px sidebar becomes
+  an off-canvas drawer below 768px (hamburger top bar + dimming overlay in `AppShell`,
+  `mobileOpen`/`onNavigate` on `Sidebar`, media queries in `globals.css`); `main` reclaims
+  full width; the event/dashboard/users grids use `minmax(min(Npx,100%),1fr)` so cards
+  reflow instead of forcing a horizontal scrollbar. Desktop layout is unchanged.
+- **Build (audit #33).** Frontend deps are installed; `next build` verified green.
+
+Not done (out of scope): #35 touch interactions on the Gantt timeline (right-click/drag/
+wheel-zoom have no touch equivalents — a behavioral rebuild, not layout); #19 single-socket
+provider; the backend refactors (#13 transactions, #16 global ValidationPipe/DTO layer).
 
 ## Testing
 

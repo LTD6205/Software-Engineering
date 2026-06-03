@@ -297,7 +297,7 @@ export default function UsersPage() {
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>{t('Loading...', 'Đang tải...')}</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(500px, 100%), 1fr))', gap: '8px' }}>
             {visibleUsers.map(u => {
               const isOnline = online.has(u.user_id)
               const isMe = u.user_id === user?.user_id

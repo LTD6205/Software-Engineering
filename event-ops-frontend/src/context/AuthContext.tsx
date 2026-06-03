@@ -2,6 +2,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
+import { authApi } from '../lib/api'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api'
 
@@ -35,20 +36,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
-  // On mount — restore session from localStorage. This must run in an effect
-  // (not a lazy useState initializer): the server renders with no session, so
-  // reading localStorage during the first client render would cause a
-  // hydration mismatch. Setting state here is intentional.
+  // On mount — restore session from localStorage, then VALIDATE it against the
+  // server. This must run in an effect (not a lazy useState initializer): the
+  // server renders with no session, so reading localStorage during the first
+  // client render would cause a hydration mismatch. Setting state here is
+  // intentional.
+  //
+  // The cached user is only an optimistic placeholder for instant UI; the
+  // authoritative role/active state comes from /auth/me. A deactivated account
+  // or a changed role is reflected immediately instead of trusting whatever a
+  // (potentially tampered) localStorage claims.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const savedToken = localStorage.getItem('token')
-    const savedUser  = localStorage.getItem('user')
-    if (savedToken && savedUser) {
-      setToken(savedToken)
-      setUser(JSON.parse(savedUser))
-      axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`
+    if (!savedToken) {
+      setIsLoading(false)
+      return
     }
-    setIsLoading(false)
+    setToken(savedToken)
+    axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`
+    const savedUser = localStorage.getItem('user')
+    if (savedUser) setUser(JSON.parse(savedUser))
+
+    authApi
+      .me()
+      .then((fresh: AuthUser) => {
+        setUser(fresh)
+        localStorage.setItem('user', JSON.stringify(fresh))
+      })
+      .catch(() => {
+        // Invalid / expired token or a deactivated account — clear the session.
+        // (The api interceptor also redirects to /login on a 401.)
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        setToken(null)
+        setUser(null)
+        delete axios.defaults.headers.common['Authorization']
+      })
+      .finally(() => setIsLoading(false))
   }, [])
   /* eslint-enable react-hooks/set-state-in-effect */
 

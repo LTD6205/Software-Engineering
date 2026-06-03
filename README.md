@@ -20,9 +20,11 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 - **Staff reassignment** — a manager can hand one of their staff to another manager; the receiving manager gets a request and accepts or rejects it.
 - **Real-time deadline monitoring** — a cron job flags upcoming/overdue tasks and pushes live notifications over WebSocket.
 - **AI commands** — managers describe tasks in plain English/Vietnamese; DeepSeek turns them into real tasks.
-- **Roles** — Admin > Event Manager > Manager > Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Event Managers** create events and manage event membership (add/remove member managers — whose teams join the event); **Admins** manage accounts. The backend also enforces a level hierarchy, so a higher-level account can technically reach a lower level's endpoints, but the UI surfaces only the features that belong to each role. Staff get a limited UI (their own tasks and notifications).
+- **Roles** — Admin, Event Manager, Manager, Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Event Managers** create events and manage event membership (add/remove member managers — whose teams join the event); **Admins** manage accounts. The backend enforces these per route as an **exact-match allow-list** — no role inherits another's access; `admin` is the only cross-role exception (a superuser allowed everywhere). The UI surfaces only the features that belong to each role, and Staff get a limited UI (their own tasks and notifications).
 - **Online presence** — the Team page shows who's online, colour-coded by role.
 - **Language switch** — EN/VI toggle that translates the whole UI.
+- **Responsive layout** — desktop keeps the fixed sidebar; on narrow screens (≤768px) it collapses into a hamburger drawer and the card grids reflow instead of overflowing.
+- **Session validation** — on load the app re-checks the stored token against `/auth/me`, so a deactivated account or a changed role takes effect immediately, and a 401 from any call signs the user out.
 
 ## Project Structure
 

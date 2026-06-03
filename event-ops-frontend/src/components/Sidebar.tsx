@@ -7,7 +7,14 @@ import { useLang } from '@/context/LanguageContext'
 import { roleColorOf, roleLabelOf } from '@/lib/roles'
 import Avatar from './Avatar'
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobileOpen = false,
+  onNavigate,
+}: {
+  // Mobile drawer state (ignored on desktop, where the sidebar is always shown).
+  mobileOpen?: boolean
+  onNavigate?: () => void
+} = {}) {
   const path = usePathname()
   const { user, logout, isManager } = useAuth()
   const { t } = useLang()
@@ -24,14 +31,16 @@ export default function Sidebar() {
   ]
 
   return (
-    <aside style={{
-      width: '240px', minHeight: '100vh',
-      background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column',
-      position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 40,
-    }}>
+    <aside
+      className={`app-sidebar${mobileOpen ? ' app-sidebar-open' : ''}`}
+      style={{
+        width: '240px', minHeight: '100vh',
+        background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column',
+        position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 40,
+      }}>
       <div style={{ padding: '20px', borderBottom: '1px solid var(--border)' }}>
-        <Link href="/" style={{ textDecoration: 'none' }} title={t('Go to Dashboard', 'Về Tổng quan')}>
+        <Link href="/" onClick={onNavigate} style={{ textDecoration: 'none' }} title={t('Go to Dashboard', 'Về Tổng quan')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
             <div style={{
               width: '34px', height: '34px', borderRadius: '8px',
@@ -56,7 +65,7 @@ export default function Sidebar() {
         {nav.filter(n => n.show).map(({ href, icon: Icon, label }) => {
           const active = path === href
           return (
-            <Link key={href} href={href} style={{ textDecoration: 'none' }}>
+            <Link key={href} href={href} onClick={onNavigate} style={{ textDecoration: 'none' }}>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 padding: '9px 10px', borderRadius: '8px', marginBottom: '2px',

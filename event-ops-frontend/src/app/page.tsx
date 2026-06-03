@@ -50,7 +50,7 @@ export default function DashboardPage() {
 
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))',
           gap: '16px',
           marginBottom: '32px',
         }}>
@@ -89,7 +89,7 @@ export default function DashboardPage() {
             </p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))', gap: '12px' }}>
             {events.slice(0, 6).map(event => (
               <EventCard
                 key={event.event_id}

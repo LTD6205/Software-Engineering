@@ -1,7 +1,8 @@
 'use client'
 import { useAuth } from '@/context/AuthContext'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { Menu } from 'lucide-react'
 import { useLang } from '@/context/LanguageContext'
 import Sidebar from './Sidebar'
 import Celebration from './Celebration'
@@ -11,12 +12,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { t } = useLang()
   const pathname = usePathname()
   const router   = useRouter()
+  // Mobile nav drawer (only surfaced ≤768px via CSS). Closed on every route
+  // change so navigating from the drawer dismisses it.
+  const [navOpen, setNavOpen] = useState(false)
 
   useEffect(() => {
     if (!isLoading && !user && pathname !== '/login') {
       router.push('/login')
     }
   }, [user, isLoading, pathname, router])
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => { setNavOpen(false) }, [pathname])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // When clicking outside selectable text / form fields, tidy up:
   //  - clear any highlighted text (the UI is user-select:none, so the browser
@@ -61,9 +69,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar />
-      <main style={{
-        marginLeft: '240px', flex: 1,
+      {/* Mobile-only top bar with the drawer toggle (hidden ≥768px via CSS). */}
+      <header className="app-topbar">
+        <button
+          onClick={() => setNavOpen(v => !v)}
+          aria-label={t('Toggle menu', 'Mở/đóng menu')}
+          aria-expanded={navOpen}
+          style={{
+            background: 'transparent', border: 'none', padding: '6px',
+            color: 'var(--text-primary)', display: 'flex', alignItems: 'center',
+          }}
+        >
+          <Menu size={22} />
+        </button>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Event Ops</span>
+      </header>
+
+      {/* Dimming backdrop while the drawer is open (mobile only via CSS). */}
+      {navOpen && <div className="app-overlay" onClick={() => setNavOpen(false)} aria-hidden="true" />}
+
+      <Sidebar mobileOpen={navOpen} onNavigate={() => setNavOpen(false)} />
+      <main className="app-main" style={{
+        flex: 1,
         // min-width: 0 lets this flex item shrink to the viewport instead of
         // being pushed wider by scrollable content (e.g. the Tasks timeline),
         // which would add a second, page-level horizontal scrollbar.
