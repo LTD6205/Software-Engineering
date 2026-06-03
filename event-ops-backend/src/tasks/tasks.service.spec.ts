@@ -363,6 +363,38 @@ describe('TasksService', () => {
     });
   });
 
+  describe('viewer-scoped reads (GET /tasks/:id, /:id/assignments)', () => {
+    it('findOneForViewer denies a viewer who cannot see the task event', async () => {
+      const { service, taskRepo, events } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      events.assertCanViewEvent.mockRejectedValue(new BadRequestException('no'));
+      await expect(
+        service.findOneForViewer('t1', { sub: 'outsider', role: 'manager' }),
+      ).rejects.toThrow();
+      expect(events.assertCanViewEvent).toHaveBeenCalledWith(
+        { sub: 'outsider', role: 'manager' },
+        'e1',
+      );
+    });
+
+    it('findOneForViewer returns the task when its event is visible', async () => {
+      const { service, taskRepo } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      const r = await service.findOneForViewer('t1', { sub: 'm', role: 'manager' });
+      expect((r as { task_id: string }).task_id).toBe('t1');
+    });
+
+    it('getAssignmentsForViewer enforces event visibility before reading rows', async () => {
+      const { service, taskRepo, assignRepo, events } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      events.assertCanViewEvent.mockRejectedValue(new BadRequestException('no'));
+      await expect(
+        service.getAssignmentsForViewer('t1', { sub: 'outsider', role: 'staff' }),
+      ).rejects.toThrow();
+      expect(assignRepo.find).not.toHaveBeenCalled();
+    });
+  });
+
   describe('merge — validation', () => {
     it('rejects merging a task with itself', async () => {
       const { service } = build();

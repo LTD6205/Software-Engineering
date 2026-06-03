@@ -85,8 +85,11 @@ export class TasksController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.tasksService.findOne(id);
+  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.tasksService.findOneForViewer(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Post()
@@ -127,8 +130,11 @@ export class TasksController {
 
   // Assignments
   @Get(':id/assignments')
-  getAssignments(@Param('id') id: string) {
-    return this.tasksService.getAssignments(id);
+  getAssignments(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.tasksService.getAssignmentsForViewer(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   @Post(':id/assign')

@@ -105,6 +105,26 @@ export class TasksService {
     return task;
   }
 
+  // Viewer-scoped single-task read (GET /tasks/:id): the task is only returned
+  // if the viewer can see its event, so a raw task UUID can't be read by someone
+  // outside the event.
+  async findOneForViewer(id: string, viewer: { sub: string; role: string }) {
+    const task = await this.findOne(id);
+    await this.events.assertCanViewEvent(viewer, task.event_id);
+    return task;
+  }
+
+  // Viewer-scoped assignment read (GET /tasks/:id/assignments): same event-
+  // visibility gate as the task itself.
+  async getAssignmentsForViewer(
+    id: string,
+    viewer: { sub: string; role: string },
+  ) {
+    const task = await this.findOne(id);
+    await this.events.assertCanViewEvent(viewer, task.event_id);
+    return this.getAssignments(id);
+  }
+
   async create(data: Partial<Task>, actor?: { sub: string; role: string }) {
     if (!data.task_name) {
       throw new BadRequestException(

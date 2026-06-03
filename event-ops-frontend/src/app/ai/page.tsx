@@ -5,7 +5,6 @@ import { aiApi, eventsApi } from '@/lib/api'
 import { Event, Task } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventPicker from '@/components/EventPicker'
-import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 
 interface Message {
@@ -23,7 +22,6 @@ export default function AiPage() {
   const [input, setInput]       = useState('')
   const [loading, setLoading]   = useState(false)
   const bottomRef               = useRef<HTMLDivElement>(null)
-  const { user }                = useAuth()
   const { t, lang } = useLang()
 
   const examples = lang === 'en'
@@ -64,7 +62,7 @@ export default function AiPage() {
     setLoading(true)
 
     try {
-      const result = await aiApi.command(user?.user_id || '', eventId, text)
+      const result = await aiApi.command(eventId, text)
       const n = result.tasks_created?.length ?? 0
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id ? {

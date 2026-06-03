@@ -19,9 +19,13 @@ export class UsersService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  // Full roster for managers/admins (excludes password_hash). Only admins also
-  // get the account active/inactive status.
-  findAll(viewerRole?: string) {
+  // Roster (excludes password_hash). Scoped by the actor:
+  //   admin    — the full roster, with active/inactive status.
+  //   manager  — only their own staff + every manager (peers, needed to pick a
+  //              reassignment target and label who a staff reports to); NOT
+  //              other managers' staff, admins, or organizers.
+  //   (no actor / other) — full roster without is_active (internal/tests).
+  findAll(actor?: { sub: string; role: string }) {
     const select: (keyof User)[] = [
       'user_id',
       'name',
@@ -33,8 +37,38 @@ export class UsersService {
       'pending_manager_id',
       'created_at',
     ];
-    if (viewerRole === 'admin') select.push('is_active');
+    if (actor?.role === 'admin') {
+      select.push('is_active');
+      return this.userRepo.find({ select, order: { created_at: 'ASC' } });
+    }
+    if (actor?.role === 'manager') {
+      return this.userRepo.find({
+        where: [{ role: 'manager' }, { role: 'staff', manager_id: actor.sub }],
+        select,
+        order: { created_at: 'ASC' },
+      });
+    }
     return this.userRepo.find({ select, order: { created_at: 'ASC' } });
+  }
+
+  // Actor-scoped single-user read (GET /users/:id). Admins see anyone; a manager
+  // may only read their own staff, a peer manager, or themselves — and never the
+  // is_active flag (admin-only).
+  async findOneForViewer(id: string, actor: { sub: string; role: string }) {
+    const target = await this.findOne(id);
+    if (actor.role === 'admin') return target;
+    const allowed =
+      target.user_id === actor.sub ||
+      target.role === 'manager' ||
+      (target.role === 'staff' && target.manager_id === actor.sub);
+    if (!allowed) {
+      throw new ForbiddenException(
+        'You can only view your own team / Bạn chỉ có thể xem nhân viên của mình',
+      );
+    }
+    const data: Partial<User> = { ...target };
+    delete data.is_active;
+    return data;
   }
 
   // Roster any signed-in user may see. Staff use this and may only see emails

@@ -96,8 +96,9 @@ export const notificationsApi = {
 }
 
 export const aiApi = {
-  command: (userId: string, eventId: string, message: string) =>
-    api.post('/ai/command', { userId, eventId, message }).then(r => r.data),
+  // The acting user is derived from the JWT on the backend — no userId in the body.
+  command: (eventId: string, message: string) =>
+    api.post('/ai/command', { eventId, message }).then(r => r.data),
 }
 
 // Pull a human-readable message out of an unknown thrown error (usually an

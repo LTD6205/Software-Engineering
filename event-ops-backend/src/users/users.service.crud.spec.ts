@@ -366,23 +366,62 @@ describe('UsersService — profile / CRUD', () => {
   describe('findAll', () => {
     it("includes 'is_active' in the select only for an admin viewer", async () => {
       const { service, userRepo } = build();
-      await service.findAll('admin');
-      const select = userRepo.find.mock.calls[0][0].select;
-      expect(select).toContain('is_active');
+      await service.findAll({ sub: 'a1', role: 'admin' });
+      const args = userRepo.find.mock.calls[0][0];
+      expect(args.select).toContain('is_active');
+      expect(args.where).toBeUndefined(); // admin sees everyone
     });
 
-    it("omits 'is_active' from the select for a non-admin viewer", async () => {
+    it('scopes a manager to peer managers + their own staff (no is_active)', async () => {
       const { service, userRepo } = build();
-      await service.findAll('manager');
-      const select = userRepo.find.mock.calls[0][0].select;
-      expect(select).not.toContain('is_active');
+      await service.findAll({ sub: 'mgr-me', role: 'manager' });
+      const args = userRepo.find.mock.calls[0][0];
+      expect(args.select).not.toContain('is_active');
+      // OR-where: every manager, plus staff that report to me.
+      expect(args.where).toEqual([
+        { role: 'manager' },
+        { role: 'staff', manager_id: 'mgr-me' },
+      ]);
     });
 
-    it("omits 'is_active' when no viewer role is given", async () => {
+    it("omits 'is_active' when no actor is given", async () => {
       const { service, userRepo } = build();
       await service.findAll();
       const select = userRepo.find.mock.calls[0][0].select;
       expect(select).not.toContain('is_active');
+    });
+  });
+
+  describe('findOneForViewer', () => {
+    const seed = {
+      'own': { user_id: 'own', role: 'staff', manager_id: 'mgr-me', is_active: true },
+      'foreign': { user_id: 'foreign', role: 'staff', manager_id: 'mgr-x', is_active: true },
+      'peer': { user_id: 'peer', role: 'manager', is_active: true },
+      'mgr-me': { user_id: 'mgr-me', role: 'manager', is_active: true },
+    };
+    const mgr = { sub: 'mgr-me', role: 'manager' };
+
+    it('lets an admin read anyone (with is_active)', async () => {
+      const { service } = build(seed);
+      const r = await service.findOneForViewer('foreign', { sub: 'a', role: 'admin' });
+      expect(r.user_id).toBe('foreign');
+      expect(r).toHaveProperty('is_active');
+    });
+
+    it("forbids a manager from reading another team's staff", async () => {
+      const { service } = build(seed);
+      await expect(service.findOneForViewer('foreign', mgr)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('lets a manager read their own staff, a peer manager, and themselves (no is_active)', async () => {
+      const { service } = build(seed);
+      for (const id of ['own', 'peer', 'mgr-me']) {
+        const r = await service.findOneForViewer(id, mgr);
+        expect(r.user_id).toBe(id);
+        expect(r).not.toHaveProperty('is_active');
+      }
     });
   });
 

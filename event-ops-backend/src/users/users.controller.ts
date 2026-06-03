@@ -20,11 +20,15 @@ import { JwtPayload } from '../auth/jwt.strategy';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  // GET /api/users — manager only (admins additionally get active status)
+  // GET /api/users — a manager sees their own staff + peer managers; an admin
+  // sees the full roster (with active status).
   @Get()
   @Roles('manager', 'admin')
   findAll(@Request() req: { user: JwtPayload }) {
-    return this.usersService.findAll(req.user.role);
+    return this.usersService.findAll({
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // GET /api/users/directory — any signed-in user (online/presence board).
@@ -42,11 +46,15 @@ export class UsersController {
     return this.usersService.incomingReassignRequests(req.user.sub);
   }
 
-  // GET /api/users/:id — manager only
+  // GET /api/users/:id — admins see anyone; a manager only their own staff, a
+  // peer manager, or themselves (so a raw id can't read an arbitrary user).
   @Get(':id')
   @Roles('manager', 'admin')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+    return this.usersService.findOneForViewer(id, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // POST /api/users/:id/reassign — owner manager proposes moving a staff member
