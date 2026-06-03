@@ -1,7 +1,30 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 hardening batch 1 — see below).
+Last updated 2026-06-04 (audit round-2 batch 2: WebSocket event-room scoping — see below).
+
+## 2026-06-04 — audit round-2, batch 2 (#3 WebSocket event-room scoping)
+
+`EventsGateway` now scopes event/task broadcasts to members instead of fanning out
+to every authenticated socket:
+- On `register` (after verifying the JWT, which carries the role) a socket joins
+  `event:<id>` rooms for the events its user can see — admins/organizers join one
+  catch-all `events:all` room instead of N per-event rooms; a manager joins its
+  member events; staff join the events their manager belongs to. Membership is
+  read straight from the DB via the global `DataSource` (no new module wiring, no
+  circular dep with EventsModule).
+- New `broadcastToEvent(eventId, event, payload)` emits only to `event:<id>` +
+  `events:all` (falls back to the global authenticated room when no event id).
+  `data_changed` (tasks/events/overdue-cron) and `celebrate` (task/event complete)
+  now go through it. Presence stays global to the authenticated room.
+- **Known limitation:** room membership is fixed at connect time. A user added to
+  an event mid-session still gets the per-user notification (via `user:<id>`) but
+  only starts receiving that event's live `data_changed`/`celebrate` on their next
+  (re)connect. Acceptable for now; a "refresh my event rooms" hook could remove it.
+- Covered by `websocket/events.gateway.spec.ts` (role-based room joins, invalid
+  token disconnect, broadcastToEvent targeting).
+
+## 2026-06-04 — audit round-2, batch 1 (safe/infra hardening)
 
 ## 2026-06-04 — audit round-2, batch 1 (safe/infra hardening)
 
@@ -36,7 +59,7 @@ open (see "Still open — audit round-2" below).
   management/profile fields the user pages use.
 
 ### Still open — audit round-2 (larger / higher-risk, next batches)
-- **#3 WebSocket event-room scoping** — emit task/event payloads only to members.
+- **#3 WebSocket event-room scoping** — ✅ done (batch 2 above).
 - **#4 transactions** around multi-table writes (needs test-double rework).
 - **#5/#7 cron + event-date** routed through a shared task-transition/recompute
   method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).

@@ -51,9 +51,9 @@ export class NotificationsService {
         'overdue',
         `OVERDUE: "${task.task_name}" has passed its deadline. / QUÁ HẠN: "${task.task_name}" đã quá hạn chót.`,
       );
-      // Tell connected clients so the board reflects the system status change
+      // Tell the event's members so the board reflects the system status change
       // without waiting for a manual refresh.
-      this.gateway.broadcast('data_changed', {
+      this.gateway.broadcastToEvent(task.event_id, 'data_changed', {
         kind: 'task',
         event_id: task.event_id,
       });

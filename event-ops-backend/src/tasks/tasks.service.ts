@@ -33,9 +33,12 @@ export class TasksService {
     private readonly events: EventsService,
   ) {}
 
-  // Tell connected clients something changed so they can refetch live.
+  // Tell the event's members something changed so they can refetch live.
   private broadcastChange(eventId?: string) {
-    this.gateway.broadcast('data_changed', { kind: 'task', event_id: eventId });
+    this.gateway.broadcastToEvent(eventId, 'data_changed', {
+      kind: 'task',
+      event_id: eventId,
+    });
   }
 
   // ── Tasks ──────────────────────────────────────────────────
@@ -277,7 +280,7 @@ export class TasksService {
       await this.eventRepo.update(eventId, { status });
       // Celebrate an event that just completed, and notify every member.
       if (status === 'completed') {
-        this.gateway.broadcast('celebrate', {
+        this.gateway.broadcastToEvent(eventId, 'celebrate', {
           kind: 'event',
           name: event.event_name,
         });
@@ -373,7 +376,7 @@ export class TasksService {
     }
     // Celebrate a task that was just completed.
     if (data.status === 'completed' && old.status !== 'completed') {
-      this.gateway.broadcast('celebrate', {
+      this.gateway.broadcastToEvent(old.event_id, 'celebrate', {
         kind: 'task',
         name: old.task_name,
       });

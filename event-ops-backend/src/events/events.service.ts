@@ -24,9 +24,9 @@ export class EventsService {
     private readonly gateway: EventsGateway,
   ) {}
 
-  // Tell connected clients something changed so they can refetch live.
+  // Tell the event's members something changed so they can refetch live.
   private broadcastChange(eventId?: string) {
-    this.gateway.broadcast('data_changed', {
+    this.gateway.broadcastToEvent(eventId, 'data_changed', {
       kind: 'event',
       event_id: eventId,
     });

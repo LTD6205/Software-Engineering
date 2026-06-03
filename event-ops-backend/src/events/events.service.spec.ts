@@ -22,7 +22,7 @@ function makeRepo() {
 function build() {
   const eventRepo = makeRepo();
   const notifications = { notifyUsers: jest.fn(), notifyUser: jest.fn() };
-  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn() };
+  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
   const service = new EventsService(
     eventRepo as never,
     notifications as never,

@@ -15,7 +15,7 @@ function build() {
   const taskRepo = makeRepo();
   const notifRepo = makeRepo();
   const assignRepo = makeRepo();
-  const gateway = { sendToUser: jest.fn(), broadcast: jest.fn() };
+  const gateway = { sendToUser: jest.fn(), broadcast: jest.fn(), broadcastToEvent: jest.fn() };
   const service = new NotificationsService(
     taskRepo as never,
     notifRepo as never,

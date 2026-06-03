@@ -23,7 +23,7 @@ function build() {
   const logRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
-  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn() };
+  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
   const notifications = { notifyUser: jest.fn(), notifyUsers: jest.fn() };
   // Event-access policy is mocked to always allow here; membership enforcement
   // is covered by the EventsService unit tests and the e2e suite.
