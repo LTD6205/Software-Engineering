@@ -20,7 +20,7 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 - **Staff reassignment** — a manager can hand one of their staff to another manager; the receiving manager gets a request and accepts or rejects it.
 - **Real-time deadline monitoring** — a cron job flags upcoming/overdue tasks and pushes live notifications over WebSocket.
 - **AI commands** — managers describe tasks in plain English/Vietnamese; DeepSeek turns them into real tasks.
-- **Roles** — Admin > Event Manager > Manager > Staff, enforced on the API (a higher level inherits everything below it). Staff get a read-only/limited UI.
+- **Roles** — Admin > Event Manager > Manager > Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Event Managers** create events and manage event membership (add/remove member managers — whose teams join the event); **Admins** manage accounts. The backend also enforces a level hierarchy, so a higher-level account can technically reach a lower level's endpoints, but the UI surfaces only the features that belong to each role. Staff get a limited UI (their own tasks and notifications).
 - **Online presence** — the Team page shows who's online, colour-coded by role.
 - **Language switch** — EN/VI toggle that translates the whole UI.
 
@@ -119,7 +119,7 @@ npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specif
 
 ## Roles & Permissions (Admin > Event Manager > Manager > Staff)
 
-The API guard is level-based: a role can do everything the roles below it can.
+The table shows each role's **intended** capabilities (what the UI exposes). Separately, the backend enforces a **level hierarchy** (Admin > Event Manager > Manager > Staff), so a higher-level account can technically call a lower level's API endpoint even when the UI does not offer it. Staff and task management require owning a staff team, so they belong to Managers (and Admins, who act as super-users); Event Managers focus on events and membership.
 
 | Action | Admin | Event Manager | Manager | Staff |
 |---|---|---|---|---|
@@ -127,11 +127,11 @@ The API guard is level-based: a role can do everything the roles below it can.
 | View events | all | all | member events | their team's events |
 | View Team presence board | ✅ | ✅ | ✅ | ✅ (read-only) |
 | Create/edit/delete events, add member managers | ✅ | ✅ | ❌ | ❌ |
-| Create tasks & assign to staff | ✅ | ✅ | ✅ (own staff) | ❌ |
-| Update task status | ✅ | ✅ | ✅ | ✅ (if assigned) |
+| Create tasks & assign to staff | ✅ | ❌ | ✅ (own staff) | ❌ |
+| Update task status | ✅ | ✅ (if assigned) | ✅ | ✅ (if assigned) |
 | Reassign a staff member to another manager | ✅ | ❌ | ✅ (own staff) | ❌ |
-| AI Assistant | ✅ | ✅ | ✅ | ❌ |
-| Add team members | ✅ | ✅ | ✅ | ❌ |
+| AI Assistant | ✅ | ❌ | ✅ | ❌ |
+| Add / manage staff accounts | ✅ | ❌ | ✅ (own team) | ❌ |
 | Activate/deactivate accounts | ✅ | ❌ | ❌ | ❌ |
 | Create an Admin account | ✅ | ❌ | ❌ | ❌ |
 
