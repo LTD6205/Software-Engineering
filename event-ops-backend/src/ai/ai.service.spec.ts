@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+} from '@nestjs/common';
 import axios from 'axios';
 import { AiService } from './ai.service';
 
@@ -75,6 +79,32 @@ describe('AiService.processCommand', () => {
     const { service } = build();
     await expect(service.processCommand(ACTOR, 'e1', '   ')).rejects.toThrow(
       BadRequestException,
+    );
+  });
+
+  it('rejects when the AI returns no valid task items', async () => {
+    const { service, tasksService } = build();
+    // One item missing task_name, one with a blank name → nothing usable.
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([{ priority: 'high' }, { task_name: '   ' }]),
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, 'e1', 'do stuff')) as {
+      status: string;
+    };
+    expect(result.status).toBe('rejected');
+    expect(tasksService.create).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits a user after too many requests', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    for (let i = 0; i < 20; i++) {
+      await service.processCommand(ACTOR, 'e1', 'x');
+    }
+    await expect(service.processCommand(ACTOR, 'e1', 'x')).rejects.toThrow(
+      HttpException,
     );
   });
 

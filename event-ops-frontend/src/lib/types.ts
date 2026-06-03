@@ -3,7 +3,14 @@ export interface User {
   name: string
   email: string
   role: 'manager' | 'staff' | 'admin' | 'organizer'
-  created_at: string
+  // Optional management/profile fields the backend returns on the roster and
+  // single-user reads (omitted from the lightweight presence directory).
+  phone?: string
+  avatar?: string | null
+  manager_id?: string | null
+  pending_manager_id?: string | null
+  is_active?: boolean
+  created_at?: string
 }
 
 export interface Event {

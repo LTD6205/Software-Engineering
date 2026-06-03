@@ -166,13 +166,25 @@ export class NotificationsService {
     });
   }
 
-  // Full history (read + unread), most recent first, capped so it stays light.
-  getAll(userId: string) {
+  // Full history (read + unread), most recent first. Paginated: `limit` is
+  // clamped to 1..100 (default 50) and `offset` lets the client page further back.
+  getAll(userId: string, limit = 50, offset = 0) {
+    const take = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+    const skip = Math.max(Math.trunc(offset) || 0, 0);
     return this.notifRepo.find({
       where: { user_id: userId },
       order: { created_at: 'DESC' },
-      take: 50,
+      take,
+      skip,
     });
+  }
+
+  // Retention: every night, drop read notifications older than 30 days so the
+  // table doesn't grow without bound. Unread ones are always kept.
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  async pruneOldNotifications() {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await this.notifRepo.delete({ is_read: true, created_at: LessThan(cutoff) });
   }
 
   async markAllRead(userId: string) {

@@ -14,9 +14,12 @@ describe('AppController', () => {
     appController = app.get<AppController>(AppController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+  describe('root health', () => {
+    it('reports an ok status with the service name', () => {
+      const res = appController.health();
+      expect(res.status).toBe('ok');
+      expect(res.service).toBe('event-ops-backend');
+      expect(typeof res.timestamp).toBe('string');
     });
   });
 });

@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -36,6 +41,58 @@ export class AiService {
     private readonly events: EventsService,
   ) {}
 
+  // Simple in-memory per-user rate limit for this expensive external endpoint.
+  private static readonly RATE_LIMIT = 20; // requests…
+  private static readonly RATE_WINDOW_MS = 10 * 60 * 1000; // …per 10 minutes
+  private readonly recentCalls = new Map<string, number[]>();
+
+  private assertWithinRateLimit(userId: string) {
+    const now = Date.now();
+    const cutoff = now - AiService.RATE_WINDOW_MS;
+    const calls = (this.recentCalls.get(userId) ?? []).filter((t) => t > cutoff);
+    if (calls.length >= AiService.RATE_LIMIT) {
+      throw new HttpException(
+        'Too many AI requests — please wait a moment. / Quá nhiều yêu cầu AI — vui lòng đợi một lát.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    calls.push(now);
+    this.recentCalls.set(userId, calls);
+  }
+
+  // Runtime validation of the model's JSON array: keep only items with a real
+  // task name, normalise an unknown priority to 'medium', and report how many
+  // malformed items were dropped (the compile-time ParsedTask type is no
+  // guarantee for arbitrary model output).
+  private validateItems(parsed: unknown[]): {
+    valid: ParsedTask[];
+    skipped: number;
+  } {
+    const valid: ParsedTask[] = [];
+    let skipped = 0;
+    for (const raw of parsed) {
+      const item = (raw ?? {}) as Partial<ParsedTask>;
+      const name =
+        typeof item.task_name === 'string' ? item.task_name.trim() : '';
+      if (!name) {
+        skipped++;
+        continue;
+      }
+      const priority =
+        item.priority === 'high' || item.priority === 'low'
+          ? item.priority
+          : 'medium';
+      valid.push({
+        task_name: name,
+        priority,
+        assigned_to:
+          typeof item.assigned_to === 'string' ? item.assigned_to : '',
+        deadline: typeof item.deadline === 'string' ? item.deadline : '',
+      });
+    }
+    return { valid, skipped };
+  }
+
   // Resolve an AI-provided "assigned_to" string (name or email) to a real,
   // active user. Returns null when no confident match is found.
   private async resolveAssignee(assignedTo?: string): Promise<User | null> {
@@ -63,6 +120,8 @@ export class AiService {
     // The actor may only drive AI changes on an event they manage — checked
     // before we spend a DeepSeek call.
     await this.events.assertCanManageEvent(actor, eventId);
+    // Throttle this expensive endpoint per user.
+    this.assertWithinRateLimit(userId);
     // Don't attempt an external call with a missing key (would send
     // "Bearer undefined" and leak a confusing provider error to the client).
     const apiKey = this.config.get<string>('DEEPSEEK_API_KEY');
@@ -138,8 +197,21 @@ If the user provides insufficient information, return instead:
         return { status: 'rejected', reason: parsed };
       }
 
+      // Drop malformed items; reject outright if nothing usable came back.
+      const { valid, skipped } = this.validateItems(parsed);
+      if (valid.length === 0) {
+        await this.aiRequestRepo.update(aiRequest.request_id, {
+          response: parsed as object,
+          status: 'rejected',
+        });
+        return {
+          status: 'rejected',
+          reason: { error: 'The AI response contained no valid tasks.' },
+        };
+      }
+
       const createdTasks: object[] = [];
-      for (const item of parsed as ParsedTask[]) {
+      for (const item of valid) {
         const priorityScore =
           item.priority === 'high' ? 90 : item.priority === 'medium' ? 50 : 10;
 
@@ -194,7 +266,7 @@ If the user provides insufficient information, return instead:
         status: 'success',
       });
 
-      return { status: 'success', tasks_created: createdTasks };
+      return { status: 'success', tasks_created: createdTasks, skipped };
     } catch (err) {
       await this.aiRequestRepo.update(aiRequest.request_id, {
         status: 'rejected',

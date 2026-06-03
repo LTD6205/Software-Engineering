@@ -5,8 +5,9 @@ import { AppService } from './app.service';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
+  // GET /api — health check (replaces the generated "Hello World!" route).
   @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  health() {
+    return this.appService.health();
   }
 }

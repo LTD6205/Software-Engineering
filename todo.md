@@ -1,7 +1,52 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (role rename + frontend audit hardening + responsive — see below).
+Last updated 2026-06-04 (audit round-2 hardening batch 1 — see below).
+
+## 2026-06-04 — audit round-2, batch 1 (safe/infra hardening)
+
+Working through the remaining audit items in verified batches. Batch 1 (this entry)
+covers the self-contained, low-risk ones; the larger architectural items are still
+open (see "Still open — audit round-2" below).
+
+- **Read leaks (done in the prior commit `826047c`):** `GET /tasks/:id` +
+  `/tasks/:id/assignments` are now event-scoped (`findOneForViewer` /
+  `getAssignmentsForViewer`); `UsersService.findAll(actor)` scopes a manager to
+  own staff + peer managers, and `findOneForViewer` gates `GET /users/:id`.
+- **Health endpoint (#21):** `GET /api` now returns `{status,service,timestamp}`
+  instead of "Hello World!" (controller/service/spec + e2e updated).
+- **Root `package.json` removed (#20)** — it was a scriptless stray; both real
+  projects keep their own.
+- **CORS via env (#16):** `main.ts` reads `CORS_ORIGIN` (comma-separated, default
+  `http://localhost:3001`); WS already uses `FRONTEND_ORIGIN`. `.env.example`
+  documents both + flags demo-only DB creds and the required prod `JWT_SECRET`.
+- **DB indexes (#23):** `migrations/2026-06-04_indexes.sql` adds
+  `users(manager_id)`, `users(role,is_active)`, `notifications(user_id,is_read)`,
+  `notifications(event_id)` (idempotent — `npm run db:migrate`).
+- **CI (#24):** `.github/workflows/ci.yml` runs backend + frontend install/build/
+  unit-tests on push/PR to main+dev. Lint is non-blocking for now (pre-existing
+  test-file `any` + TaskTimeline lint errors — see #22/#19); e2e needs a seeded DB
+  and is not wired yet.
+- **AI runtime validation + rate limit (#8):** `AiService` validates each parsed
+  item (drops ones without a real `task_name`, normalises priority), rejects when
+  nothing usable comes back, and rate-limits to 20 req / 10 min per user (429).
+- **Notification retention/pagination (#14):** `getAll(limit,offset)` (clamped
+  1..100) + a nightly cron pruning read notifications older than 30 days.
+- **Shared `User` type (#10):** frontend `User` now carries the optional
+  management/profile fields the user pages use.
+
+### Still open — audit round-2 (larger / higher-risk, next batches)
+- **#3 WebSocket event-room scoping** — emit task/event payloads only to members.
+- **#4 transactions** around multi-table writes (needs test-double rework).
+- **#5/#7 cron + event-date** routed through a shared task-transition/recompute
+  method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).
+- **#6 global ValidationPipe + DTO classes** (whitelist needs real DTOs first).
+- **#9 httpOnly-cookie auth** (replaces localStorage JWT — invasive; its own change).
+- **#11 single socket provider**, **#12 raw-SQL → repository/policy service**,
+  **#13 dead-route cleanup**, **#17 large-file decomposition**, **#18/#19 timeline
+  a11y + semantic controls + inline-style extraction**, **#22 re-enable lint rules**.
+
+## 2026-06-04 — role rename: `eventmanager` → `organizer` (audit #43)
 
 ## 2026-06-04 — role rename: `eventmanager` → `organizer` (audit #43)
 

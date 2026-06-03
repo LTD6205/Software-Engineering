@@ -10,7 +10,13 @@ async function bootstrap() {
   app.use(json({ limit: '8mb' }));
   app.use(urlencoded({ extended: true, limit: '8mb' }));
 
-  app.enableCors({ origin: 'http://localhost:3001' });
+  // Allowed browser origins come from env (comma-separated) so local, tunnel,
+  // and production set-ups don't need code changes. Defaults to the dev frontend.
+  const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3001')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  app.enableCors({ origin: corsOrigins });
   app.setGlobalPrefix('api');
 
   const port = process.env.PORT ?? 3000;

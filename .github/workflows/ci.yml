@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  backend:
+    name: Backend (build + unit tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: event-ops-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Peer-dependency conflicts are expected (see README), so --legacy-peer-deps.
+      - run: npm install --legacy-peer-deps
+      # Non-blocking until the lint cleanup (test-file `any`, see todo.md) lands.
+      - run: npm run lint
+        continue-on-error: true
+      - run: npm run build
+      - run: npm test
+
+  frontend:
+    name: Frontend (build + unit tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: event-ops-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --legacy-peer-deps
+      # Non-blocking until the TaskTimeline lint cleanup lands.
+      - run: npm run lint
+        continue-on-error: true
+      - run: npm test
+      - run: npm run build
+
+# NOTE: backend e2e (`npm run test:e2e`) and migration validation need a seeded
+# Postgres (a dedicated event_ops_test DB) and are intentionally not run here yet
+# — see todo.md "e2e against a throwaway/Testcontainers DB in CI".

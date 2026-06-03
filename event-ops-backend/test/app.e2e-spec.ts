@@ -16,11 +16,15 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
-  it('/ (GET)', () => {
+  it('/ (GET) returns a health payload', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect((res) => {
+        if (res.body?.status !== 'ok') {
+          throw new Error(`expected status ok, got ${JSON.stringify(res.body)}`);
+        }
+      });
   });
 
   afterEach(async () => {

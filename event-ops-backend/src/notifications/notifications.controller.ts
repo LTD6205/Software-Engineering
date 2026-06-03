@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Param,
+  Query,
   UseGuards,
   Request,
   ForbiddenException,
@@ -41,9 +42,15 @@ export class NotificationsController {
   getAll(
     @Request() req: { user: JwtPayload },
     @Param('userId') userId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     this.assertSelf(req.user.sub, userId);
-    return this.notifsService.getAll(req.user.sub);
+    return this.notifsService.getAll(
+      req.user.sub,
+      limit !== undefined ? Number(limit) : undefined,
+      offset !== undefined ? Number(offset) : undefined,
+    );
   }
 
   @Put('user/:userId/read-all')

@@ -88,6 +88,8 @@ copy .env.example .env        # (macOS/Linux: cp .env.example .env) — defaults
 npm run db:migrate            # apply schema migrations on top of database_creating.txt (idempotent)
 npm run seed                  # create login accounts
 npm run start:dev             # http://localhost:3000/api
+# Serving the frontend from a non-default origin (tunnel/prod)? Set CORS_ORIGIN
+# (comma-separated) and FRONTEND_ORIGIN in .env — both default to http://localhost:3001.
 ```
 
 ### 3. Frontend
