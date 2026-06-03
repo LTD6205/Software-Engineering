@@ -36,17 +36,17 @@ interface ReassignRequest {
 const empty = { name: '', email: '', phone: '', password: '', role: 'staff' }
 
 // Role colours come from the shared source of truth (@/lib/roles):
-// Admin (red) > Event Manager (purple) > Manager (amber) > Staff (green).
+// Admin (red) > Organizer (purple) > Manager (amber) > Staff (green).
 const roleColor = ROLE_COLOR
 const OFFLINE = 'var(--text-muted)'
 
-// Ordering: Staff first, then Manager, Event Manager, then Admin.
-const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, eventmanager: 2, admin: 3 }
+// Ordering: Staff first, then Manager, Organizer, then Admin.
+const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, organizer: 2, admin: 3 }
 
-type RoleFilter = 'all' | 'myteam' | 'staff' | 'manager' | 'eventmanager' | 'admin'
+type RoleFilter = 'all' | 'myteam' | 'staff' | 'manager' | 'organizer' | 'admin'
 
 export default function UsersPage() {
-  const { user, isManager, isAdmin, isEventManager } = useAuth()
+  const { user, isManager, isAdmin, isOrganizer } = useAuth()
   const { t, tError } = useLang()
   const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
@@ -64,10 +64,10 @@ export default function UsersPage() {
   const [reErr, setReErr]           = useState('')
   const [reSaving, setReSaving]     = useState(false)
 
-  // Managers, eventmanagers and admins get the full roster; staff see the
+  // Managers, organizers and admins get the full roster; staff see the
   // minimal directory.
-  const canSeeRoster = isManager || isEventManager
-  // A plain manager (not admin/eventmanager) can filter down to just their own
+  const canSeeRoster = isManager || isOrganizer
+  // A plain manager (not admin/organizer) can filter down to just their own
   // team to reassign members quickly.
   const isPlainManager = user?.role === 'manager'
   const isStaff = user?.role === 'staff'
@@ -104,7 +104,7 @@ export default function UsersPage() {
       return a.name.localeCompare(b.name)
     })
 
-  // Everyone can see the presence board. Managers/eventmanagers/admins get the
+  // Everyone can see the presence board. Managers/organizers/admins get the
   // full roster (with emails + management); staff get the minimal directory.
   useEffect(() => {
     const load = canSeeRoster ? usersApi.getAll() : usersApi.directory()
@@ -226,7 +226,7 @@ export default function UsersPage() {
         {/* Role colour legend */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', flexWrap: 'wrap' }}>
           {legendItem(t('Admin', 'Quản trị viên'), roleColor.admin)}
-          {legendItem(t('Event Manager', 'Quản lý sự kiện'), roleColor.eventmanager)}
+          {legendItem(t('Organizer', 'Quản lý sự kiện'), roleColor.organizer)}
           {legendItem(t('Manager', 'Quản lý'), roleColor.manager)}
           {legendItem(t('Staff', 'Nhân viên'), roleColor.staff)}
           {legendItem(t('Offline', 'Ngoại tuyến'), OFFLINE)}
@@ -240,7 +240,7 @@ export default function UsersPage() {
             ...(showMyTeam ? [['myteam', t('My Team', 'Đội của tôi')] as [RoleFilter, string]] : []),
             ['staff', t('Staff', 'Nhân viên')],
             ['manager', t('Manager', 'Quản lý')],
-            ['eventmanager', t('Event Manager', 'Quản lý sự kiện')],
+            ['organizer', t('Organizer', 'Quản lý sự kiện')],
             ['admin', t('Admin', 'Quản trị viên')],
           ] as [RoleFilter, string][]).map(([key, lbl]) => {
             const active = roleFilter === key
@@ -450,7 +450,7 @@ export default function UsersPage() {
                 { value: 'staff', label: t('Staff', 'Nhân viên'), color: ROLE_COLOR.staff },
                 { value: 'manager', label: t('Manager', 'Quản lý'), color: ROLE_COLOR.manager },
                 // High-privilege roles can only be created by an admin.
-                ...(isAdmin ? [{ value: 'eventmanager', label: t('Event Manager', 'Quản lý sự kiện'), color: ROLE_COLOR.eventmanager }] : []),
+                ...(isAdmin ? [{ value: 'organizer', label: t('Organizer', 'Quản lý sự kiện'), color: ROLE_COLOR.organizer }] : []),
                 ...(isAdmin ? [{ value: 'admin', label: t('Admin', 'Quản trị viên'), color: ROLE_COLOR.admin }] : []),
               ]} />
           </div>

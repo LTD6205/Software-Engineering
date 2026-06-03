@@ -6,19 +6,19 @@ import { ACCOUNTS, auth, createTestApp, login } from './utils';
 
 // REGRESSION TEST for the RBAC fix (exact role match, no level hierarchy).
 //
-// Previously RolesGuard was level-based, so an Event Manager (formerly "level 3")
+// Previously RolesGuard was level-based, so an Organizer (formerly "level 3")
 // could reach Manager-only routes. The guard now uses EXACT role matching with
 // `admin` as the only superuser, so:
-//   • Event Manager is DENIED (403) on Manager-only routes (@Roles('manager') /
+//   • Organizer is DENIED (403) on Manager-only routes (@Roles('manager') /
 //     @Roles('manager','admin')) — UI hiding is now backed by a real boundary.
-//   • Manager is DENIED (403) on Event-Manager-only routes (@Roles('eventmanager')).
+//   • Manager is DENIED (403) on Organizer-only routes (@Roles('organizer')).
 //   • Each role keeps its OWN routes; admin keeps everything (superuser).
 describe('Role boundaries: exact-match RBAC (e2e)', () => {
   let app: INestApplication;
   let moduleRef: TestingModule;
   let ds: DataSource;
 
-  let emToken: string; // eventmanager01
+  let emToken: string; // organizer01
   let managerToken: string; // manager01
   let adminToken: string; // admin01
   let staffToken: string; // staff01
@@ -42,7 +42,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
     end_time: '2026-12-10T18:00:00.000Z',
   });
 
-  // Create an event (as the eventmanager) to host the task-write tests.
+  // Create an event (as the organizer) to host the task-write tests.
   const makeHostEvent = async (): Promise<string> => {
     const res = await request(app.getHttpServer())
       .post('/api/events')
@@ -57,7 +57,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
   beforeAll(async () => {
     ({ app, moduleRef } = await createTestApp());
     ds = moduleRef.get(DataSource, { strict: false });
-    emToken = await login(app, ACCOUNTS.eventmanager);
+    emToken = await login(app, ACCOUNTS.organizer);
     managerToken = await login(app, ACCOUNTS.manager);
     adminToken = await login(app, ACCOUNTS.admin);
     staffToken = await login(app, ACCOUNTS.staff);
@@ -86,7 +86,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
     await moduleRef.close();
   });
 
-  describe('Event Manager is DENIED Manager-only routes', () => {
+  describe('Organizer is DENIED Manager-only routes', () => {
     it('cannot create a task (POST /tasks → 403)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/tasks')
@@ -156,7 +156,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
       expect(res.status).toBe(200);
     });
 
-    it('is DENIED Event-Manager-only routes (POST /events → 403)', async () => {
+    it('is DENIED Organizer-only routes (POST /events → 403)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/events')
         .set(auth(managerToken))
@@ -165,7 +165,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
     });
   });
 
-  describe('Event Manager keeps its OWN routes', () => {
+  describe('Organizer keeps its OWN routes', () => {
     it('can create an event (POST /events → 201)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/events')
@@ -196,7 +196,7 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
       expect(res.status).toBe(201);
     });
 
-    it('can create an event (Event-Manager route → 201)', async () => {
+    it('can create an event (Organizer route → 201)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/events')
         .set(auth(adminToken))

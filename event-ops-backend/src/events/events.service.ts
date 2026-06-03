@@ -70,11 +70,11 @@ export class EventsService {
   }
 
   // May this actor WRITE within the event (create/edit/assign/delete tasks)?
-  //   admin / eventmanager: any event; manager: only events they belong to;
+  //   admin / organizer: any event; manager: only events they belong to;
   //   staff: never.
   async canManageEvent(actor: Viewer, eventId: string): Promise<boolean> {
     if (!actor) return false;
-    if (actor.role === 'admin' || actor.role === 'eventmanager') return true;
+    if (actor.role === 'admin' || actor.role === 'organizer') return true;
     if (actor.role === 'manager') return this.isEventMember(actor.sub, eventId);
     return false;
   }
@@ -91,10 +91,10 @@ export class EventsService {
   }
 
   // May this actor VIEW the event and its tasks/members?
-  //   admin / eventmanager: any; manager: member; staff: their manager is one.
+  //   admin / organizer: any; manager: member; staff: their manager is one.
   async canViewEvent(actor: Viewer, eventId: string): Promise<boolean> {
     if (!actor) return false;
-    if (actor.role === 'admin' || actor.role === 'eventmanager') return true;
+    if (actor.role === 'admin' || actor.role === 'organizer') return true;
     if (actor.role === 'manager') return this.isEventMember(actor.sub, eventId);
     if (actor.role === 'staff') {
       const rows: unknown[] = await this.eventRepo.manager.query(
@@ -132,7 +132,7 @@ export class EventsService {
   }
 
   // Events visible to the viewer, each with manager + total people counts.
-  //   admin / eventmanager: all events
+  //   admin / organizer: all events
   //   manager: events they are a member of
   //   staff:   events their manager is a member of
   async findForViewer(viewer: Viewer) {
@@ -170,7 +170,7 @@ export class EventsService {
     return event;
   }
 
-  // Managers an event manager can choose from, with their team sizes.
+  // Managers an organizer can choose from, with their team sizes.
   availableManagers(): Promise<unknown[]> {
     return this.eventRepo.manager.query(
       `SELECT u.user_id, u.name, u.email,

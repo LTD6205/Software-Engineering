@@ -6,9 +6,9 @@ import { AppModule } from '../src/app.module';
 // Seeded accounts (see seed.js). Passwords are fixed per role.
 export const ACCOUNTS = {
   admin: { email: 'admin01@eventops.com', password: 'admin123' },
-  eventmanager: {
-    email: 'eventmanager01@eventops.com',
-    password: 'eventmanager123',
+  organizer: {
+    email: 'organizer01@eventops.com',
+    password: 'organizer123',
   },
   manager: { email: 'manager01@eventops.com', password: 'manager123' },
   staff: { email: 'staff01@eventops.com', password: 'staff123' },

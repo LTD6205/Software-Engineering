@@ -30,9 +30,9 @@ export class EventsController {
     });
   }
 
-  // Managers an event manager can add to an event (with team sizes).
+  // Managers an organizer can add to an event (with team sizes).
   @Get('available-managers')
-  @Roles('eventmanager')
+  @Roles('organizer')
   availableManagers() {
     return this.eventsService.availableManagers();
   }
@@ -56,9 +56,9 @@ export class EventsController {
     });
   }
 
-  // Only event managers (and admins) create events.
+  // Only organizers (and admins) create events.
   @Post()
-  @Roles('eventmanager')
+  @Roles('organizer')
   create(
     @Request() req: { user: JwtPayload },
     @Body() body: Partial<Event> & { manager_ids?: string[] },
@@ -71,14 +71,14 @@ export class EventsController {
   }
 
   @Put(':id')
-  @Roles('eventmanager')
+  @Roles('organizer')
   update(@Param('id') id: string, @Body() body: Partial<Event>) {
     return this.eventsService.update(id, body);
   }
 
   // Change an event's dates, choosing whether to delete or shift its tasks.
   @Put(':id/dates')
-  @Roles('eventmanager')
+  @Roles('organizer')
   updateDates(
     @Param('id') id: string,
     @Body()
@@ -97,19 +97,19 @@ export class EventsController {
   }
 
   @Delete(':id')
-  @Roles('eventmanager')
+  @Roles('organizer')
   remove(@Param('id') id: string) {
     return this.eventsService.remove(id);
   }
 
   @Post(':id/managers')
-  @Roles('eventmanager')
+  @Roles('organizer')
   addManager(@Param('id') id: string, @Body() body: { manager_id: string }) {
     return this.eventsService.addManager(id, body.manager_id, true);
   }
 
   @Delete(':id/managers/:managerId')
-  @Roles('eventmanager')
+  @Roles('organizer')
   removeManager(
     @Param('id') id: string,
     @Param('managerId') managerId: string,

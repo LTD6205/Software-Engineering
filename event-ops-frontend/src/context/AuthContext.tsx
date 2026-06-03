@@ -10,7 +10,7 @@ interface AuthUser {
   user_id: string
   name: string
   email: string
-  role: 'manager' | 'staff' | 'admin' | 'eventmanager'
+  role: 'manager' | 'staff' | 'admin' | 'organizer'
   phone?: string
   avatar?: string
 }
@@ -23,8 +23,8 @@ interface AuthContextType {
   updateUser: (partial: Partial<AuthUser>) => void
   isManager: boolean        // manager or admin — task/team/AI features
   isAdmin: boolean
-  isEventManager: boolean    // eventmanager role
-  canManageEvents: boolean   // eventmanager or admin — create/edit events
+  isOrganizer: boolean    // organizer role
+  canManageEvents: boolean   // organizer or admin — create/edit events
   isLoading: boolean
 }
 
@@ -111,8 +111,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user, token, login, logout, updateUser,
       isManager: user?.role === 'manager' || user?.role === 'admin',
       isAdmin: user?.role === 'admin',
-      isEventManager: user?.role === 'eventmanager',
-      canManageEvents: user?.role === 'eventmanager' || user?.role === 'admin',
+      isOrganizer: user?.role === 'organizer',
+      canManageEvents: user?.role === 'organizer' || user?.role === 'admin',
       isLoading,
     }}>
       {children}

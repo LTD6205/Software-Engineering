@@ -206,10 +206,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TR
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone  VARCHAR(30);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
 
--- 4. Add the 'eventmanager' role (Admin > Eventmanager > Manager > Staff)
+-- 4. Add the 'organizer' role (Admin > Organizer > Manager > Staff)
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
-    CHECK (role IN ('manager', 'staff', 'admin', 'eventmanager'));
+    CHECK (role IN ('manager', 'staff', 'admin', 'organizer'));
 
 -- 5. Staff ownership: which manager a staff reports to, plus a pending
 --    reassignment awaiting the new manager's approval.

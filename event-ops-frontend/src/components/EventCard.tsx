@@ -47,7 +47,7 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
     new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
   // An event with no members needs a manager — warn whoever can manage members
-  // (an event manager) so they don't forget to staff it.
+  // (an organizer) so they don't forget to staff it.
   const needsMembers = event.people_count === 0 && !!onManageMembers
   const borderIdle = needsMembers ? 'var(--accent-amber)' : 'var(--border)'
   return (

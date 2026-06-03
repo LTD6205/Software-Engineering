@@ -9,14 +9,14 @@ import { JwtPayload } from './jwt.strategy';
 
 // Access control is by EXACT role match. A route's `@Roles(...)` list is an
 // explicit allow-list of the roles permitted on it — there is NO level
-// hierarchy and NO inheritance between roles. An Event Manager is NOT a Manager
+// hierarchy and NO inheritance between roles. An Organizer is NOT a Manager
 // (and vice-versa): `@Roles('manager')` admits managers only, so an Event
 // Manager cannot reach Manager-only endpoints (create tasks, manage staff, AI),
-// and `@Roles('eventmanager')` admits event managers only.
+// and `@Roles('organizer')` admits organizers only.
 //
 // The single exception is `admin`, the system superuser, which is permitted on
 // every role-guarded route. This mirrors the frontend's role flags
-// (isManager = manager||admin, canManageEvents = eventmanager||admin, isAdmin).
+// (isManager = manager||admin, canManageEvents = organizer||admin, isAdmin).
 export const ADMIN_ROLE = 'admin';
 
 @Injectable()

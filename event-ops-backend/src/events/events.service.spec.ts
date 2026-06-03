@@ -120,13 +120,13 @@ describe('EventsService', () => {
   });
 
   describe('access policy', () => {
-    it('admins and event managers may manage any event', async () => {
+    it('admins and organizers may manage any event', async () => {
       const { service } = build();
       expect(
         await service.canManageEvent({ sub: 'a', role: 'admin' }, 'e1'),
       ).toBe(true);
       expect(
-        await service.canManageEvent({ sub: 'em', role: 'eventmanager' }, 'e1'),
+        await service.canManageEvent({ sub: 'em', role: 'organizer' }, 'e1'),
       ).toBe(true);
     });
 

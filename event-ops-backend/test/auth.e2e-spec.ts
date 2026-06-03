@@ -59,20 +59,20 @@ describe('Auth & roles (e2e)', () => {
     });
 
     it('returns the current user for a valid token', async () => {
-      const token = await login(app, ACCOUNTS.eventmanager);
+      const token = await login(app, ACCOUNTS.organizer);
       const res = await request(app.getHttpServer())
         .get('/api/auth/me')
         .set(auth(token));
       expect(res.status).toBe(200);
-      expect(res.body.email).toBe(ACCOUNTS.eventmanager.email);
+      expect(res.body.email).toBe(ACCOUNTS.organizer.email);
       expect(res.body).not.toHaveProperty('password_hash');
     });
   });
 
-  // GET /api/events/available-managers carries @Roles('eventmanager'), so it is
-  // a clean probe of the RolesGuard's EXACT role matching: only event managers
+  // GET /api/events/available-managers carries @Roles('organizer'), so it is
+  // a clean probe of the RolesGuard's EXACT role matching: only organizers
   // (and admin, the superuser) may pass — managers/staff are denied.
-  describe('RolesGuard exact match (via @Roles("eventmanager") route)', () => {
+  describe('RolesGuard exact match (via @Roles("organizer") route)', () => {
     it('forbids staff (403)', async () => {
       const token = await login(app, ACCOUNTS.staff);
       const res = await request(app.getHttpServer())
@@ -81,7 +81,7 @@ describe('Auth & roles (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('forbids manager — not an event manager (403)', async () => {
+    it('forbids manager — not an organizer (403)', async () => {
       const token = await login(app, ACCOUNTS.manager);
       const res = await request(app.getHttpServer())
         .get('/api/events/available-managers')
@@ -89,8 +89,8 @@ describe('Auth & roles (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('allows eventmanager (200)', async () => {
-      const token = await login(app, ACCOUNTS.eventmanager);
+    it('allows organizer (200)', async () => {
+      const token = await login(app, ACCOUNTS.organizer);
       const res = await request(app.getHttpServer())
         .get('/api/events/available-managers')
         .set(auth(token));

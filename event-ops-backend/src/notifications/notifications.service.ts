@@ -61,7 +61,7 @@ export class NotificationsService {
   }
 
   // Everyone who should hear about a task's deadline: the assigned staff, each
-  // of their owning managers, and the event manager who owns the event.
+  // of their owning managers, and the organizer who owns the event.
   private async deadlineRecipients(taskId: string): Promise<string[]> {
     const rows: Array<{ uid: string }> = await this.notifRepo.manager.query(
       `SELECT DISTINCT uid FROM (

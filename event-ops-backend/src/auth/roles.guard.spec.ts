@@ -34,9 +34,9 @@ describe('RolesGuard (exact role match)', () => {
       expect(guard.canActivate(ctxWithUser('manager'))).toBe(true);
     });
 
-    it('rejects an EVENT MANAGER from a @Roles("manager") route (the fix)', () => {
+    it('rejects an ORGANIZER from a @Roles("manager") route (the fix)', () => {
       const guard = new RolesGuard(reflectorReturning(['manager']));
-      expect(() => guard.canActivate(ctxWithUser('eventmanager'))).toThrow(
+      expect(() => guard.canActivate(ctxWithUser('organizer'))).toThrow(
         ForbiddenException,
       );
     });
@@ -48,13 +48,13 @@ describe('RolesGuard (exact role match)', () => {
       );
     });
 
-    it('admits an event manager to a @Roles("eventmanager") route', () => {
-      const guard = new RolesGuard(reflectorReturning(['eventmanager']));
-      expect(guard.canActivate(ctxWithUser('eventmanager'))).toBe(true);
+    it('admits an organizer to a @Roles("organizer") route', () => {
+      const guard = new RolesGuard(reflectorReturning(['organizer']));
+      expect(guard.canActivate(ctxWithUser('organizer'))).toBe(true);
     });
 
-    it('rejects a MANAGER from a @Roles("eventmanager") route', () => {
-      const guard = new RolesGuard(reflectorReturning(['eventmanager']));
+    it('rejects a MANAGER from a @Roles("organizer") route', () => {
+      const guard = new RolesGuard(reflectorReturning(['organizer']));
       expect(() => guard.canActivate(ctxWithUser('manager'))).toThrow(
         ForbiddenException,
       );
@@ -66,9 +66,9 @@ describe('RolesGuard (exact role match)', () => {
     });
 
     it('rejects a role not listed in a multi-role @Roles(...)', () => {
-      // 'eventmanager' is NOT in the list, so it is denied (no level inheritance).
+      // 'organizer' is NOT in the list, so it is denied (no level inheritance).
       const guard = new RolesGuard(reflectorReturning(['manager', 'admin']));
-      expect(() => guard.canActivate(ctxWithUser('eventmanager'))).toThrow(
+      expect(() => guard.canActivate(ctxWithUser('organizer'))).toThrow(
         ForbiddenException,
       );
     });
@@ -80,8 +80,8 @@ describe('RolesGuard (exact role match)', () => {
       expect(guard.canActivate(ctxWithUser('admin'))).toBe(true);
     });
 
-    it('admits admin to a @Roles("eventmanager") route even when not listed', () => {
-      const guard = new RolesGuard(reflectorReturning(['eventmanager']));
+    it('admits admin to a @Roles("organizer") route even when not listed', () => {
+      const guard = new RolesGuard(reflectorReturning(['organizer']));
       expect(guard.canActivate(ctxWithUser('admin'))).toBe(true);
     });
 

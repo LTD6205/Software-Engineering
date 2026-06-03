@@ -22,7 +22,7 @@ describe('Raw SQL integration (e2e)', () => {
   let users: UsersService;
   let notifications: NotificationsService;
 
-  let emId: string; // eventmanager01 (event creator)
+  let emId: string; // organizer01 (event creator)
   let mgrId: string; // manager01 (member)
   let staffId: string; // staff01 (reports to manager01, assigned to the task)
   let pendingStaffId: string; // staff02 (a pending reassignment to manager01)
@@ -45,7 +45,7 @@ describe('Raw SQL integration (e2e)', () => {
     users = moduleRef.get(UsersService, { strict: false });
     notifications = moduleRef.get(NotificationsService, { strict: false });
 
-    emId = await idByEmail('eventmanager01@eventops.com');
+    emId = await idByEmail('organizer01@eventops.com');
     mgrId = await idByEmail('manager01@eventops.com');
     staffId = await idByEmail('staff01@eventops.com');
     pendingStaffId = await idByEmail('staff02@eventops.com');
@@ -61,7 +61,7 @@ describe('Raw SQL integration (e2e)', () => {
       [mgrId, pendingStaffId],
     );
 
-    // An event owned by the eventmanager with manager01 as a member.
+    // An event owned by the organizer with manager01 as a member.
     const ev = await events.create(
       {
         event_name: `RAWSQL Fixture ${Date.now()}`,
@@ -84,7 +84,7 @@ describe('Raw SQL integration (e2e)', () => {
     taskId = tk.task_id;
     await tasks.setAssignees(taskId, [staffId], {
       sub: emId,
-      role: 'eventmanager',
+      role: 'organizer',
     });
   });
 

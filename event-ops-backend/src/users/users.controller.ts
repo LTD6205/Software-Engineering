@@ -157,7 +157,7 @@ export class UsersController {
   }
 
   // Only an admin may grant any non-staff role. A plain manager may only create
-  // staff — never a peer manager, an event manager, or an admin.
+  // staff — never a peer manager, an organizer, or an admin.
   private assertCanAssignRole(actorRole: string, targetRole?: string) {
     if (!targetRole || actorRole === 'admin') return;
     if (targetRole !== 'staff') {

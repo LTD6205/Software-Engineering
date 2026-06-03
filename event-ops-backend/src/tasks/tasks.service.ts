@@ -45,7 +45,7 @@ export class TasksService {
     viewer?: { sub: string; role: string },
   ) {
     // Tasks are only readable to people on the event: a manager must belong to
-    // it, a staff member's manager must, and admins/event managers see all.
+    // it, a staff member's manager must, and admins/organizers see all.
     if (viewer) await this.events.assertCanViewEvent(viewer, eventId);
     let tasks = await this.taskRepo.find({
       where: { event_id: eventId },
@@ -142,7 +142,7 @@ export class TasksService {
     if (event)
       this.assertWithinEventWindow(event, data.start_time, data.deadline);
     const task = await this.taskRepo.save(this.taskRepo.create(data));
-    // Announce the new task to the event's owner (the event manager), unless
+    // Announce the new task to the event's owner (the organizer), unless
     // they created it themselves.
     if (event?.created_by && event.created_by !== task.created_by) {
       await this.notifications.notifyUser(
@@ -468,7 +468,7 @@ export class TasksService {
   }
 
   // A task may only be assigned to staff members. A manager may only assign
-  // their own staff; admins/eventmanagers may assign any staff member.
+  // their own staff; admins/organizers may assign any staff member.
   private async assertAssignable(
     userId: string,
     actor?: { sub: string; role: string },

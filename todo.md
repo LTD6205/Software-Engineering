@@ -1,7 +1,30 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (frontend audit hardening + responsive pass — see below).
+Last updated 2026-06-04 (role rename + frontend audit hardening + responsive — see below).
+
+## 2026-06-04 — role rename: `eventmanager` → `organizer` (audit #43)
+
+The role value `eventmanager` contained the substring `manager`, which was easy to
+mismatch against the `manager` role. Renamed the role everywhere — value `organizer`,
+label **Organizer** (VI **Người tổ chức**):
+
+- **Code:** `@Roles('organizer')`, the `RolesGuard`/`EventsService` role checks, the
+  frontend role union + `roleColorOf`/`roleLabelOf`, the `isOrganizer` flag (was
+  `isEventManager`), and the seeded demo accounts (`seed.js`: `organizer01-03@eventops.com`
+  / `organizer123`). **Unchanged:** the `event_managers` table and `getEventManagers*`
+  methods — those mean "the managers who belong to an event" (a `manager`-role concept),
+  not the renamed role.
+- **DB:** `database_creating.txt` CHECK now lists `organizer`; existing databases run
+  `migrations/2026-06-04_rename_eventmanager_to_organizer.sql` (idempotent — fixes the
+  CHECK, migrates `users.role`, and realigns the demo accounts' email/name so re-seeding
+  upserts them in place). **Run `npm run db:migrate`, then re-seed if you want the new
+  demo emails.**
+- **Docs:** README features, accounts table, and the Roles & Permissions table/intro;
+  these working notes.
+- **Figures (`docs/figures/`):** the `ast_*.png` diagrams + the Astah source
+  `ChatGPTea_diagrams.asta` are binary and still say "Event Manager" — **re-export them
+  from Astah** to finish the rename in the diagrams.
 
 ## 2026-06-04 — frontend hardening & responsive (audit follow-ups)
 
@@ -52,7 +75,7 @@ needed** and they don't touch the user's dev backend on port 3000.
 
 | Spec file | Tests | What it covers |
 |---|---|---|
-| `auth/roles.guard.spec.ts` | 10 | The `ROLE_LEVELS` hierarchy: no-`@Roles` passes any authed user; `@Roles('manager')` admits manager/eventmanager/admin but rejects staff; **minimum** level is used across multiple listed roles; unknown role / no user → `ForbiddenException`. |
+| `auth/roles.guard.spec.ts` | 10 | The `ROLE_LEVELS` hierarchy: no-`@Roles` passes any authed user; `@Roles('manager')` admits manager/organizer/admin but rejects staff; **minimum** level is used across multiple listed roles; unknown role / no user → `ForbiddenException`. |
 | `auth/auth.service.spec.ts` | 6 | `validateUser` (active-only lookup, wrong password, missing hash, no user → `Unauthorized`); `login` returns a signed token + sanitized user (no `password_hash`) and propagates auth failures without signing. |
 | `tasks/tasks.service.spec.ts` | 11 | `create` validation (name/event required, deadline-after-start, default `in_progress`/`auto`); `recomputeAutoPriorities` thirds bucketing high/medium/low and **not** overwriting `user`/`ai` priorities; assignment rules (staff-only, manager's-own-staff, missing user); status-change permission (non-creator/non-assignee blocked, only creator reopens); `merge` guards (self, cross-event). |
 | `notifications/notifications.service.spec.ts` | 8 | `notifyUser` saves + sockets, skips blank id; `notifyUsers` de-dupes & drops blanks/null; `markRead` is user-scoped; `getAll` capped at 50 newest-first; `checkDeadlines` cron marks overdue + alerts, and suppresses a duplicate when an unread alert already exists. |
@@ -93,15 +116,15 @@ provides `createTestApp()` (mirrors main.ts's `/api` prefix) + `login()` + seede
 
 | Spec | Tests | What it covers |
 |---|---|---|
-| `test/auth.e2e-spec.ts` | 12 | Login (valid/wrong-pw/unknown-email), `JwtAuthGuard` (no/garbage token → 401), `/me`, and the **RolesGuard hierarchy over HTTP** via the `@Roles('eventmanager')` route: staff/manager → 403, eventmanager/admin → 200; an unguarded read still needs auth. |
-| `test/events.e2e-spec.ts` | 11 | Event **permissions**: only eventmanager/admin create/edit/delete + manage members (manager/staff → 403); invalid date range → 400; `GET /events` membership scoping (member manager + admin see the event). Creates one event and deletes it in `afterAll`. |
+| `test/auth.e2e-spec.ts` | 12 | Login (valid/wrong-pw/unknown-email), `JwtAuthGuard` (no/garbage token → 401), `/me`, and the **RolesGuard hierarchy over HTTP** via the `@Roles('organizer')` route: staff/manager → 403, organizer/admin → 200; an unguarded read still needs auth. |
+| `test/events.e2e-spec.ts` | 11 | Event **permissions**: only organizer/admin create/edit/delete + manage members (manager/staff → 403); invalid date range → 400; `GET /events` membership scoping (member manager + admin see the event). Creates one event and deletes it in `afterAll`. |
 | `test/raw-sql.e2e-spec.ts` | 10 | The hand-written **raw SQL** paths against real Postgres with a built-then-torn-down fixture: `getMemberIds`/`getManagerMemberIds`/`findForViewer`/`getEventManagers`, `findAllByEvent` assignee join + staff scoping, `deadlineRecipients` (assignee ∪ their manager ∪ event creator), `incomingReassignRequests`. |
-| `test/role-hierarchy-access.e2e-spec.ts` | 14 | **RBAC boundary regression test (see below):** proves exact-match roles — Event Manager is denied Manager-only routes, Manager is denied Event-Manager routes, each role keeps its own, Admin is superuser. |
+| `test/role-hierarchy-access.e2e-spec.ts` | 14 | **RBAC boundary regression test (see below):** proves exact-match roles — Organizer is denied Manager-only routes, Manager is denied Organizer routes, each role keeps its own, Admin is superuser. |
 | `test/app.e2e-spec.ts` | 1 | Pre-existing root health scaffold (now passes after the AppModule fix). |
 
 > ### ✅ Security fix: RBAC is now EXACT role match (was a level hierarchy)
 > **Was:** `RolesGuard` checked the *minimum* level among the listed roles with
-> `eventmanager(3) > manager(2)`, so an Event Manager's JWT was accepted on every
+> `organizer(3) > manager(2)`, so an Organizer's JWT was accepted on every
 > Manager-gated route — they could create tasks, manage staff, and use the AI API even
 > though the UI hid those buttons. UI hiding (`isManager`) was not a security boundary.
 >
@@ -109,13 +132,13 @@ provides `createTestApp()` (mirrors main.ts's `/api` prefix) + `login()` + seede
 > explicit allow-list with **no inheritance** between roles. `admin` is the only
 > cross-role rule (system **superuser**, allowed everywhere). No decorator changes were
 > needed — each route already listed exactly the non-admin role(s) intended; the guard
-> just stops *unlisted* roles (e.g. eventmanager on a `@Roles('manager')` route) passing.
+> just stops *unlisted* roles (e.g. organizer on a `@Roles('manager')` route) passing.
 > Mirrors the frontend flags (`isManager = manager||admin`, `canManageEvents =
-> eventmanager||admin`, `isAdmin`).
+> organizer||admin`, `isAdmin`).
 >
-> `test/role-hierarchy-access.e2e-spec.ts` is the regression guard: Event Manager → **403**
+> `test/role-hierarchy-access.e2e-spec.ts` is the regression guard: Organizer → **403**
 > on `POST /tasks`, `GET/POST /users`, `POST /ai/command`; Manager → 403 on `POST /events`;
-> Manager/Admin keep their own writes (201/200); Event Manager keeps event routes; Staff
+> Manager/Admin keep their own writes (201/200); Organizer keeps event routes; Staff
 > denied. Also covered by `auth/roles.guard.spec.ts` (unit) and `test/auth.e2e-spec.ts`.
 > Docs corrected: `CLAUDE.md` Auth section + `README.md` (tech-stack row, Roles &
 > Permissions intro, API access legend).
@@ -179,12 +202,12 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 **Tasks**
 - Assigned to a task → the staff member.
 - Removed from a task → the staff member.
-- New task added to an event → the event manager (the event's `created_by`), unless they
+- New task added to an event → the organizer (the event's `created_by`), unless they
   created it themselves (`tasks.service.ts → create`).
 
 **Deadlines (cron, every 30 min)**
 - Reminder (due within 24h) and overdue alerts now reach the assigned staff **plus
-  their owning managers plus the event manager** (`deadlineRecipients()` in
+  their owning managers plus the organizer** (`deadlineRecipients()` in
   `notifications.service.ts`). De-duplicated so the cron won't re-spam an unread alert.
 
 > Bug fixed along the way: deleting a task/event now also clears its `notifications`
@@ -194,19 +217,19 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 
 - **Deadline alerts now reach managers** — `notifications.service.ts → deadlineRecipients()`
   unions task assignees + each assignee's `manager_id` + the event's `created_by`. Matches
-  the brief ("assigned individuals **and** general event managers"). (commit `dacfaeb`)
+  the brief ("assigned individuals **and** general organizers"). (commit `dacfaeb`)
 - **"Mark all read" + notification history** — backend `getAll()` (capped at 50) and
   `markAllRead()` with a `/read-all` route; `NotificationBell.tsx` lists history and marks
   all read (single tick = one read, double tick = all read). (commits `4b396f7`, `d9e1680`)
 - **Edit-event dates** — `PUT /events/:id/dates` + `eventsApi.updateDates`, with a
   `shift`/`delete` task strategy and a date editor modal on the Events page. (commit `532e369`)
-- **Edit-event name/description** — clicking an event's name (event managers only) opens a
+- **Edit-event name/description** — clicking an event's name (organizers only) opens a
   details editor wired to `eventsApi.update` → `PUT /events/:id`. Description is optional and
   now shown on the card, collapsed behind "See more" when longer than 140 chars.
 - **Cancel a pending reassignment** — `POST /users/:id/reassign/cancel` +
   `cancelReassign()`; the owner manager sees a red "Cancel request" button while a move is
   pending and can withdraw it before the target accepts/rejects (notifies all three parties).
-- **New-task notification** — adding a task announces it to the event manager (see Tasks above).
+- **New-task notification** — adding a task announces it to the organizer (see Tasks above).
 - **Month/date/status/priority filters** — Events page filters by time scope (Nearby / Month /
   Date / All) + status; Tasks page filters by time scope (Nearby / All) + status + priority.
   Both default to **All** (shown first); **Nearby** = ±30 days around today

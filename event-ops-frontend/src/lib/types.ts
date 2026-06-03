@@ -2,7 +2,7 @@ export interface User {
   user_id: string
   name: string
   email: string
-  role: 'manager' | 'staff' | 'admin' | 'eventmanager'
+  role: 'manager' | 'staff' | 'admin' | 'organizer'
   created_at: string
 }
 

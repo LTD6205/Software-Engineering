@@ -1,9 +1,9 @@
 // Single source of truth for role colours and labels across the UI, so they
 // never drift apart again.
-// Level order: Admin (red) > Event Manager (purple) > Manager (orange/amber) > Staff (green).
+// Level order: Admin (red) > Organizer (purple) > Manager (orange/amber) > Staff (green).
 export const ROLE_COLOR: Record<string, string> = {
   admin:        'var(--accent-red)',
-  eventmanager: 'var(--accent-purple)',
+  organizer:    'var(--accent-purple)',
   manager:      'var(--accent-amber)',
   staff:        'var(--accent-green)',
 }
@@ -20,7 +20,7 @@ export function roleLabelOf(
 ): string {
   switch (role) {
     case 'admin':        return t('Admin', 'Quản trị viên')
-    case 'eventmanager': return t('Event Manager', 'Quản lý sự kiện')
+    case 'organizer':    return t('Organizer', 'Người tổ chức')
     case 'manager':      return t('Manager', 'Quản lý')
     default:             return t('Staff', 'Nhân viên')
   }

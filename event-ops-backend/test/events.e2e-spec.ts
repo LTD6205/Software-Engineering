@@ -3,14 +3,14 @@ import request from 'supertest';
 import { TestingModule } from '@nestjs/testing';
 import { ACCOUNTS, auth, createTestApp, login } from './utils';
 
-// Event permissions over HTTP: only eventmanager/admin may create/edit/delete
+// Event permissions over HTTP: only organizer/admin may create/edit/delete
 // events and manage members; manager/staff are forbidden. GET /events is scoped
 // to the viewer's membership.
 describe('Event permissions (e2e)', () => {
   let app: INestApplication;
   let moduleRef: TestingModule;
 
-  let emToken: string; // eventmanager (creator)
+  let emToken: string; // organizer (creator)
   let managerToken: string; // a plain manager (forbidden from writes)
   let staffToken: string;
   let adminToken: string;
@@ -27,7 +27,7 @@ describe('Event permissions (e2e)', () => {
 
   beforeAll(async () => {
     ({ app, moduleRef } = await createTestApp());
-    emToken = await login(app, ACCOUNTS.eventmanager);
+    emToken = await login(app, ACCOUNTS.organizer);
     managerToken = await login(app, ACCOUNTS.manager);
     staffToken = await login(app, ACCOUNTS.staff);
     adminToken = await login(app, ACCOUNTS.admin);
@@ -53,7 +53,7 @@ describe('Event permissions (e2e)', () => {
     await moduleRef.close();
   });
 
-  describe('create (@Roles("eventmanager"))', () => {
+  describe('create (@Roles("organizer"))', () => {
     it('forbids a plain manager (403)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/events')
@@ -70,7 +70,7 @@ describe('Event permissions (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('lets an eventmanager create an event (201) with manager01 as a member', async () => {
+    it('lets an organizer create an event (201) with manager01 as a member', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/events')
         .set(auth(emToken))
@@ -110,13 +110,13 @@ describe('Event permissions (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('lets the eventmanager edit the event (200)', async () => {
+    it('lets the organizer edit the event (200)', async () => {
       const res = await request(app.getHttpServer())
         .put(`/api/events/${createdEventId}`)
         .set(auth(emToken))
-        .send({ description: 'updated by the eventmanager' });
+        .send({ description: 'updated by the organizer' });
       expect(res.status).toBe(200);
-      expect(res.body.description).toBe('updated by the eventmanager');
+      expect(res.body.description).toBe('updated by the organizer');
     });
 
     it('forbids a manager from removing a member (403)', async () => {
@@ -128,7 +128,7 @@ describe('Event permissions (e2e)', () => {
   });
 
   describe('GET /api/events scoping by viewer role', () => {
-    it('an eventmanager sees the created event', async () => {
+    it('an organizer sees the created event', async () => {
       const res = await request(app.getHttpServer())
         .get('/api/events')
         .set(auth(emToken));
@@ -159,13 +159,13 @@ describe('Event permissions (e2e)', () => {
     });
   });
 
-  describe('delete (@Roles("eventmanager"))', () => {
+  describe('delete (@Roles("organizer"))', () => {
     it('forbids a manager from deleting the event (403)', async () => {
       const res = await request(app.getHttpServer())
         .delete(`/api/events/${createdEventId}`)
         .set(auth(managerToken));
       expect(res.status).toBe(403);
     });
-    // The successful delete happens in afterAll cleanup (by the eventmanager).
+    // The successful delete happens in afterAll cleanup (by the organizer).
   });
 });

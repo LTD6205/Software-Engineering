@@ -6,9 +6,9 @@
  * Safe to run repeatedly — existing accounts just get their password/role
  * reset (idempotent via ON CONFLICT). Reads DB settings from .env.
  *
- * Creates 1 admin, 3 event managers, 3 managers and 10 staff:
+ * Creates 1 admin, 3 organizers, 3 managers and 10 staff:
  *   admin01@eventops.com                                       -> password: admin123
- *   eventmanager01@eventops.com ... eventmanager03@eventops.com -> password: eventmanager123
+ *   organizer01@eventops.com ... organizer03@eventops.com -> password: organizer123
  *   manager01@eventops.com      ... manager03@eventops.com      -> password: manager123
  *   staff01@eventops.com        ... staff10@eventops.com        -> password: staff123
  * Each staff is randomly assigned to one manager (manager_id).
@@ -18,16 +18,16 @@ const { Client } = require('pg');
 const bcrypt = require('bcrypt');
 
 const ADMIN_PASSWORD = 'admin123';
-const EVENTMANAGER_PASSWORD = 'eventmanager123';
+const ORGANIZER_PASSWORD = 'organizer123';
 const MANAGER_PASSWORD = 'manager123';
 const STAFF_PASSWORD = 'staff123';
 
-// Build the roster: 1 admin + 3 event managers + 3 managers + 10 staff
+// Build the roster: 1 admin + 3 organizers + 3 managers + 10 staff
 const accounts = [
   { name: 'Admin 01',          email: 'admin01@eventops.com',        role: 'admin',        password: ADMIN_PASSWORD },
-  { name: 'Event Manager 01',  email: 'eventmanager01@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
-  { name: 'Event Manager 02',  email: 'eventmanager02@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
-  { name: 'Event Manager 03',  email: 'eventmanager03@eventops.com', role: 'eventmanager', password: EVENTMANAGER_PASSWORD },
+  { name: 'Organizer 01',  email: 'organizer01@eventops.com', role: 'organizer', password: ORGANIZER_PASSWORD },
+  { name: 'Organizer 02',  email: 'organizer02@eventops.com', role: 'organizer', password: ORGANIZER_PASSWORD },
+  { name: 'Organizer 03',  email: 'organizer03@eventops.com', role: 'organizer', password: ORGANIZER_PASSWORD },
   { name: 'Manager 01', email: 'manager01@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 02', email: 'manager02@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
   { name: 'Manager 03', email: 'manager03@eventops.com', role: 'manager', password: MANAGER_PASSWORD },
@@ -92,8 +92,8 @@ async function main() {
   console.log('\n✅ Seeded accounts:');
   console.log(`   Admin (password "${ADMIN_PASSWORD}"):`);
   accounts.filter((a) => a.role === 'admin').forEach((a) => console.log(`     - ${a.email}`));
-  console.log(`   Event Managers (password "${EVENTMANAGER_PASSWORD}"):`);
-  accounts.filter((a) => a.role === 'eventmanager').forEach((a) => console.log(`     - ${a.email}`));
+  console.log(`   Organizers (password "${ORGANIZER_PASSWORD}"):`);
+  accounts.filter((a) => a.role === 'organizer').forEach((a) => console.log(`     - ${a.email}`));
   console.log(`   Managers (password "${MANAGER_PASSWORD}"):`);
   accounts.filter((a) => a.role === 'manager').forEach((a) => console.log(`     - ${a.email}`));
   console.log(`   Staff (password "${STAFF_PASSWORD}", each assigned to a manager):`);

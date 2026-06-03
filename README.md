@@ -1,6 +1,6 @@
 # Intelligent Event Operations & Task Management System
 
-A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (four roles: Admin, Event Manager, Manager, Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
+A full-stack platform for event teams: create events, assign tasks with deadlines, monitor them in real time, and drive workflows with natural-language AI commands. Role-based access (four roles: Admin, Organizer, Manager, Staff), live online presence, and a bilingual (English / Tiếng Việt) UI.
 
 ## Tech Stack
 
@@ -15,12 +15,12 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 
 ## Features
 
-- **Events & membership** — event managers create events and add member managers; each chosen manager brings their whole staff team in, and the event shows a live headcount. Visibility is scoped: admins/event managers see all events, managers see events they're a member of, and staff see events their manager is in.
+- **Events & membership** — organizers create events and add member managers; each chosen manager brings their whole staff team in, and the event shows a live headcount. Visibility is scoped: admins/organizers see all events, managers see events they're a member of, and staff see events their manager is in.
 - **Tasks** — managers build per-event task checklists (Kanban: Pending / In Progress / Completed / Overdue) and assign each task to one or many of their own staff; assignees show as avatars on the card and can be re-selected with a click.
 - **Staff reassignment** — a manager can hand one of their staff to another manager; the receiving manager gets a request and accepts or rejects it.
 - **Real-time deadline monitoring** — a cron job flags upcoming/overdue tasks and pushes live notifications over WebSocket.
 - **AI commands** — managers describe tasks in plain English/Vietnamese; DeepSeek turns them into real tasks.
-- **Roles** — Admin, Event Manager, Manager, Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Event Managers** create events and manage event membership (add/remove member managers — whose teams join the event); **Admins** manage accounts. The backend enforces these per route as an **exact-match allow-list** — no role inherits another's access; `admin` is the only cross-role exception (a superuser allowed everywhere). The UI surfaces only the features that belong to each role, and Staff get a limited UI (their own tasks and notifications).
+- **Roles** — Admin, Organizer, Manager, Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Organizers** create events and manage event membership (add/remove member managers — whose teams join the event); **Admins** manage accounts. The backend enforces these per route as an **exact-match allow-list** — no role inherits another's access; `admin` is the only cross-role exception (a superuser allowed everywhere). The UI surfaces only the features that belong to each role, and Staff get a limited UI (their own tasks and notifications).
 - **Online presence** — the Team page shows who's online, colour-coded by role.
 - **Language switch** — EN/VI toggle that translates the whole UI.
 - **Responsive layout** — desktop keeps the fixed sidebar; on narrow screens (≤768px) it collapses into a hamburger drawer and the card grids reflow instead of overflowing.
@@ -104,7 +104,7 @@ Open **http://localhost:3001** and log in.
 | Role | Email | Password |
 |---|---|---|
 | Admin | `admin01@eventops.com` | `admin123` |
-| Event Manager | `eventmanager01@eventops.com` … `eventmanager03@` | `eventmanager123` |
+| Organizer | `organizer01@eventops.com` … `organizer03@` | `organizer123` |
 | Manager | `manager01@eventops.com` … `manager03@` | `manager123` |
 | Staff | `staff01@eventops.com` … `staff10@` | `staff123` |
 
@@ -120,11 +120,11 @@ npm run db:restore                # restore the most recent backup
 npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specific file
 ```
 
-## Roles & Permissions (Admin · Event Manager · Manager · Staff)
+## Roles & Permissions (Admin · Organizer · Manager · Staff)
 
-The table below is **authoritative**: the backend enforces it with **exact role matching** (`RolesGuard`), so the API and the UI agree. There is **no level hierarchy / no inheritance** between roles — an Event Manager is *not* a Manager and cannot call Manager-only endpoints (create tasks, manage staff, AI), and a Manager cannot call Event-Manager-only endpoints. The **only** cross-role rule is that **Admin is the superuser**, permitted on every role-guarded route. Staff and task management belong to Managers (they own a staff team); Event Managers focus on events and membership.
+The table below is **authoritative**: the backend enforces it with **exact role matching** (`RolesGuard`), so the API and the UI agree. There is **no level hierarchy / no inheritance** between roles — an Organizer is *not* a Manager and cannot call Manager-only endpoints (create tasks, manage staff, AI), and a Manager cannot call Organizer-only endpoints. The **only** cross-role rule is that **Admin is the superuser**, permitted on every role-guarded route. Staff and task management belong to Managers (they own a staff team); Organizers focus on events and membership.
 
-| Action | Admin | Event Manager | Manager | Staff |
+| Action | Admin | Organizer | Manager | Staff |
 |---|---|---|---|---|
 | View dashboard / tasks | ✅ | ✅ | ✅ | ✅ |
 | View events | all | all | member events | their team's events |
@@ -167,7 +167,7 @@ Visitors click "Visit Site" on ngrok's warning page once, then log in. Local use
 
 All routes are under `/api` and require a JWT (except `POST /api/auth/login`).
 
-Access is by **exact role match** with Admin as the superuser. In the table below, "manager+" means **manager or admin**, and "event manager+" means **event manager or admin** — the `+` is only ever Admin (the superuser), never another role. An event manager **cannot** call "manager+" endpoints, and a manager **cannot** call "event manager+" endpoints.
+Access is by **exact role match** with Admin as the superuser. In the table below, "manager+" means **manager or admin**, and "organizer+" means **organizer or admin** — the `+` is only ever Admin (the superuser), never another role. An organizer **cannot** call "manager+" endpoints, and a manager **cannot** call "organizer+" endpoints.
 
 | Area | Endpoints | Access |
 |---|---|---|
@@ -177,7 +177,7 @@ Access is by **exact role match** with Admin as the superuser. In the table belo
 | | `GET /users/directory` | any (presence board) |
 | | `GET /users/reassign-requests`, `POST /users/:id/reassign`, `…/reassign/accept`, `…/reassign/reject` | manager+ |
 | Events | `GET /events` (viewer-scoped), `GET /events/:id` | any |
-| | `GET /events/available-managers`, `GET /events/:id/managers`, `POST/PUT/DELETE /events`, `POST/DELETE /events/:id/managers` | event manager+ |
+| | `GET /events/available-managers`, `GET /events/:id/managers`, `POST/PUT/DELETE /events`, `POST/DELETE /events/:id/managers` | organizer+ |
 | Tasks | `GET /tasks/event/:eventId` (assignees included), `PUT /tasks/:id` | any |
 | | `POST /tasks`, `PUT /tasks/:id/assignments`, assign/unassign | manager+ |
 | Notifications | `GET /notifications/user/:userId`, `PUT /notifications/:id/read` | any |
