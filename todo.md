@@ -472,33 +472,22 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
       and would finally exercise `task_dependencies` / `milestones`.
 - [ ] **Notification pruning / pagination.** History is capped at 50 rows on read but rows
       are never deleted — the table grows unbounded. Add a retention job or paginate.
-- [ ] **Event detail page.** `eventsApi.getOne`, `tasksApi.getOne`, `usersApi.getOne` all
-      exist with no consumer; a per-event detail view could use them instead of leaving them dead.
 - [ ] **Bulk task assignment / filtering** on the Tasks page (by assignee, by status).
 - [ ] **Deadline reminder cadence** is fixed at 24h / 30-min cron. Make the reminder window
       configurable per event or per task priority.
 - [ ] **Email / push delivery.** Notifications are in-app + WebSocket only; an email or
       browser-push channel would help managers who aren't logged in.
 
-## Unused / dead code to review (verified — confirm before deleting)
+## Unused / dead code
 
-**Backend**
-- `TasksService.findOverdue()` (`tasks.service.ts:265`) — no caller anywhere (the cron runs
-  its own query). Dead.
-- `TasksService` injects `depRepo` (`tasks.service.ts:26`) but never uses it. Dead injection
-  (tied to the unused task-dependencies feature above).
-- **NOTE — not dead:** `TasksService.assignUser()` *is* still used — `ai.service.ts:136` calls
-  it when the AI names an assignee. Only the **HTTP endpoint** `POST /tasks/:id/assign`
-  (`tasks.controller.ts:82`) is unused by the frontend (which assigns via
-  `PUT /tasks/:id/assignments` → `setAssignees`). Keep the method; the route can go.
-- `DELETE /tasks/:id/assign/:userId` → `unassignUser()` (`tasks.controller.ts:105`,
-  `tasks.service.ts:334`) — no internal caller, not called by the frontend. Dead.
-- `GET /tasks/:id/assignments` → `getAssignments()` (`tasks.controller.ts:71`,
-  `tasks.service.ts:276`) — not called by the frontend (the task list embeds assignees). Dead.
-- `PUT /users/:id/deactivate` → `UsersService.deactivate()` (`users.controller.ts:158`) —
-  the Team page toggles active state via `usersApi.update({ is_active })`; this endpoint is unused.
+Most of the previously-listed dead code was **removed in batch 4** (commit
+`e8497d2`): `findOverdue()`; the `POST /tasks/:id/assign` + `DELETE /tasks/:id/assign/:userId`
+routes and `unassignUser()`; the `PUT /users/:id/deactivate` route and `deactivate()`;
+and the frontend helpers `eventsApi.getOne`, `tasksApi.getOne/assign/unassign`,
+`usersApi.getOne/deactivate`. `assignUser()` was kept (the AI service uses it) and
+`GET /tasks/:id/assignments` was kept (now viewer-scoped).
 
-**Frontend (`src/lib/api.ts` helpers defined but never called)**
-- `usersApi.deactivate`, `usersApi.getOne`
-- `eventsApi.getOne` (`eventsApi.update` is now wired by the details editor)
-- `tasksApi.getOne`, `tasksApi.assign`, `tasksApi.unassign`
+**Still present, intentionally left** (harmless, removing would churn the schema/
+constructor for no functional gain):
+- `task_dependencies` table/entity — no feature creates or reads dependencies.
+- `TasksService` injects `depRepo` but never uses it (tied to the above).

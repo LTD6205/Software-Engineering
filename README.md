@@ -175,13 +175,12 @@ Access is by **exact role match** with Admin as the superuser. In the table belo
 |---|---|---|
 | Auth | `POST /auth/login`, `GET /auth/me` | public / any |
 | Users | `GET /users`, `POST /users`, `PUT /users/:id` | manager+ |
-| | `PUT /users/:id/deactivate` | admin only |
 | | `GET /users/directory` | any (presence board) |
 | | `GET /users/reassign-requests`, `POST /users/:id/reassign`, `…/reassign/accept`, `…/reassign/reject` | manager+ |
 | Events | `GET /events` (viewer-scoped), `GET /events/:id` | any |
 | | `GET /events/available-managers`, `GET /events/:id/managers`, `POST/PUT/DELETE /events`, `POST/DELETE /events/:id/managers` | organizer+ |
-| Tasks | `GET /tasks/event/:eventId` (assignees included), `PUT /tasks/:id` | any |
-| | `POST /tasks`, `PUT /tasks/:id/assignments`, assign/unassign | manager+ |
+| Tasks | `GET /tasks/event/:eventId` (assignees included), `GET /tasks/:id` (+ `/assignments`), `PUT /tasks/:id` | any |
+| | `POST /tasks`, `DELETE /tasks/:id`, `PUT /tasks/:id/assignments`, `POST/PUT/DELETE /tasks/groups/*` | manager+ |
 | Notifications | `GET /notifications/user/:userId`, `PUT /notifications/:id/read` | any |
 | AI | `POST /ai/command` | manager+ |
 
