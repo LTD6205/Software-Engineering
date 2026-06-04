@@ -6,17 +6,33 @@ import {
 import { EventsService } from './events.service';
 
 function makeRepo() {
-  return {
+  // Default raw-query result is an empty array so helpers like getMemberIds
+  // (which .map() the rows) work even when a test doesn't stub the SQL.
+  const manager: Record<string, jest.Mock> = {
+    query: jest.fn().mockResolvedValue([]),
+  };
+  const repo = {
     find: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn((x) => x),
     save: jest.fn((x) => Promise.resolve({ event_id: 'e-new', ...x })),
     update: jest.fn(),
     delete: jest.fn(),
-    // Default raw-query result is an empty array so helpers like getMemberIds
-    // (which .map() the rows) work even when a test doesn't stub the SQL.
-    manager: { query: jest.fn().mockResolvedValue([]) },
+    manager,
   };
+  // A transaction runs its callback with an entity-manager that proxies the
+  // repo's own mocks, so transactional writes are asserted exactly as before.
+  manager.transaction = jest.fn((cb: (em: unknown) => unknown) =>
+    cb({
+      query: manager.query,
+      save: repo.save,
+      delete: (_e: unknown, criteria: unknown) => repo.delete(criteria),
+      update: (_e: unknown, criteria: unknown, partial: unknown) =>
+        repo.update(criteria, partial),
+      create: (_e: unknown, dto: unknown) => repo.create(dto),
+    }),
+  );
+  return repo;
 }
 
 function build() {

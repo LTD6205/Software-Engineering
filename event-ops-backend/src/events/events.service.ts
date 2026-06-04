@@ -200,11 +200,31 @@ export class EventsService {
       );
     }
     this.assertValidDateRange(data.start_time, data.end_time);
-    const event = await this.eventRepo.save(this.eventRepo.create(data));
-    for (const mid of managerIds) {
-      await this.addManager(event.event_id, mid);
-    }
-    // Notify everyone who just became a member (managers + their staff).
+    // Save the event and attach its initial managers atomically — a failure
+    // partway through the manager list can't leave a half-populated event.
+    // Each manager id is validated (active 'manager') inside the transaction.
+    const event = await this.eventRepo.manager.transaction(async (em) => {
+      const saved = await em.save(em.create(Event, data));
+      for (const mid of managerIds) {
+        const rows: Array<{ role: string; is_active: boolean }> = await em.query(
+          `SELECT role, is_active FROM users WHERE user_id = $1`,
+          [mid],
+        );
+        const target = rows[0];
+        if (!target || target.role !== 'manager' || !target.is_active) {
+          throw new BadRequestException(
+            'Only an active manager can be added to an event / Chỉ có thể thêm quản lý đang hoạt động vào sự kiện',
+          );
+        }
+        await em.query(
+          `INSERT INTO event_managers (event_id, manager_id) VALUES ($1, $2)
+           ON CONFLICT DO NOTHING`,
+          [saved.event_id, mid],
+        );
+      }
+      return saved;
+    });
+    // Notify everyone who just became a member (managers + their staff) — after commit.
     const members = await this.getMemberIds(event.event_id);
     await this.notifications.notifyUsers(
       members,

@@ -1,7 +1,34 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 batch 2: WebSocket event-room scoping — see below).
+Last updated 2026-06-04 (audit round-2 batch 2b: transactions + DB-verified e2e — see below).
+
+## 2026-06-04 — audit round-2, batch 2b (#4 transactions, partial) + runtime verification
+
+Wrapped the highest-risk multi-table writes in transactions, with notifications/
+broadcasts moved to **after commit**:
+- `TasksService.setAssignees` — delete-all + re-insert now commit together (a
+  failure can't leave a task with no assignees).
+- `UsersService.acceptReassign` — owner flip + `task_assignments` cleanup are atomic.
+- `EventsService.create` — event save + member-manager inserts (each validated as
+  an active manager) are atomic.
+- Unit test repo-doubles gained a `manager.transaction` that runs the callback
+  with an entity-manager proxying the repo's own mocks, so assertions are unchanged.
+
+**Runtime verification (the earlier "DB not booted" gap is now closed):** rebuilt
+the dedicated `event_ops_test` DB (DDL → `db:migrate` incl. the rename + indexes →
+seed) and ran the full suite — **backend unit 163 + e2e 48, all green**. Booting
+the app confirms DI resolves at runtime, including the gateway's `@InjectDataSource`
+(batch 2 #3); the transactions are exercised against real Postgres by the raw-sql
+and role-hierarchy fixtures. Fixed `role-hierarchy-access.e2e` to add the manager
+to its host event (task create/assign correctly 403 otherwise — the new membership
+check working over HTTP).
+
+Still-deferred transactions (#4 remainder): `updateDates` (needs `deleteTaskRow`
+to take an entity-manager), task `create` and the AI loop (entangled with the
+recompute side-effects — tied to the #5/#7 shared-transition work).
+
+## 2026-06-04 — audit round-2, batch 2 (#3 WebSocket event-room scoping)
 
 ## 2026-06-04 — audit round-2, batch 2 (#3 WebSocket event-room scoping)
 
@@ -60,7 +87,8 @@ open (see "Still open — audit round-2" below).
 
 ### Still open — audit round-2 (larger / higher-risk, next batches)
 - **#3 WebSocket event-room scoping** — ✅ done (batch 2 above).
-- **#4 transactions** around multi-table writes (needs test-double rework).
+- **#4 transactions** — ✅ partial (batch 2b: setAssignees, acceptReassign, event
+  create); remainder (updateDates, task create, AI loop) still open.
 - **#5/#7 cron + event-date** routed through a shared task-transition/recompute
   method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).
 - **#6 global ValidationPipe + DTO classes** (whitelist needs real DTOs first).

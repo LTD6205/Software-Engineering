@@ -560,12 +560,15 @@ export class TasksService {
     const before = (
       await this.assignRepo.find({ where: { task_id: taskId } })
     ).map((a) => a.user_id);
-    await this.assignRepo.delete({ task_id: taskId });
-    for (const uid of ids) {
-      await this.assignRepo.save(
-        this.assignRepo.create({ task_id: taskId, user_id: uid }),
-      );
-    }
+    // Replace the whole set atomically so a failure can't leave the task with no
+    // assignees (the delete + inserts commit together, or not at all).
+    await this.assignRepo.manager.transaction(async (em) => {
+      await em.delete(TaskAssignment, { task_id: taskId });
+      for (const uid of ids) {
+        await em.save(em.create(TaskAssignment, { task_id: taskId, user_id: uid }));
+      }
+    });
+    // Notifications/broadcast run only after the replacement has committed.
     const added = ids.filter((i) => !before.includes(i));
     const removed = before.filter((i) => !ids.includes(i));
     await this.notifications.notifyUsers(

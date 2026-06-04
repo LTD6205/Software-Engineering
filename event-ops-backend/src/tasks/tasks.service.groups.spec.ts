@@ -3,7 +3,8 @@ import { TasksService } from './tasks.service';
 
 // Minimal repo/dependency doubles. Each test wires only the methods it needs.
 function makeRepo() {
-  return {
+  const manager: Record<string, jest.Mock> = { query: jest.fn() };
+  const repo = {
     find: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn((x) => x),
@@ -11,8 +12,21 @@ function makeRepo() {
     update: jest.fn(),
     delete: jest.fn(),
     count: jest.fn(),
-    manager: { query: jest.fn() },
+    manager,
   };
+  // A transaction runs its callback with an entity-manager that proxies the
+  // repo's own mocks, so transactional writes are asserted exactly as before.
+  manager.transaction = jest.fn((cb: (em: unknown) => unknown) =>
+    cb({
+      query: manager.query,
+      save: repo.save,
+      delete: (_e: unknown, criteria: unknown) => repo.delete(criteria),
+      update: (_e: unknown, criteria: unknown, partial: unknown) =>
+        repo.update(criteria, partial),
+      create: (_e: unknown, dto: unknown) => repo.create(dto),
+    }),
+  );
+  return repo;
 }
 
 function build() {

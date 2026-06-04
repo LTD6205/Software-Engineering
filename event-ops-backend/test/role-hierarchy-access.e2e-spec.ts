@@ -42,14 +42,21 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
     end_time: '2026-12-10T18:00:00.000Z',
   });
 
-  // Create an event (as the organizer) to host the task-write tests.
+  // Create an event (as the organizer) to host the task-write tests, and add
+  // the manager as a member — task create/assign now require the actor to manage
+  // the event, so a bare event the manager doesn't belong to would (correctly) 403.
   const makeHostEvent = async (): Promise<string> => {
     const res = await request(app.getHttpServer())
       .post('/api/events')
       .set(auth(emToken))
       .send(newEvent());
-    createdEventIds.push(res.body.event_id);
-    return res.body.event_id;
+    const id = res.body.event_id;
+    createdEventIds.push(id);
+    await request(app.getHttpServer())
+      .post(`/api/events/${id}/managers`)
+      .set(auth(emToken))
+      .send({ manager_id: managerId });
+    return id;
   };
 
   let hostEventId: string;

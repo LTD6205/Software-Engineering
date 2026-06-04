@@ -263,17 +263,19 @@ export class UsersService {
     }
     const newId = staff.pending_manager_id;
     const oldId = staff.manager_id;
-    await this.userRepo.update(staffId, {
-      manager_id: newId,
-      pending_manager_id: null,
+    // Flip ownership and drop the staff member's existing task assignments in one
+    // transaction — they leave the old manager's projects atomically (a reassigned
+    // staffer can't retain access to the old team's event tasks), or nothing
+    // changes. Notifications run only after this commits.
+    await this.userRepo.manager.transaction(async (em) => {
+      await em.update(User, staffId, {
+        manager_id: newId,
+        pending_manager_id: null,
+      });
+      await em.query('DELETE FROM task_assignments WHERE user_id = $1', [
+        staffId,
+      ]);
     });
-    // The staff member leaves the old manager's projects: drop their existing
-    // task assignments so a reassigned staffer can't retain access to the old
-    // team's event tasks. They start fresh under the new manager.
-    await this.userRepo.manager.query(
-      'DELETE FROM task_assignments WHERE user_id = $1',
-      [staffId],
-    );
     // Confirmation: the staff now leaves the old manager's projects and joins
     // the new manager's. Notify the same three parties.
     const newManager = newId

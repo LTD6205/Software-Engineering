@@ -25,13 +25,25 @@ function build(seed: Record<string, unknown> = {}) {
     [STAFF.user_id]: { ...STAFF },
     ...seed,
   };
+  const manager: Record<string, jest.Mock> = {
+    query: jest.fn().mockResolvedValue([]),
+  };
   const userRepo = {
     findOne: jest.fn(({ where }: { where: { user_id?: string } }) =>
       Promise.resolve(where?.user_id ? (store[where.user_id] ?? null) : null),
     ),
     update: jest.fn(),
-    manager: { query: jest.fn().mockResolvedValue([]) },
+    manager,
   };
+  // acceptReassign wraps its writes in a transaction; the proxied entity-manager
+  // delegates to the same mocks so the existing assertions still hold.
+  manager.transaction = jest.fn((cb: (em: unknown) => unknown) =>
+    cb({
+      query: manager.query,
+      update: (_e: unknown, criteria: unknown, partial: unknown) =>
+        userRepo.update(criteria, partial),
+    }),
+  );
   const notifications = { notifyUser: jest.fn(), notifyUsers: jest.fn() };
   const service = new UsersService(userRepo as never, notifications as never);
   return { service, userRepo, notifications, store };
