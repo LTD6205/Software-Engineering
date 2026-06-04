@@ -5,7 +5,9 @@ import { TasksService } from './tasks.service';
 function makeRepo() {
   const manager: Record<string, jest.Mock> = { query: jest.fn() };
   const repo = {
-    find: jest.fn(),
+    // Default to an empty task set so the recomputeAutoPriorities that now runs
+    // after merge/addToGroup/ungroup is a harmless no-op unless a test overrides it.
+    find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
     create: jest.fn((x) => x),
     save: jest.fn((x) => Promise.resolve({ task_id: 't-new', ...x })),
@@ -37,7 +39,11 @@ function build() {
   const logRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
-  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
+  const gateway = {
+    broadcast: jest.fn(),
+    sendToUser: jest.fn(),
+    broadcastToEvent: jest.fn(),
+  };
   const notifications = { notifyUser: jest.fn(), notifyUsers: jest.fn() };
   // Event-access policy is mocked to always allow here; membership enforcement
   // is covered by the EventsService unit tests and the e2e suite.

@@ -375,7 +375,10 @@ export default function TaskTimeline(props: Props) {
     const overdue = tk.status === 'overdue'
     const pColor = PRIORITY_COLOR[tk.priority_label] || 'var(--text-muted)'
     const pLabel = tk.priority_label === 'high' ? t('High', 'Cao') : tk.priority_label === 'low' ? t('Low', 'Thấp') : t('Med', 'TB')
-    const showAvatars = b.width >= 150 // avatars only when the bar itself is wide
+    // Show assignee avatars whenever the task has any, regardless of the bar's
+    // width/zoom. The label spills to the right of a thin bar and the name (not
+    // the avatars) is the part that truncates, so short tasks keep their icons.
+    const showAvatars = (tk.assignees ?? []).length > 0
     return (
       <div
         key={tk.task_id}

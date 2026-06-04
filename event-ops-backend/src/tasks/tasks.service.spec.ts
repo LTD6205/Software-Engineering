@@ -37,7 +37,11 @@ function build() {
   const logRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
-  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
+  const gateway = {
+    broadcast: jest.fn(),
+    sendToUser: jest.fn(),
+    broadcastToEvent: jest.fn(),
+  };
   const notifications = { notifyUser: jest.fn(), notifyUsers: jest.fn() };
   // Event-access policy lives in EventsService; here it always allows so these
   // tests focus on TasksService logic. Membership enforcement is covered by the
@@ -276,6 +280,59 @@ describe('TasksService', () => {
       expect(updates.c).toBe('low');
     });
 
+    it("ranks a group's members within their own span, not the whole event", async () => {
+      const { service, taskRepo } = build();
+      // Two ungrouped tasks define a wide 10-day event window. Two grouped
+      // tasks sit in a narrow slice late in that window — under whole-event
+      // bucketing they'd both be 'low'; per-group they split high/low so the
+      // earlier member outranks the later one.
+      taskRepo.find.mockResolvedValue([
+        {
+          task_id: 'u1',
+          priority_source: 'auto',
+          group_id: null,
+          deadline: '2026-06-01T00:00:00Z',
+        },
+        {
+          task_id: 'u2',
+          priority_source: 'auto',
+          group_id: null,
+          deadline: '2026-06-11T00:00:00Z',
+        },
+        {
+          task_id: 'a',
+          priority_source: 'auto',
+          group_id: 'g1',
+          deadline: '2026-06-10T00:00:00Z',
+        },
+        {
+          task_id: 'b',
+          priority_source: 'auto',
+          group_id: 'g1',
+          deadline: '2026-06-10T12:00:00Z',
+        },
+      ]);
+
+      await (
+        service as never as {
+          recomputeAutoPriorities(id: string): Promise<void>;
+        }
+      ).recomputeAutoPriorities('e1');
+
+      const updates = Object.fromEntries(
+        taskRepo.update.mock.calls.map(([id, patch]) => [
+          id,
+          patch.priority_label,
+        ]),
+      );
+      // Within group g1 the earlier member is high, the later one low.
+      expect(updates.a).toBe('high');
+      expect(updates.b).toBe('low');
+      // Ungrouped tasks still rank across the whole event.
+      expect(updates.u1).toBe('high');
+      expect(updates.u2).toBe('low');
+    });
+
     it('never overwrites a manually-set (user) or AI priority', async () => {
       const { service, taskRepo } = build();
       taskRepo.find.mockResolvedValue([
@@ -381,7 +438,9 @@ describe('TasksService', () => {
     it('findOneForViewer denies a viewer who cannot see the task event', async () => {
       const { service, taskRepo, events } = build();
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
-      events.assertCanViewEvent.mockRejectedValue(new BadRequestException('no'));
+      events.assertCanViewEvent.mockRejectedValue(
+        new BadRequestException('no'),
+      );
       await expect(
         service.findOneForViewer('t1', { sub: 'outsider', role: 'manager' }),
       ).rejects.toThrow();
@@ -394,16 +453,24 @@ describe('TasksService', () => {
     it('findOneForViewer returns the task when its event is visible', async () => {
       const { service, taskRepo } = build();
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
-      const r = await service.findOneForViewer('t1', { sub: 'm', role: 'manager' });
+      const r = await service.findOneForViewer('t1', {
+        sub: 'm',
+        role: 'manager',
+      });
       expect((r as { task_id: string }).task_id).toBe('t1');
     });
 
     it('getAssignmentsForViewer enforces event visibility before reading rows', async () => {
       const { service, taskRepo, assignRepo, events } = build();
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
-      events.assertCanViewEvent.mockRejectedValue(new BadRequestException('no'));
+      events.assertCanViewEvent.mockRejectedValue(
+        new BadRequestException('no'),
+      );
       await expect(
-        service.getAssignmentsForViewer('t1', { sub: 'outsider', role: 'staff' }),
+        service.getAssignmentsForViewer('t1', {
+          sub: 'outsider',
+          role: 'staff',
+        }),
       ).rejects.toThrow();
       expect(assignRepo.find).not.toHaveBeenCalled();
     });
