@@ -1,7 +1,31 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 batch 2b: transactions + DB-verified e2e — see below).
+Last updated 2026-06-04 (audit round-2 batch 2c: #7 event-date recompute + #5 analysis — see below).
+
+## 2026-06-04 — audit round-2, batch 2c (#7, #5, more #4)
+
+- **#7 event-date priority recompute:** `EventsService.updateDates` now calls
+  `TasksService.recomputeAutoPriorities(eventId)` after a date change, so the
+  auto High/Medium/Low buckets follow the new window instead of going stale. This
+  needs a `Tasks ↔ Events` dependency cycle, resolved with `forwardRef` on both
+  the providers and the modules. **Runtime-verified:** the app boots in the e2e
+  run (DI resolves), unit 163 + e2e 48 green.
+- **#4 (more):** `updateDates` task shifts/deletes + event-status update are now
+  wrapped in a transaction (`deleteTaskRow` takes an optional entity-manager),
+  with recompute/notify/broadcast after commit.
+- **#5 overdue cron — re-analyzed, no further change needed:** the only remaining
+  gap (the batch-1 broadcast already shipped) was event-status recompute + an
+  audit log. But an overdue task means the event still has an incomplete task, so
+  it was already `in_progress` (completed tasks are excluded from the overdue
+  scan) — recompute is a no-op. A `system` task-log would need a `task_logs`
+  CHECK-constraint migration (`actor_type IN ('user','ai')`) for marginal audit
+  value; deliberately skipped.
+
+Still-deferred transactions (#4 remainder): task `create` and the AI loop — both
+wrap `TasksService.create`, whose recompute/notify side-effects would need an
+entity-manager threaded through; left for when (if) a shared transition service
+is introduced.
 
 ## 2026-06-04 — audit round-2, batch 2b (#4 transactions, partial) + runtime verification
 
@@ -87,8 +111,11 @@ open (see "Still open — audit round-2" below).
 
 ### Still open — audit round-2 (larger / higher-risk, next batches)
 - **#3 WebSocket event-room scoping** — ✅ done (batch 2 above).
-- **#4 transactions** — ✅ partial (batch 2b: setAssignees, acceptReassign, event
-  create); remainder (updateDates, task create, AI loop) still open.
+- **#4 transactions** — ✅ mostly (2b: setAssignees, acceptReassign, event create;
+  2c: updateDates); remainder (task create, AI loop) tied to a shared transition.
+- **#5 overdue cron** — ✅ resolved (broadcast in batch 1; recompute is a no-op,
+  audit-log skipped — see batch 2c).
+- **#7 event-date priority recompute** — ✅ done (batch 2c).
 - **#5/#7 cron + event-date** routed through a shared task-transition/recompute
   method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).
 - **#6 global ValidationPipe + DTO classes** (whitelist needs real DTOs first).

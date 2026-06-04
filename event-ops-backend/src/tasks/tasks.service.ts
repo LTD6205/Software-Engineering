@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan, Not, In } from 'typeorm';
@@ -30,6 +32,9 @@ export class TasksService {
     @InjectRepository(Event) private eventRepo: Repository<Event>,
     private readonly gateway: EventsGateway,
     private readonly notifications: NotificationsService,
+    // forwardRef: EventsService also depends on TasksService (it recomputes task
+    // priorities after an event's dates change), so the two form a cycle.
+    @Inject(forwardRef(() => EventsService))
     private readonly events: EventsService,
   ) {}
 
@@ -232,7 +237,8 @@ export class TasksService {
   // deadline (or start) falls across the event's overall task timeline — the
   // earliest third is High, the middle Medium, the latest Low. Tasks a manager
   // set by hand (source 'user') and AI tasks ('ai') are left untouched.
-  private async recomputeAutoPriorities(eventId: string) {
+  // Public so EventsService can re-bucket after an event's dates change (#7).
+  async recomputeAutoPriorities(eventId: string) {
     if (!eventId) return;
     const tasks = await this.taskRepo.find({ where: { event_id: eventId } });
     const basis = (t: Task): number => {

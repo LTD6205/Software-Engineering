@@ -39,12 +39,16 @@ function build() {
   const eventRepo = makeRepo();
   const notifications = { notifyUsers: jest.fn(), notifyUser: jest.fn() };
   const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
+  // EventsService calls back into TasksService to re-bucket priorities after a
+  // date change (#7); mocked here.
+  const tasks = { recomputeAutoPriorities: jest.fn() };
   const service = new EventsService(
     eventRepo as never,
     notifications as never,
     gateway as never,
+    tasks as never,
   );
-  return { service, eventRepo, notifications, gateway };
+  return { service, eventRepo, notifications, gateway, tasks };
 }
 
 describe('EventsService', () => {
@@ -199,7 +203,7 @@ describe('EventsService', () => {
 
   describe('updateDates — shift strategy', () => {
     it('shifts task times by the same delta and drops tasks past the new end', async () => {
-      const { service, eventRepo } = build();
+      const { service, eventRepo, tasks } = build();
       eventRepo.findOne.mockResolvedValue({
         event_id: 'e1',
         event_name: 'E',
@@ -247,6 +251,8 @@ describe('EventsService', () => {
       expect(
         calls.some((s) => s.includes('DELETE FROM tasks WHERE task_id')),
       ).toBe(true);
+      // #7: auto priorities are re-bucketed for the new window after the change.
+      expect(tasks.recomputeAutoPriorities).toHaveBeenCalledWith('e1');
     });
 
     it('rejects missing start/end times', async () => {

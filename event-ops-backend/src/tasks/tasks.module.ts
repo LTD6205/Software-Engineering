@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
@@ -26,7 +26,7 @@ import { EventsModule } from '../events/events.module';
     ]),
     WebsocketModule,
     NotificationsModule,
-    EventsModule,
+    forwardRef(() => EventsModule),
   ],
   controllers: [TasksController],
   providers: [TasksService],

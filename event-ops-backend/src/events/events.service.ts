@@ -3,12 +3,15 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { Event } from '../entities/event.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EventsGateway } from '../websocket/events.gateway';
+import { TasksService } from '../tasks/tasks.service';
 
 interface Viewer {
   sub: string;
@@ -22,6 +25,11 @@ export class EventsService {
     private readonly eventRepo: Repository<Event>,
     private readonly notifications: NotificationsService,
     private readonly gateway: EventsGateway,
+    // forwardRef: TasksService also depends on EventsService (event-membership
+    // policy), so the two form a cycle. Used to re-bucket auto priorities after
+    // an event's dates change.
+    @Inject(forwardRef(() => TasksService))
+    private readonly tasks: TasksService,
   ) {}
 
   // Tell the event's members something changed so they can refetch live.
@@ -314,58 +322,61 @@ export class EventsService {
     const newEnd = new Date(end_time);
     this.assertValidDateRange(newStart, newEnd);
     const delta = newStart.getTime() - new Date(event.start_time).getTime();
-    const m = this.eventRepo.manager;
 
-    if (strategy === 'delete') {
-      const rows: Array<{ task_id: string }> = await m.query(
-        `SELECT task_id FROM tasks WHERE event_id = $1`,
-        [id],
-      );
-      for (const { task_id } of rows) await this.deleteTaskRow(task_id);
-    } else {
-      // shift
-      const rows: Array<{
-        task_id: string;
-        start_time: Date | null;
-        deadline: Date | null;
-      }> = await m.query(
-        `SELECT task_id, start_time, deadline FROM tasks WHERE event_id = $1`,
-        [id],
-      );
-      for (const tk of rows) {
-        const shiftedDeadline = tk.deadline
-          ? new Date(new Date(tk.deadline).getTime() + delta)
-          : null;
-        const shiftedStart = tk.start_time
-          ? new Date(new Date(tk.start_time).getTime() + delta)
-          : null;
-        if (shiftedDeadline && shiftedDeadline > newEnd) {
-          await this.deleteTaskRow(tk.task_id);
-        } else {
-          await m.query(
-            `UPDATE tasks SET start_time = $2, deadline = $3 WHERE task_id = $1`,
-            [tk.task_id, shiftedStart, shiftedDeadline],
-          );
+    // Re-time/delete tasks and re-derive the event status atomically — a failure
+    // partway can't leave a half-shifted task set with a stale event status.
+    await this.eventRepo.manager.transaction(async (em) => {
+      if (strategy === 'delete') {
+        const rows: Array<{ task_id: string }> = await em.query(
+          `SELECT task_id FROM tasks WHERE event_id = $1`,
+          [id],
+        );
+        for (const { task_id } of rows) await this.deleteTaskRow(task_id, em);
+      } else {
+        // shift
+        const rows: Array<{
+          task_id: string;
+          start_time: Date | null;
+          deadline: Date | null;
+        }> = await em.query(
+          `SELECT task_id, start_time, deadline FROM tasks WHERE event_id = $1`,
+          [id],
+        );
+        for (const tk of rows) {
+          const shiftedDeadline = tk.deadline
+            ? new Date(new Date(tk.deadline).getTime() + delta)
+            : null;
+          const shiftedStart = tk.start_time
+            ? new Date(new Date(tk.start_time).getTime() + delta)
+            : null;
+          if (shiftedDeadline && shiftedDeadline > newEnd) {
+            await this.deleteTaskRow(tk.task_id, em);
+          } else {
+            await em.query(
+              `UPDATE tasks SET start_time = $2, deadline = $3 WHERE task_id = $1`,
+              [tk.task_id, shiftedStart, shiftedDeadline],
+            );
+          }
         }
       }
-    }
 
-    // Re-derive status from whatever tasks remain.
-    const remaining: Array<{ status: string }> = await m.query(
-      `SELECT status FROM tasks WHERE event_id = $1`,
-      [id],
-    );
-    let status = 'pending';
-    if (remaining.length > 0) {
-      status = remaining.every((t) => t.status === 'completed')
-        ? 'completed'
-        : 'in_progress';
-    }
-    await this.eventRepo.update(id, {
-      start_time,
-      end_time,
-      status,
+      // Re-derive status from whatever tasks remain.
+      const remaining: Array<{ status: string }> = await em.query(
+        `SELECT status FROM tasks WHERE event_id = $1`,
+        [id],
+      );
+      let status = 'pending';
+      if (remaining.length > 0) {
+        status = remaining.every((t) => t.status === 'completed')
+          ? 'completed'
+          : 'in_progress';
+      }
+      await em.update(Event, id, { start_time, end_time, status });
     });
+
+    // After commit: re-bucket auto priorities for the new window (#7), then
+    // notify members and broadcast.
+    await this.tasks.recomputeAutoPriorities(id);
 
     const members = await this.getMemberIds(id);
     await this.notifications.notifyUsers(
@@ -382,8 +393,10 @@ export class EventsService {
   // Delete a task and all of its child rows. ON DELETE CASCADE handles these
   // once the FK migration (npm run db:migrate) is applied; we still clear them
   // by hand as a fallback for databases created before that migration.
-  private async deleteTaskRow(taskId: string) {
-    const m = this.eventRepo.manager;
+  private async deleteTaskRow(
+    taskId: string,
+    m: EntityManager = this.eventRepo.manager,
+  ) {
     await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [taskId]);
     await m.query(
       'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
