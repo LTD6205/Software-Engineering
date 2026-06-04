@@ -46,7 +46,7 @@ const ROLE_RANK: Record<string, number> = { staff: 0, manager: 1, organizer: 2, 
 type RoleFilter = 'all' | 'myteam' | 'staff' | 'manager' | 'organizer' | 'admin'
 
 export default function UsersPage() {
-  const { user, isManager, isAdmin, isOrganizer } = useAuth()
+  const { user, isManager, isAdmin } = useAuth()
   const { t, tError } = useLang()
   const online = usePresence()
   const [users, setUsers]         = useState<TeamUser[]>([])
@@ -64,9 +64,10 @@ export default function UsersPage() {
   const [reErr, setReErr]           = useState('')
   const [reSaving, setReSaving]     = useState(false)
 
-  // Managers, organizers and admins get the full roster; staff see the
-  // minimal directory.
-  const canSeeRoster = isManager || isOrganizer
+  // Only managers and admins get the full roster (GET /users is manager/admin
+  // only on the backend). Organizers and staff see the minimal directory — an
+  // organizer calling getAll() would just 403, leaving a misleading empty view.
+  const canSeeRoster = isManager
   // A plain manager (not admin/organizer) can filter down to just their own
   // team to reassign members quickly.
   const isPlainManager = user?.role === 'manager'
@@ -238,10 +239,15 @@ export default function UsersPage() {
             ['all', t('All', 'Tất cả')],
             // "My Team": a manager's own staff, or a staff member's teammates.
             ...(showMyTeam ? [['myteam', t('My Team', 'Đội của tôi')] as [RoleFilter, string]] : []),
-            ['staff', t('Staff', 'Nhân viên')],
-            ['manager', t('Manager', 'Quản lý')],
-            ['organizer', t('Organizer', 'Quản lý sự kiện')],
-            ['admin', t('Admin', 'Quản trị viên')],
+            // Only show a role filter when that role actually appears in this
+            // viewer's roster — a manager who only sees their staff isn't offered
+            // Organizer/Admin filters that would match nobody.
+            ...(([
+              ['staff', t('Staff', 'Nhân viên')],
+              ['manager', t('Manager', 'Quản lý')],
+              ['organizer', t('Organizer', 'Quản lý sự kiện')],
+              ['admin', t('Admin', 'Quản trị viên')],
+            ] as [RoleFilter, string][]).filter(([key]) => users.some(u => u.role === key))),
           ] as [RoleFilter, string][]).map(([key, lbl]) => {
             const active = roleFilter === key
             return (

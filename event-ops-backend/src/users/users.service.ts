@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -21,11 +21,12 @@ export class UsersService {
 
   // Roster (excludes password_hash). Scoped by the actor:
   //   admin    — the full roster, with active/inactive status.
-  //   manager  — only their own staff + every manager (peers, needed to pick a
-  //              reassignment target and label who a staff reports to); NOT
-  //              other managers' staff, admins, or organizers.
+  //   manager  — their own staff + every manager (peers, needed to pick a
+  //              reassignment target and label who a staff reports to), plus the
+  //              organizers who added them to an event (so they can see who
+  //              brought them on); NOT other managers' staff or admins.
   //   (no actor / other) — full roster without is_active (internal/tests).
-  findAll(actor?: { sub: string; role: string }) {
+  async findAll(actor?: { sub: string; role: string }) {
     const select: (keyof User)[] = [
       'user_id',
       'name',
@@ -42,11 +43,33 @@ export class UsersService {
       return this.userRepo.find({ select, order: { created_at: 'ASC' } });
     }
     if (actor?.role === 'manager') {
-      return this.userRepo.find({
+      const base = await this.userRepo.find({
         where: [{ role: 'manager' }, { role: 'staff', manager_id: actor.sub }],
         select,
         order: { created_at: 'ASC' },
       });
+      // The people who created events this manager belongs to (their
+      // organizer(s) — or an admin who set the event up). Whatever their role,
+      // the manager should see who brought them onto the event.
+      const orgRows: Array<{ created_by: string }> =
+        await this.userRepo.manager.query(
+          `SELECT DISTINCT e.created_by FROM events e
+             JOIN event_managers em ON em.event_id = e.event_id
+             WHERE em.manager_id = $1 AND e.created_by IS NOT NULL`,
+          [actor.sub],
+        );
+      // Drop any ids already in the base roster (e.g. a manager-created edge case).
+      const haveIds = new Set(base.map((u) => u.user_id));
+      const creatorIds = orgRows
+        .map((r) => r.created_by)
+        .filter((id) => !haveIds.has(id));
+      if (creatorIds.length === 0) return base;
+      const creators = await this.userRepo.find({
+        where: { user_id: In(creatorIds) },
+        select,
+        order: { created_at: 'ASC' },
+      });
+      return [...base, ...creators];
     }
     return this.userRepo.find({ select, order: { created_at: 'ASC' } });
   }
@@ -464,5 +487,4 @@ export class UsersService {
     await this.userRepo.update(id, updateData);
     return this.findOne(id);
   }
-
 }

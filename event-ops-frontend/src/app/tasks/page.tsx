@@ -13,6 +13,7 @@ import Avatar from '@/components/Avatar'
 import MilestoneBar from '@/components/MilestoneBar'
 import EventPicker from '@/components/EventPicker'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import Toast, { type ToastData } from '@/components/Toast'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
 import { useLiveData, type DataChange } from '@/lib/useLiveData'
@@ -31,6 +32,11 @@ function toLocalDateTime(v?: string) {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
+
+// Current epoch ms. Module-level so the "is this in the past?" guards can read
+// real time without tripping the React Compiler's purity check (it only flags
+// known-impure globals like Date.now() called inside a component).
+const nowMs = () => Date.now()
 
 function TasksContent() {
   const searchParams = useSearchParams()
@@ -55,6 +61,13 @@ function TasksContent() {
   // Filters — status + priority.
   const [taskStatus, setTaskStatus]     = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'overdue'>('all')
   const [taskPriority, setTaskPriority] = useState<'all' | 'low' | 'medium' | 'high'>('all')
+  // In-app toast (replaces native showToast()) for errors and notices.
+  const [toast, setToast] = useState<ToastData | null>(null)
+  const dismissToast = useCallback(() => setToast(null), [])
+  const showToast = useCallback(
+    (message: string, kind: 'error' | 'info' = 'error') => setToast({ message, kind }),
+    [],
+  )
 
   // Staff this manager may assign: their own team (admins may assign any staff).
   const assignableStaff = teamMembers.filter(
@@ -130,6 +143,11 @@ function TasksContent() {
       setError(t('Deadline must be after the start time', 'Hạn chót phải sau thời gian bắt đầu'))
       return
     }
+    // Can't schedule a new task in the past (before the live "now" line).
+    if (start && new Date(start).getTime() < nowMs()) {
+      setError(t('Start time cannot be in the past', 'Thời gian bắt đầu không thể ở quá khứ'))
+      return
+    }
     // Keep within the event window (string compare works for this format).
     const outside = (v: string) => evStart && evEnd && (v < evStart || v > evEnd)
     if ((start && outside(start)) || (deadline && outside(deadline))) {
@@ -195,10 +213,14 @@ function TasksContent() {
     setTasks(p => p.map(t => t.task_id === id ? { ...t, status: status as Task['status'] } : t))
     try {
       await tasksApi.update(id, { status })
+      // Refetch tasks (not just events): a status change re-buckets auto
+      // priorities server-side, and reopening an overdue task slides its dates
+      // to now — neither is reflected by the optimistic status-only update above.
+      if (selectedEvent) setTasks(await tasksApi.getByEvent(selectedEvent))
       refreshEvents() // completion count changed -> refresh the milestone
     } catch (e) {
       setTasks(p => p.map(t => t.task_id === id ? { ...t, status: prev } : t))
-      alert(tError(getErrorMessage(e, 'Could not update status / Không thể cập nhật trạng thái')))
+      showToast(tError(getErrorMessage(e, 'Could not update status / Không thể cập nhật trạng thái')))
     }
   }
 
@@ -219,18 +241,23 @@ function TasksContent() {
       setTasks(p => p.filter(t => t.task_id !== id))
       refreshEvents() // task count changed -> refresh the milestone
     } catch (e) {
-      alert(tError(getErrorMessage(e, 'Could not delete the task / Không thể xóa công việc')))
+      showToast(tError(getErrorMessage(e, 'Could not delete the task / Không thể xóa công việc')))
     }
   }
 
   const handleDeadlineChange = async (id: string, isoDeadline: string) => {
+    // A deadline can't be moved into the past (before the live "now" line).
+    if (new Date(isoDeadline).getTime() < nowMs()) {
+      showToast(t('Deadline cannot be moved to the past', 'Không thể dời hạn chót về quá khứ'))
+      return
+    }
     const before = tasks
     setTasks(p => p.map(t => t.task_id === id ? { ...t, deadline: isoDeadline } : t))
     try {
       await tasksApi.update(id, { deadline: isoDeadline })
     } catch (e) {
       setTasks(before)
-      alert(tError(getErrorMessage(e, 'Could not update the deadline / Không thể cập nhật hạn chót')))
+      showToast(tError(getErrorMessage(e, 'Could not update the deadline / Không thể cập nhật hạn chót')))
     }
   }
 
@@ -247,7 +274,7 @@ function TasksContent() {
       setTasks(p => p.map(t => t.task_id === id ? { ...t, assignees: updated } : t))
       setEditingAssignees(null)
     } catch (e) {
-      alert(tError(getErrorMessage(e, 'Could not update assignees / Không thể cập nhật người được giao')))
+      showToast(tError(getErrorMessage(e, 'Could not update assignees / Không thể cập nhật người được giao')))
     }
   }
 
@@ -267,26 +294,26 @@ function TasksContent() {
   }
   const handleMerge = async (sourceId: string, targetId: string) => {
     try { await tasksApi.merge(sourceId, targetId); await reloadTasks() }
-    catch (e) { alert(tError(getErrorMessage(e, 'Could not merge the tasks / Không thể gộp công việc'))) }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not merge the tasks / Không thể gộp công việc'))) }
   }
   const handleAddToGroup = async (groupId: string, taskId: string) => {
     try { await tasksApi.addToGroup(groupId, taskId); await reloadTasks() }
-    catch (e) { alert(tError(getErrorMessage(e, 'Could not add to the group / Không thể thêm vào nhóm'))) }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not add to the group / Không thể thêm vào nhóm'))) }
   }
   const handleUngroup = async (taskId: string) => {
     try { await tasksApi.ungroup(taskId); await reloadTasks() }
-    catch (e) { alert(tError(getErrorMessage(e, 'Could not ungroup / Không thể tách nhóm'))) }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not ungroup / Không thể tách nhóm'))) }
   }
   const handleRenameGroup = async (groupId: string, title: string) => {
     try { await tasksApi.renameGroup(groupId, title); await reloadTasks() }
-    catch (e) { alert(tError(getErrorMessage(e, 'Could not rename the group / Không thể đổi tên nhóm'))) }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not rename the group / Không thể đổi tên nhóm'))) }
   }
   // Manual priority override from a task's Edit panel (pins it to user-set).
   const handleEditPriority = async (taskId: string, label: string) => {
     const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10
     setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score } : t))
     try { await tasksApi.update(taskId, { priority_label: label, priority_score: score }) }
-    catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
+    catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
   }
   // Open the create modal. From a timeline right-click we get the clicked time:
   // pre-fill Start there and End one hour later.
@@ -312,7 +339,7 @@ function TasksContent() {
   const handleReschedule = async (taskId: string, startISO: string, deadlineISO: string) => {
     setTasks(p => p.map(t => t.task_id === taskId ? { ...t, start_time: startISO, deadline: deadlineISO } : t))
     try { await tasksApi.update(taskId, { start_time: startISO, deadline: deadlineISO }); await reloadTasks() }
-    catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not move the task / Không thể di chuyển công việc'))) }
+    catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not move the task / Không thể di chuyển công việc'))) }
   }
 
   return (
@@ -399,6 +426,7 @@ function TasksContent() {
             onResetFilters={resetTaskFilters}
             onNewTask={openNewTask}
             onReschedule={handleReschedule}
+            onNotice={msg => showToast(msg, 'info')}
           />
         )}
       </div>
@@ -553,6 +581,8 @@ function TasksContent() {
         onConfirm={() => { if (pendingTaskDelete) void doDeleteTask(pendingTaskDelete); setPendingTaskDelete(null) }}
         onCancel={() => setPendingTaskDelete(null)}
       />
+
+      <Toast data={toast} onClose={dismissToast} />
     </div>
   )
 }

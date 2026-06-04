@@ -26,6 +26,54 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  backend-e2e:
+    name: Backend (e2e + migrations vs Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: event-ops-backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_ops_test
+        ports:
+          - 5432:5432
+        # Wait until Postgres is accepting connections before the steps run.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: event_ops_test
+      # The e2e app boots with real guards/JWT; pin a secret so it doesn't fall
+      # back to the dev default (and so login-signed tokens verify).
+      JWT_SECRET: ci_test_secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --legacy-peer-deps
+      # Apply the canonical DDL, then the ordered idempotent migrations on top.
+      # This doubles as migration validation — every migrations/*.sql must apply
+      # cleanly to a schema built from database_creating.txt.
+      - name: Apply schema + migrations
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d event_ops_test -v ON_ERROR_STOP=1 -f ../database_creating.txt
+          npm run db:migrate
+      # Seed the known login accounts (test/utils.ts ACCOUNTS) into the test DB.
+      - name: Seed test accounts
+        run: npm run seed
+      - run: npm run test:e2e
+
   frontend:
     name: Frontend (build + unit tests)
     runs-on: ubuntu-latest
@@ -44,6 +92,6 @@ jobs:
       - run: npm test
       - run: npm run build
 
-# NOTE: backend e2e (`npm run test:e2e`) and migration validation need a seeded
-# Postgres (a dedicated event_ops_test DB) and are intentionally not run here yet
-# — see todo.md "e2e against a throwaway/Testcontainers DB in CI".
+# NOTE: backend lint stays non-blocking until the known test-file lint
+# violations are cleared (see todo.md / audit finding #17); flip the
+# `continue-on-error` above once `npm run lint` is clean.

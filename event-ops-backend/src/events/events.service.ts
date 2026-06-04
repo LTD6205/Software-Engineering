@@ -158,6 +158,8 @@ export class EventsService {
     }
     const rows: Array<Record<string, unknown>> = await m.query(
       `SELECT e.*,
+         (SELECT u.name FROM users u WHERE u.user_id = e.created_by) AS organizer_name,
+         (SELECT u.role FROM users u WHERE u.user_id = e.created_by) AS organizer_role,
          (SELECT count(*)::int FROM event_managers em WHERE em.event_id = e.event_id) AS manager_count,
          (SELECT count(*)::int FROM event_managers em WHERE em.event_id = e.event_id)
            + (SELECT count(*)::int FROM users u WHERE u.role = 'staff'
@@ -214,10 +216,11 @@ export class EventsService {
     const event = await this.eventRepo.manager.transaction(async (em) => {
       const saved = await em.save(em.create(Event, data));
       for (const mid of managerIds) {
-        const rows: Array<{ role: string; is_active: boolean }> = await em.query(
-          `SELECT role, is_active FROM users WHERE user_id = $1`,
-          [mid],
-        );
+        const rows: Array<{ role: string; is_active: boolean }> =
+          await em.query(
+            `SELECT role, is_active FROM users WHERE user_id = $1`,
+            [mid],
+          );
         const target = rows[0];
         if (!target || target.role !== 'manager' || !target.is_active) {
           throw new BadRequestException(
@@ -239,6 +242,9 @@ export class EventsService {
       'event',
       `You were added to the event "${event.event_name}". / Bạn đã được thêm vào sự kiện "${event.event_name}".`,
     );
+    // Join the new members' live sockets to the event room so they get its
+    // broadcasts right away (not just on their next reconnect).
+    this.gateway.addUsersToEventRoom(members, event.event_id);
     this.broadcastChange(event.event_id);
     return this.findOne(event.event_id);
   }
@@ -265,9 +271,12 @@ export class EventsService {
        ON CONFLICT DO NOTHING`,
       [eventId, managerId],
     );
+    // The manager and their staff just became members — join their live sockets
+    // to the event room so they receive its broadcasts without reconnecting.
+    const added = await this.getManagerMemberIds(managerId);
+    this.gateway.addUsersToEventRoom(added, eventId);
     if (notify) {
       const event = await this.findOne(eventId);
-      const added = await this.getManagerMemberIds(managerId);
       await this.notifications.notifyUsers(
         added,
         'event',
@@ -290,14 +299,26 @@ export class EventsService {
       'event',
       `You were removed from the event "${event.event_name}". / Bạn đã bị gỡ khỏi sự kiện "${event.event_name}".`,
     );
+    // Drop the removed members' live sockets from the event room so they stop
+    // receiving its broadcasts immediately, not just after a reconnect.
+    this.gateway.removeUsersFromEventRoom(removed, eventId);
     this.broadcastChange(eventId);
     return this.getEventManagers(eventId);
   }
 
-  async update(id: string, data: Partial<Event>) {
+  // Edit name/description only. Server-owned fields (status, created_by, dates,
+  // timestamps) are never editable here — dates go through updateDates() so task
+  // shift/delete handling can't be bypassed. The allowlist below is a defensive
+  // mirror of UpdateEventDto in case a non-HTTP caller reaches this method.
+  async update(
+    id: string,
+    data: { event_name?: string; description?: string },
+  ) {
     await this.findOne(id);
-    this.assertValidDateRange(data.start_time, data.end_time);
-    await this.eventRepo.update(id, data);
+    const patch: { event_name?: string; description?: string } = {};
+    if (data.event_name !== undefined) patch.event_name = data.event_name;
+    if (data.description !== undefined) patch.description = data.description;
+    if (Object.keys(patch).length > 0) await this.eventRepo.update(id, patch);
     this.broadcastChange(id);
     return this.findOne(id);
   }
@@ -422,14 +443,18 @@ export class EventsService {
     // Capture members before the event_managers rows cascade away on delete.
     const members = await this.getMemberIds(id);
     // event_managers has ON DELETE CASCADE; tasks reference the event, so clear
-    // tasks (and their children) first.
-    const m = this.eventRepo.manager;
-    const taskRows: Array<{ task_id: string }> = await m.query(
-      `SELECT task_id FROM tasks WHERE event_id = $1`,
-      [id],
-    );
-    for (const { task_id } of taskRows) await this.deleteTaskRow(task_id);
-    await this.eventRepo.delete(id);
+    // tasks (and their children) first. Do the whole delete sequence in one
+    // transaction so a failure partway can't leave the event half-deleted (some
+    // tasks gone, the event row still present).
+    await this.eventRepo.manager.transaction(async (em) => {
+      const taskRows: Array<{ task_id: string }> = await em.query(
+        `SELECT task_id FROM tasks WHERE event_id = $1`,
+        [id],
+      );
+      for (const { task_id } of taskRows) await this.deleteTaskRow(task_id, em);
+      await em.delete(Event, id);
+    });
+    // Notify/broadcast only after the delete has committed.
     await this.notifications.notifyUsers(
       members,
       'event',

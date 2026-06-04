@@ -31,6 +31,22 @@ export class CreateEventDto {
   manager_ids?: string[];
 }
 
+// Event detail edit. Deliberately narrow: only name/description are editable
+// here. Dates go through PUT /events/:id/dates (UpdateDatesDto) so task
+// shift/delete handling can't be bypassed, and server-owned fields
+// (event_id, created_by, status, created_at) are never accepted from the body.
+export class UpdateEventDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  event_name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
 export class UpdateDatesDto {
   @IsDateString()
   start_time: string;

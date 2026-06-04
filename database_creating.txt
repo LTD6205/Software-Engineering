@@ -78,15 +78,17 @@ CREATE TABLE Task_Logs (
     old_value       JSONB,
     new_value       JSONB,
     actor_type      VARCHAR(10)         NOT NULL
-                        CHECK (actor_type IN ('user', 'ai')),
+                        CHECK (actor_type IN ('user', 'ai', 'system')),
     actor_user_id   UUID                REFERENCES Users(user_id),      -- only when actor_type = 'user'
     ai_request_id   UUID                REFERENCES AI_Requests(request_id), -- only when actor_type = 'ai'
     created_at      TIMESTAMP           NOT NULL DEFAULT NOW(),
 
-    -- Enforce: exactly one actor must be set
+    -- Enforce the right actor id for each actor_type. 'system' (e.g. the overdue
+    -- cron) carries neither a user nor an AI-request id.
     CONSTRAINT task_logs_actor_check CHECK (
-        (actor_type = 'user'  AND actor_user_id IS NOT NULL AND ai_request_id IS NULL) OR
-        (actor_type = 'ai'    AND ai_request_id IS NOT NULL AND actor_user_id IS NULL)
+        (actor_type = 'user'   AND actor_user_id IS NOT NULL AND ai_request_id IS NULL) OR
+        (actor_type = 'ai'     AND ai_request_id IS NOT NULL AND actor_user_id IS NULL) OR
+        (actor_type = 'system' AND actor_user_id IS NULL     AND ai_request_id IS NULL)
     )
 );
 
@@ -206,7 +208,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TR
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone  VARCHAR(30);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
 
--- 4. Add the 'organizer' role (Admin > Organizer > Manager > Staff)
+-- 4. Add the 'organizer' role. Roles are exact-match (no hierarchy/inheritance);
+--    'admin' is the only cross-role superuser. Roles: admin, organizer, manager, staff.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
     CHECK (role IN ('manager', 'staff', 'admin', 'organizer'));

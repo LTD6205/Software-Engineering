@@ -20,6 +20,9 @@ export interface Event {
   start_time: string
   end_time: string
   created_by: string
+  // The organizer/admin who created the event (and added its managers).
+  organizer_name?: string | null
+  organizer_role?: string | null
   status: 'pending' | 'in_progress' | 'completed'
   created_at: string
   manager_count?: number

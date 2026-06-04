@@ -169,6 +169,8 @@ export class TasksService {
     });
     if (event)
       this.assertWithinEventWindow(event, data.start_time, data.deadline);
+    // A new task can't be scheduled in the past.
+    this.assertNotInPast(data.start_time, data.deadline);
     const task = await this.taskRepo.save(this.taskRepo.create(data));
     // Announce the new task to the event's owner (the organizer), unless
     // they created it themselves.
@@ -187,6 +189,31 @@ export class TasksService {
     await this.recomputeAutoPriorities(task.event_id);
     this.broadcastChange(task.event_id);
     return this.findOne(task.task_id);
+  }
+
+  // Grace window for the past check: the client's "now" line can lag a little
+  // (it ticks every ~30s) and there's request latency, so a time the user meant
+  // as "now" can read as a few seconds past by the time the server checks. Allow
+  // a small slack so only clearly-past times (minutes+ old) are rejected.
+  private static readonly PAST_GRACE_MS = 2 * 60 * 1000;
+
+  // New or edited task times may not land in the past — the API mirror of the
+  // timeline's "now" line. Only the values passed in are checked, so editing an
+  // unrelated field on an already-running (or overdue) task, or reopening it via
+  // a status change, is unaffected; only a start/deadline being set into the
+  // past is rejected.
+  private assertNotInPast(...values: Array<Date | string | null | undefined>) {
+    const cutoff = Date.now() - TasksService.PAST_GRACE_MS;
+    for (const v of values) {
+      if (!v) continue;
+      const t = new Date(v).getTime();
+      if (isNaN(t)) continue;
+      if (t < cutoff) {
+        throw new BadRequestException(
+          'Task times cannot be in the past / Thời gian công việc không thể ở quá khứ',
+        );
+      }
+    }
   }
 
   // A task's start/deadline must sit inside its event's [start, end] window.
@@ -238,8 +265,9 @@ export class TasksService {
   // the middle Medium, the latest Low. Tasks a manager set by hand
   // (source 'user') and AI tasks ('ai') are left untouched.
   //
-  // The timeline a task is ranked against depends on whether it's grouped:
-  //   • ungrouped tasks rank across the whole event's task timeline;
+  // The timeline starts at the live "now" line:
+  //   • any task whose time is already in the past (overdue) is always High;
+  //   • ungrouped tasks rank from now → the latest task deadline;
   //   • a group's members rank WITHIN their own group's span, so reordering two
   //     members by time (e.g. dragging b ahead of a) flips their relative
   //     priority — a narrow group no longer collapses to one shared bucket.
@@ -247,6 +275,7 @@ export class TasksService {
   async recomputeAutoPriorities(eventId: string) {
     if (!eventId) return;
     const tasks = await this.taskRepo.find({ where: { event_id: eventId } });
+    const now = Date.now();
     const basis = (t: Task): number => {
       const d = t.deadline ? new Date(t.deadline).getTime() : NaN;
       const s = t.start_time ? new Date(t.start_time).getTime() : NaN;
@@ -259,13 +288,19 @@ export class TasksService {
       const min = Math.min(...times);
       return [min, Math.max(...times) - min];
     };
-    // Re-bucket a single 'auto' task against a [min, span] window.
+    // Re-bucket a single 'auto' task against a [min, span] window. Anything past
+    // the "now" line is always High regardless of the window.
     const bucket = async (t: Task, min: number, span: number) => {
       if (t.priority_source !== 'auto') return;
       const b = basis(t);
       if (isNaN(b)) return;
-      const frac = span <= 0 ? 0 : (b - min) / span;
-      const label = frac < 1 / 3 ? 'high' : frac < 2 / 3 ? 'medium' : 'low';
+      let label: string;
+      if (b < now) {
+        label = 'high';
+      } else {
+        const frac = span <= 0 ? 0 : (b - min) / span;
+        label = frac < 1 / 3 ? 'high' : frac < 2 / 3 ? 'medium' : 'low';
+      }
       const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10;
       if (t.priority_label !== label || t.priority_score !== score) {
         await this.taskRepo.update(t.task_id, {
@@ -274,8 +309,8 @@ export class TasksService {
         });
       }
     };
-    // Ungrouped tasks rank across the whole event's timeline (unchanged); each
-    // group's members rank within their own span.
+    // Ungrouped tasks rank from "now" to the latest task deadline; each group's
+    // members rank within their own span.
     const ungrouped: Task[] = [];
     const byGroup = new Map<string, Task[]>();
     for (const t of tasks) {
@@ -289,8 +324,11 @@ export class TasksService {
     }
     const eventWindow = windowOf(tasks);
     if (eventWindow) {
-      for (const t of ungrouped)
-        await bucket(t, eventWindow[0], eventWindow[1]);
+      // Start the ungrouped timeline at "now" (clamped so a fully-past event
+      // still yields a valid, non-negative span).
+      const latest = eventWindow[0] + eventWindow[1];
+      const min = Math.min(now, latest);
+      for (const t of ungrouped) await bucket(t, min, latest - min);
     }
     for (const members of byGroup.values()) {
       const w = windowOf(members);
@@ -367,6 +405,45 @@ export class TasksService {
       await this.events.assertCanManageEvent(actor, old.event_id);
     }
 
+    // Reopening a task whose deadline has already passed (e.g. an overdue task
+    // moved back to In Progress): slide it forward to start at "now", keeping
+    // its length and staying inside the event window, so it's no longer stuck in
+    // the past. The auto-priority recompute below then re-buckets it from now.
+    // Done after the metadata-permission gate so an assignee reopening their own
+    // task isn't blocked, and skipped if the caller set explicit times.
+    if (
+      data.status === 'in_progress' &&
+      data.status !== old.status &&
+      data.start_time === undefined &&
+      data.deadline === undefined
+    ) {
+      const nowTs = Date.now();
+      const oldDeadline = old.deadline
+        ? new Date(old.deadline).getTime()
+        : null;
+      if (oldDeadline !== null && oldDeadline < nowTs) {
+        const oldStart = old.start_time
+          ? new Date(old.start_time).getTime()
+          : null;
+        const duration =
+          oldStart !== null && oldDeadline > oldStart
+            ? oldDeadline - oldStart
+            : 60 * 60 * 1000; // default 1h window when the task had no start
+        const ev = await this.eventRepo.findOne({
+          where: { event_id: old.event_id },
+        });
+        const eventEnd = ev?.end_time ? new Date(ev.end_time).getTime() : null;
+        // Only move while there's still room before the event ends.
+        if (eventEnd === null || nowTs < eventEnd) {
+          let newDeadline = nowTs + duration;
+          if (eventEnd !== null && newDeadline > eventEnd)
+            newDeadline = eventEnd;
+          data.start_time = new Date(nowTs);
+          data.deadline = new Date(newDeadline);
+        }
+      }
+    }
+
     // A reschedule must keep the task inside its event's window.
     if (data.start_time !== undefined || data.deadline !== undefined) {
       const event = await this.eventRepo.findOne({
@@ -379,6 +456,10 @@ export class TasksService {
           data.deadline ?? old.deadline,
         );
       }
+      // A start/deadline being set can't be moved into the past. Only the
+      // values present in this update are checked (not the merged old ones), so
+      // editing one field of an already-running task isn't blocked by the other.
+      this.assertNotInPast(data.start_time, data.deadline);
     }
 
     // A manual priority edit pins the task to 'user' so auto-recompute won't
@@ -424,8 +505,14 @@ export class TasksService {
     if (data.status !== undefined) {
       await this.recomputeEventStatus(old.event_id);
     }
-    // Adjusting a task's timing re-buckets the event's auto priorities.
-    if (data.start_time !== undefined || data.deadline !== undefined) {
+    // Adjusting a task's timing — or reopening it — re-buckets the event's auto
+    // priorities (a reopened overdue task was just slid to "now" above, and any
+    // status change should leave priorities current).
+    if (
+      data.start_time !== undefined ||
+      data.deadline !== undefined ||
+      data.status !== undefined
+    ) {
       await this.recomputeAutoPriorities(old.event_id);
     }
     this.broadcastChange(old.event_id);
@@ -439,16 +526,19 @@ export class TasksService {
     // migration (npm run db:migrate) has been applied. We still clear them here
     // as a fallback so deletion also works on databases created before that
     // migration; on an up-to-date schema these deletes simply find nothing.
-    const m = this.taskRepo.manager;
-    await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
-    await m.query(
-      'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
-      [id],
-    );
-    await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
-    await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
-    await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
-    await this.taskRepo.delete(id);
+    // The whole delete sequence runs in one transaction so a failure partway
+    // can't leave the task orphaned with some child rows already gone.
+    await this.taskRepo.manager.transaction(async (m) => {
+      await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
+      await m.query(
+        'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
+        [id],
+      );
+      await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
+      await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
+      await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
+      await m.delete(Task, id);
+    });
     // If it was in a group, dissolve the group if it now has < 2 members.
     if (task.group_id) {
       await this.dissolveIfTooSmall(task.group_id);

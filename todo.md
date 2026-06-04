@@ -252,11 +252,11 @@ needed** and they don't touch the user's dev backend on port 3000.
 
 | Spec file | Tests | What it covers |
 |---|---|---|
-| `auth/roles.guard.spec.ts` | 10 | The `ROLE_LEVELS` hierarchy: no-`@Roles` passes any authed user; `@Roles('manager')` admits manager/organizer/admin but rejects staff; **minimum** level is used across multiple listed roles; unknown role / no user → `ForbiddenException`. |
+| `auth/roles.guard.spec.ts` | 10 | **Exact-match** RBAC (no level hierarchy): no-`@Roles` passes any authed user; `@Roles('manager')` admits managers only (organizer is **not** a manager → denied) plus `admin` as the cross-role superuser; a role outside the `@Roles` allow-list, an unknown role, or no user → `ForbiddenException`. |
 | `auth/auth.service.spec.ts` | 6 | `validateUser` (active-only lookup, wrong password, missing hash, no user → `Unauthorized`); `login` returns a signed token + sanitized user (no `password_hash`) and propagates auth failures without signing. |
 | `tasks/tasks.service.spec.ts` | 11 | `create` validation (name/event required, deadline-after-start, default `in_progress`/`auto`); `recomputeAutoPriorities` thirds bucketing high/medium/low and **not** overwriting `user`/`ai` priorities; assignment rules (staff-only, manager's-own-staff, missing user); status-change permission (non-creator/non-assignee blocked, only creator reopens); `merge` guards (self, cross-event). |
 | `notifications/notifications.service.spec.ts` | 8 | `notifyUser` saves + sockets, skips blank id; `notifyUsers` de-dupes & drops blanks/null; `markRead` is user-scoped; `getAll` capped at 50 newest-first; `checkDeadlines` cron marks overdue + alerts, and suppresses a duplicate when an unread alert already exists. |
-| `events/events.service.spec.ts` | 7 | `create` validation + member notify; `findOne` not-found; `update`/`updateDates` date-range guard; `updateDates` **shift** strategy moves task times by the start delta and drops tasks landing past the new end. |
+| `events/events.service.spec.ts` | 7 | `create` validation + member notify; `findOne` not-found; `update` **name/description allowlist** (date & server-owned fields dropped); `updateDates` date-range guard + **shift** strategy moves task times by the start delta and drops tasks landing past the new end. |
 | `ai/ai.service.spec.ts` | 5 | `processCommand`: creates a task per array item (priority→score mapping, `priority_source: 'ai'`); assigns when a named user resolves; non-array reply → structured **rejected** (no tasks); invalid JSON → `BadRequest` + request marked rejected; invalid deadline string is dropped (no "Invalid Date" persisted). |
 | `users/users.service.spec.ts` | 17 | The staff→manager **reassignment** flow (request/accept/reject/cancel) + all NotFound/Forbidden/BadRequest guards. |
 | `users/users.service.crud.spec.ts` | 26 | The rest of `users.service`: `updateProfile` (current-password check, email/phone validation, email-conflict, password hashing), `create` (required fields, dup email, default role, hashing, returns via findOne), `update`, `deactivate`, `findAll` (admin-only `is_active`), `directory`. |
@@ -293,7 +293,7 @@ provides `createTestApp()` (mirrors main.ts's `/api` prefix) + `login()` + seede
 
 | Spec | Tests | What it covers |
 |---|---|---|
-| `test/auth.e2e-spec.ts` | 12 | Login (valid/wrong-pw/unknown-email), `JwtAuthGuard` (no/garbage token → 401), `/me`, and the **RolesGuard hierarchy over HTTP** via the `@Roles('organizer')` route: staff/manager → 403, organizer/admin → 200; an unguarded read still needs auth. |
+| `test/auth.e2e-spec.ts` | 12 | Login (valid/wrong-pw/unknown-email), `JwtAuthGuard` (no/garbage token → 401), `/me`, and **exact-match RolesGuard over HTTP** via the `@Roles('organizer')` route: staff/manager → 403, organizer/admin → 200; an unguarded read still needs auth. |
 | `test/events.e2e-spec.ts` | 11 | Event **permissions**: only organizer/admin create/edit/delete + manage members (manager/staff → 403); invalid date range → 400; `GET /events` membership scoping (member manager + admin see the event). Creates one event and deletes it in `afterAll`. |
 | `test/raw-sql.e2e-spec.ts` | 10 | The hand-written **raw SQL** paths against real Postgres with a built-then-torn-down fixture: `getMemberIds`/`getManagerMemberIds`/`findForViewer`/`getEventManagers`, `findAllByEvent` assignee join + staff scoping, `deadlineRecipients` (assignee ∪ their manager ∪ event creator), `incomingReassignRequests`. |
 | `test/role-hierarchy-access.e2e-spec.ts` | 14 | **RBAC boundary regression test (see below):** proves exact-match roles — Organizer is denied Manager-only routes, Manager is denied Organizer routes, each role keeps its own, Admin is superuser. |
@@ -382,7 +382,7 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 - New task added to an event → the organizer (the event's `created_by`), unless they
   created it themselves (`tasks.service.ts → create`).
 
-**Deadlines (cron, every 30 min)**
+**Deadlines (cron, every minute)**
 - Reminder (due within 24h) and overdue alerts now reach the assigned staff **plus
   their owning managers plus the organizer** (`deadlineRecipients()` in
   `notifications.service.ts`). De-duplicated so the cron won't re-spam an unread alert.
@@ -450,15 +450,20 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 
 ## Missing / needs fixing (still open, verified)
 
-- [ ] **AI is create-only.** `ai.service.ts → processCommand` still only parses a prompt into
-      a JSON array of *new* tasks and creates them. No update / reassign / restructure,
-      despite the brief asking the AI to "reassign responsibilities, or restructure task lists
-      dynamically." **Largest gap vs. the spec.**
+- [~] **AI editing.** ✅ mostly closed: `ai.service.ts → processCommand` now returns a list of
+      *actions* — `create`, `update` (reschedule/rename/re-prioritise/status) and `reassign` —
+      and is fed the event's current task list to target existing tasks by name, reusing the
+      existing TasksService methods (so all permission/validation rules apply). Backward
+      compatible (action-less array = create). **Remaining:** `split_task` and `add_dependency`
+      ("restructure task lists" / milestone ordering) — the latter ties to the unused
+      `task_dependencies` table.
 - [ ] **Task dependencies are unused.** `task_dependencies` table + `TaskDependency` entity
-      exist, but the only code that touches the table is cleanup-on-delete
-      (`events.service.ts:277`, `tasks.service.ts:209`). Nothing creates/reads a dependency,
-      and `tasks.service.ts` injects `depRepo` but never uses it. Needed if AI milestone
-      recalculation is built; otherwise remove the table, entity, and injection.
+      exist, but the only code that touches the table is cleanup-on-delete. Nothing
+      creates/reads a dependency, and `tasks.service.ts` injects `depRepo` but never uses it.
+      **Now intentionally retained** as the target of the deferred AI `add_dependency` verb
+      (AI editing landed `create`/`update`/`reassign` — see below); implement that verb to
+      exercise the table, or remove the table/entity/injection if dependencies are dropped
+      from scope.
 - [x] **Removing the last manager / empty event** → resolved (allow freely, warn the manager).
       No backend guard/confirm; a 0-member event highlights its card amber (border + glow) with
       a clickable "No members yet — add a manager" warning banner, shown only to those who can
@@ -466,12 +471,17 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
 
 ## Features that could be improved / added (nice-to-have, not blocking)
 
-- [ ] **AI conversational editing** (the big one): let a prompt target existing tasks —
-      "push everything back two days", "move Bob's tasks to Carol", "split setup into 3
-      milestones". Requires AI access to the current task list + a verb other than "create",
-      and would finally exercise `task_dependencies` / `milestones`.
-- [ ] **Notification pruning / pagination.** History is capped at 50 rows on read but rows
-      are never deleted — the table grows unbounded. Add a retention job or paginate.
+- [~] **AI conversational editing** (the big one): ✅ partially done. The AI now returns a
+      list of *actions* — `create`, `update` (reschedule/rename/re-prioritise/status) and
+      `reassign` — and is fed the event's current task list so it can target existing tasks
+      by name ("push the venue booking to Monday", "move the caterer call to Carol"). Each
+      verb reuses the existing TasksService methods, so all permission/validation rules
+      apply; an action-less array is still treated as `create` (backward compatible).
+      **Still deferred:** `split_task` and `add_dependency` — the latter would finally
+      exercise the currently-unused `task_dependencies` table (see dead-code note).
+- [x] **Notification pruning / pagination.** ✅ Done: `getAll(limit, offset)` paginates
+      (limit clamped 1..100) and a nightly cron prunes read notifications older than 30 days
+      (`notifications.service.ts`).
 - [ ] **Bulk task assignment / filtering** on the Tasks page (by assignee, by status).
 - [ ] **Deadline reminder cadence** is fixed at 24h / 30-min cron. Make the reminder window
       configurable per event or per task priority.

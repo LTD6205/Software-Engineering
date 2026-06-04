@@ -14,6 +14,7 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useLang } from '@/context/LanguageContext'
+import { roleColorOf, roleLabelOf } from '@/lib/roles'
 
 const empty = {
   event_name: '', description: '',
@@ -33,6 +34,10 @@ export default function EventsPage() {
   const [pickedManagers, setPickedManagers] = useState<string[]>([])
   const [editing, setEditing] = useState<Event | null>(null) // member editor
   const [memberIds, setMemberIds] = useState<string[]>([])
+  // Read-only member view (for managers/staff who belong to the event but can't
+  // edit its roster).
+  const [viewingMembers, setViewingMembers] = useState<Event | null>(null)
+  const [viewMemberList, setViewMemberList] = useState<ManagerOption[]>([])
   // Date editor.
   const [editingDates, setEditingDates] = useState<Event | null>(null)
   const [dForm, setDForm] = useState({ startDate: '', startTime: '', endDate: '', endTime: '' })
@@ -131,6 +136,15 @@ export default function EventsPage() {
       const ms = await eventsApi.getManagers(ev.event_id)
       setMemberIds(ms.map((m: ManagerOption) => m.user_id))
     } catch { setMemberIds([]) }
+  }
+  // Read-only roster for a member who can't edit it: just the event's managers
+  // (and their team counts). Uses the same getManagers call the backend already
+  // allows any event member to make.
+  const openViewMembers = async (ev: Event) => {
+    setViewingMembers(ev)
+    try {
+      setViewMemberList(await eventsApi.getManagers(ev.event_id))
+    } catch { setViewMemberList([]) }
   }
   const toggleMember = async (managerId: string) => {
     if (!editing) return
@@ -366,6 +380,7 @@ export default function EventsPage() {
                 onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
                 canDelete={canManageEvents}
                 onManageMembers={canManageEvents ? openMembers : undefined}
+                onViewMembers={canManageEvents ? undefined : openViewMembers}
                 onEditDates={canManageEvents ? openDateEditor : undefined}
                 onEditDetails={canManageEvents ? openDetailsEditor : undefined}
               />
@@ -498,6 +513,67 @@ export default function EventsPage() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
             <button
               onClick={() => { setEditing(null); setMemberIds([]) }}
+              style={{
+                background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px',
+                padding: '9px 18px', fontSize: '13px', fontWeight: 600,
+              }}>
+              {t('Done', 'Xong')}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Read-only member list for someone who belongs to the event but can't
+          edit its roster (member managers / staff). */}
+      {viewingMembers && (
+        <Modal
+          title={t('Members', 'Thành viên') + ' — ' + viewingMembers.event_name}
+          onClose={() => { setViewingMembers(null); setViewMemberList([]) }}
+        >
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            {t(
+              'The organizer who set up this event, plus its managers and their teams.',
+              'Người tổ chức đã lập sự kiện này, cùng các quản lý và đội của họ.',
+            )}
+          </p>
+          {/* The organizer/admin who created the event and added its managers. */}
+          {viewingMembers.organizer_name && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 11px', borderRadius: '8px',
+              marginBottom: '10px', background: 'rgba(139,92,246,0.08)',
+              border: '1px solid var(--accent-purple)', fontSize: '13px',
+            }}>
+              <span style={{ flex: 1, color: 'var(--text-primary)', fontWeight: 600 }}>{viewingMembers.organizer_name}</span>
+              <span style={{
+                fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '12px',
+                // The event creator is the organizer — default the label/colour to
+                // 'organizer' rather than the roleLabelOf "Staff" fallback when the
+                // role field isn't present.
+                background: roleColorOf(viewingMembers.organizer_role || 'organizer') + '22',
+                color: roleColorOf(viewingMembers.organizer_role || 'organizer'),
+              }}>{roleLabelOf(viewingMembers.organizer_role || 'organizer', t)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflowY: 'auto' }}>
+            {viewMemberList.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px' }}>
+                {t('No members yet', 'Chưa có thành viên')}
+              </span>
+            ) : viewMemberList.map(mgr => (
+              <div key={mgr.user_id} style={{
+                display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 11px', borderRadius: '8px',
+                background: 'var(--bg-hover)', border: '1px solid var(--border)', fontSize: '13px',
+              }}>
+                <span style={{ flex: 1, color: 'var(--text-primary)' }}>{mgr.name}</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  {mgr.team_count} {t('staff', 'nhân viên')}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+            <button
+              onClick={() => { setViewingMembers(null); setViewMemberList([]) }}
               style={{
                 background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px',
                 padding: '9px 18px', fontSize: '13px', fontWeight: 600,

@@ -2,9 +2,15 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
+  IsBoolean,
+  IsIn,
+  IsUUID,
   MaxLength,
   Matches,
 } from 'class-validator';
+
+// The four roles the system recognises (exact-match RBAC, no hierarchy).
+const ROLES = ['staff', 'manager', 'organizer', 'admin'];
 
 // Cap a base64 avatar at ~1.5 MB of characters so a huge data URL can't bloat
 // the request/DB. (The body limit is 8 MB; this is the per-field guard.)
@@ -30,7 +36,7 @@ export class CreateUserDto {
   phone?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(ROLES)
   role?: string;
 }
 
@@ -41,15 +47,22 @@ export class UpdateUserDto {
   name?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(ROLES)
   role?: string;
 
   @IsOptional()
+  @IsBoolean()
   is_active?: boolean;
 
   @IsOptional()
   @IsString()
   password?: string;
+}
+
+// POST /users/:id/reassign — propose moving a staff member to another manager.
+export class ReassignDto {
+  @IsUUID()
+  target_manager_id: string;
 }
 
 export class UpdateProfileDto {

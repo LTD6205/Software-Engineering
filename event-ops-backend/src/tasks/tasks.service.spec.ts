@@ -179,6 +179,24 @@ describe('TasksService', () => {
         ),
       ).rejects.toThrow(/within the event window/);
     });
+
+    it('rejects a start time in the past', async () => {
+      const ctx = build();
+      // No event row mocked → the window check is skipped; the past guard fires.
+      const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await expect(
+        ctx.service.create(
+          {
+            task_name: 'X',
+            event_id: 'e1',
+            start_time: past,
+            deadline: future,
+          },
+          { sub: 'm', role: 'manager' },
+        ),
+      ).rejects.toThrow(/cannot be in the past/);
+    });
   });
 
   describe('update — field & role guards', () => {
@@ -239,27 +257,88 @@ describe('TasksService', () => {
       expect(patch).not.toHaveProperty('event_id');
       expect(patch).not.toHaveProperty('created_by');
     });
+
+    it('rejects moving a deadline into the past', async () => {
+      const { service, taskRepo, eventRepo } = build();
+      taskRepo.findOne.mockResolvedValue({
+        task_id: 't1',
+        event_id: 'e1',
+        status: 'in_progress',
+        created_by: 'mgr',
+      });
+      eventRepo.findOne.mockResolvedValue(null); // skip the window check
+      const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      await expect(
+        service.update(
+          't1',
+          { deadline: past },
+          { sub: 'mgr', role: 'manager' },
+        ),
+      ).rejects.toThrow(/cannot be in the past/);
+    });
+
+    it('slides an overdue task forward to now when it is reopened', async () => {
+      const ctx = build();
+      const DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      ctx.taskRepo.findOne.mockResolvedValue({
+        task_id: 't1',
+        event_id: 'e1',
+        status: 'overdue',
+        created_by: 'mgr',
+        start_time: new Date(now - 3 * DAY),
+        deadline: new Date(now - 2 * DAY), // 1-day task, 2 days overdue
+      });
+      ctx.assignRepo.find.mockResolvedValue([]);
+      ctx.eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        start_time: new Date(now - 10 * DAY),
+        end_time: new Date(now + 10 * DAY),
+      });
+      ctx.taskRepo.find.mockResolvedValue([]); // recompute no-op
+
+      await ctx.service.update(
+        't1',
+        { status: 'in_progress' },
+        { sub: 'mgr', role: 'manager' },
+      );
+
+      const patch = ctx.taskRepo.update.mock.calls[0][1];
+      expect(patch.status).toBe('in_progress');
+      // Slid to start ~now, preserving the 1-day length, both no longer past.
+      expect(new Date(patch.start_time).getTime()).toBeGreaterThanOrEqual(
+        now - 1000,
+      );
+      expect(new Date(patch.deadline).getTime()).toBeGreaterThan(now);
+    });
   });
 
   describe('recomputeAutoPriorities — timeline bucketing', () => {
-    it('buckets auto tasks into high/medium/low across the timeline thirds', async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const iso = (ms: number) => new Date(ms).toISOString();
+
+    it('buckets auto tasks into high/medium/low from now to the latest deadline', async () => {
       const { service, taskRepo } = build();
-      // Three tasks spanning a 3-day window: earliest=high, mid=medium, late=low.
+      const now = Date.now();
+      // Three future tasks spanning now → now+30d: soonest=high, mid=medium, late=low.
       taskRepo.find.mockResolvedValue([
         {
           task_id: 'a',
           priority_source: 'auto',
-          deadline: '2026-06-01T00:00:00Z',
+          group_id: null,
+          deadline: iso(now + 1 * DAY),
         },
         {
           task_id: 'b',
           priority_source: 'auto',
-          deadline: '2026-06-02T12:00:00Z',
+          group_id: null,
+          deadline: iso(now + 15 * DAY),
         },
         {
           task_id: 'c',
           priority_source: 'auto',
-          deadline: '2026-06-04T00:00:00Z',
+          group_id: null,
+          deadline: iso(now + 30 * DAY),
         },
       ]);
 
@@ -280,36 +359,36 @@ describe('TasksService', () => {
       expect(updates.c).toBe('low');
     });
 
-    it("ranks a group's members within their own span, not the whole event", async () => {
+    it("ranks a group's members within their own span; ungrouped rank from now", async () => {
       const { service, taskRepo } = build();
-      // Two ungrouped tasks define a wide 10-day event window. Two grouped
-      // tasks sit in a narrow slice late in that window — under whole-event
-      // bucketing they'd both be 'low'; per-group they split high/low so the
-      // earlier member outranks the later one.
+      const now = Date.now();
+      // All future (none overdue). The group sits in a narrow late slice — on a
+      // single now→latest timeline its members would share a bucket; per-group
+      // they split high/low so the earlier member outranks the later one.
       taskRepo.find.mockResolvedValue([
         {
           task_id: 'u1',
           priority_source: 'auto',
           group_id: null,
-          deadline: '2026-06-01T00:00:00Z',
+          deadline: iso(now + 1 * DAY),
         },
         {
           task_id: 'u2',
           priority_source: 'auto',
           group_id: null,
-          deadline: '2026-06-11T00:00:00Z',
+          deadline: iso(now + 30 * DAY),
         },
         {
           task_id: 'a',
           priority_source: 'auto',
           group_id: 'g1',
-          deadline: '2026-06-10T00:00:00Z',
+          deadline: iso(now + 20 * DAY),
         },
         {
           task_id: 'b',
           priority_source: 'auto',
           group_id: 'g1',
-          deadline: '2026-06-10T12:00:00Z',
+          deadline: iso(now + 21 * DAY),
         },
       ]);
 
@@ -328,9 +407,58 @@ describe('TasksService', () => {
       // Within group g1 the earlier member is high, the later one low.
       expect(updates.a).toBe('high');
       expect(updates.b).toBe('low');
-      // Ungrouped tasks still rank across the whole event.
+      // Ungrouped tasks rank from now → latest.
       expect(updates.u1).toBe('high');
       expect(updates.u2).toBe('low');
+    });
+
+    it('forces overdue tasks (past the now line) to high, grouped or not', async () => {
+      const { service, taskRepo } = build();
+      const now = Date.now();
+      taskRepo.find.mockResolvedValue([
+        {
+          task_id: 'past',
+          priority_source: 'auto',
+          group_id: null,
+          deadline: iso(now - 2 * DAY),
+        },
+        {
+          task_id: 'future',
+          priority_source: 'auto',
+          group_id: null,
+          deadline: iso(now + 20 * DAY),
+        },
+        {
+          task_id: 'gpast',
+          priority_source: 'auto',
+          group_id: 'g1',
+          deadline: iso(now - 1 * DAY),
+        },
+        {
+          task_id: 'gfuture',
+          priority_source: 'auto',
+          group_id: 'g1',
+          deadline: iso(now + 5 * DAY),
+        },
+      ]);
+
+      await (
+        service as never as {
+          recomputeAutoPriorities(id: string): Promise<void>;
+        }
+      ).recomputeAutoPriorities('e1');
+
+      const updates = Object.fromEntries(
+        taskRepo.update.mock.calls.map(([id, patch]) => [
+          id,
+          patch.priority_label,
+        ]),
+      );
+      // Anything before "now" is High, whether ungrouped or a group member.
+      expect(updates.past).toBe('high');
+      expect(updates.gpast).toBe('high');
+      // A still-future task is not forced high.
+      expect(updates.future).toBe('low');
     });
 
     it('never overwrites a manually-set (user) or AI priority', async () => {

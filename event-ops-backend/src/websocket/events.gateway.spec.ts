@@ -91,4 +91,47 @@ describe('EventsGateway', () => {
       expect(server.emit).toHaveBeenCalledWith('celebrate', { kind: 'task' });
     });
   });
+
+  // Room refresh when event membership changes — so an add/remove takes effect
+  // on already-connected sockets without waiting for a reconnect (#2).
+  describe('event room refresh', () => {
+    function buildRoomGateway() {
+      const gateway = new EventsGateway({} as never, {} as never);
+      const joined: Array<{ from: string; room: string }> = [];
+      const left: Array<{ from: string; room: string }> = [];
+      const inMock = jest.fn((from: string) => ({
+        socketsJoin: (room: string) => joined.push({ from, room }),
+        socketsLeave: (room: string) => left.push({ from, room }),
+      }));
+      (gateway as unknown as { server: unknown }).server = { in: inMock };
+      return { gateway, joined, left };
+    }
+
+    it('joins each user’s personal room to the event room', () => {
+      const { gateway, joined } = buildRoomGateway();
+      gateway.addUsersToEventRoom(['u1', 'u2'], 'e1');
+      expect(joined).toEqual([
+        { from: 'user:u1', room: 'event:e1' },
+        { from: 'user:u2', room: 'event:e1' },
+      ]);
+    });
+
+    it('removes each user’s personal room from the event room', () => {
+      const { gateway, left } = buildRoomGateway();
+      gateway.removeUsersFromEventRoom(['u1', 'u2'], 'e1');
+      expect(left).toEqual([
+        { from: 'user:u1', room: 'event:e1' },
+        { from: 'user:u2', room: 'event:e1' },
+      ]);
+    });
+
+    it('is a no-op without an event id, and skips blank user ids', () => {
+      const { gateway, joined, left } = buildRoomGateway();
+      gateway.addUsersToEventRoom(['u1'], undefined);
+      gateway.removeUsersFromEventRoom(['u1'], undefined);
+      gateway.addUsersToEventRoom(['', 'u1'], 'e1');
+      expect(left).toHaveLength(0);
+      expect(joined).toEqual([{ from: 'user:u1', room: 'event:e1' }]);
+    });
+  });
 });

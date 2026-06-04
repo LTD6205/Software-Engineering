@@ -3,14 +3,17 @@ import {
   IsNotEmpty,
   IsOptional,
   IsUUID,
-  IsNumber,
   IsDateString,
   IsIn,
   MaxLength,
 } from 'class-validator';
 
 // created_by is intentionally absent — the controller sets it from the JWT, and
-// whitelist strips any client-supplied value.
+// whitelist strips any client-supplied value. status, priority_source and
+// priority_score are likewise omitted: they're server-derived (a new task starts
+// in_progress with an auto-bucketed priority), so an HTTP caller can't set them.
+// The AI path provides priority_source/score by calling TasksService.create
+// directly, bypassing this DTO.
 export class CreateTaskDto {
   @IsUUID()
   event_id: string;
@@ -27,18 +30,6 @@ export class CreateTaskDto {
   @IsOptional()
   @IsIn(['low', 'medium', 'high'])
   priority_label?: string;
-
-  @IsOptional()
-  @IsNumber()
-  priority_score?: number;
-
-  @IsOptional()
-  @IsIn(['user', 'ai', 'auto'])
-  priority_source?: string;
-
-  @IsOptional()
-  @IsIn(['pending', 'in_progress', 'completed', 'overdue'])
-  status?: string;
 
   @IsOptional()
   @IsDateString()

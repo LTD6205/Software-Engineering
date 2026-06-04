@@ -52,6 +52,7 @@ interface Props {
   onResetFilters: () => void
   onNewTask: (startISO?: string) => void
   onReschedule: (taskId: string, startISO: string, deadlineISO: string) => void
+  onNotice?: (message: string) => void
 }
 
 const ms = (v?: string | null) => (v ? new Date(v).getTime() : NaN)
@@ -88,6 +89,14 @@ export default function TaskTimeline(props: Props) {
   const [dropKey, setDropKey] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  // Live "now" marker. Refreshed periodically so the blue current-time line
+  // tracks real time without a reload; the same value floors scheduling so a
+  // task can't be dragged/created into the past.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [])
 
   const evStart = ms(event.start_time)
   const evEnd = ms(event.end_time)
@@ -354,8 +363,15 @@ export default function TaskTimeline(props: Props) {
     if (info && !isNaN(info.start) && !isNaN(info.end) && pxPerDay > 0) {
       const dropX = (e.clientX - rect.left) - info.offsetX
       const duration = info.end - info.start
-      let newStart = snapMs(evStart + (dropX / pxPerDay) * DAY)
-      newStart = Math.max(evStart, Math.min(newStart, evEnd - duration))
+      const intended = snapMs(evStart + (dropX / pxPerDay) * DAY)
+      // Floor at "now" (and the event start) so a task can't be moved into the
+      // past; ceil so it still ends within the event window.
+      const floor = Math.max(evStart, now)
+      const newStart = Math.max(floor, Math.min(intended, evEnd - duration))
+      // Tell the user why it snapped if they aimed before the "now" line.
+      if (intended < floor) {
+        props.onNotice?.(t("Tasks can't be moved before the current time", 'Không thể chuyển công việc về trước thời điểm hiện tại'))
+      }
       props.onReschedule(info.taskId, new Date(newStart).toISOString(), new Date(newStart + duration).toISOString())
     }
   }
@@ -481,7 +497,8 @@ export default function TaskTimeline(props: Props) {
               if (!tk && c && pxPerDay > 0) {
                 const rect = c.getBoundingClientRect()
                 time = snapMs(evStart + ((e.clientX - rect.left) / pxPerDay) * DAY)
-                time = Math.max(evStart, Math.min(time, evEnd - 3 * HOUR))
+                // Keep the pre-filled start inside the event and never in the past.
+                time = Math.max(evStart, now, Math.min(time, evEnd - 3 * HOUR))
               }
               setMenu({ x: e.clientX, y: e.clientY, task: tk, time })
             }}
@@ -544,6 +561,26 @@ export default function TaskTimeline(props: Props) {
               ))}
               {/* blocks */}
               {blocks.map(block)}
+              {/* Live "now" line — the current date/time, so you can avoid
+                  scheduling tasks into the past. Drawn on top of the blocks but
+                  click-through (pointerEvents: none). Hidden when the event is
+                  entirely in the future or already over. */}
+              {pxPerDay > 0 && now >= evStart && now <= evEnd && (
+                <div style={{
+                  position: 'absolute', left: x(now), top: 0, bottom: 0, width: '2px',
+                  background: 'var(--accent-blue)', zIndex: 7, pointerEvents: 'none',
+                  boxShadow: '0 0 6px rgba(59,130,246,0.65)',
+                }}>
+                  {/* Pill sits at the bottom of the line, in the spare empty lane,
+                      so it clears both the date/time ruler (top) and the group
+                      titles / rename inputs. */}
+                  <span style={{
+                    position: 'absolute', bottom: '6px', left: '4px', whiteSpace: 'nowrap',
+                    fontSize: '10px', fontWeight: 700, color: 'white',
+                    background: 'var(--accent-blue)', padding: '1px 6px', borderRadius: '6px',
+                  }}>{t('Now', 'Bây giờ')} · {stamp(now)}</span>
+                </div>
+              )}
             </div>
           </div>
 

@@ -15,7 +15,12 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
-import { CreateUserDto, UpdateUserDto, UpdateProfileDto } from './dto/user.dto';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  UpdateProfileDto,
+  ReassignDto,
+} from './dto/user.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -69,7 +74,7 @@ export class UsersController {
   reassign(
     @Request() req: { user: JwtPayload },
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { target_manager_id: string },
+    @Body() body: ReassignDto,
   ) {
     return this.usersService.requestReassign(
       id,

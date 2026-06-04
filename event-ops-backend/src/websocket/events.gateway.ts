@@ -146,6 +146,25 @@ export class EventsGateway implements OnGatewayDisconnect {
     this.server.to(`user:${userId}`).emit('notification', payload);
   }
 
+  // Event membership changed — refresh the event room for users' *live* sockets
+  // so an authorization change takes effect immediately, without waiting for a
+  // reconnect. We target each user's `user:<id>` room, so every open tab of that
+  // user joins/leaves at once. Admins/organizers are unaffected: they use the
+  // catch-all ALL_EVENTS_ROOM, never per-event rooms.
+  addUsersToEventRoom(userIds: string[], eventId?: string) {
+    if (!eventId) return;
+    for (const uid of userIds) {
+      if (uid) this.server.in(`user:${uid}`).socketsJoin(`event:${eventId}`);
+    }
+  }
+
+  removeUsersFromEventRoom(userIds: string[], eventId?: string) {
+    if (!eventId) return;
+    for (const uid of userIds) {
+      if (uid) this.server.in(`user:${uid}`).socketsLeave(`event:${eventId}`);
+    }
+  }
+
   // Broadcast to all authenticated users. Kept for any truly global signal; the
   // event/task data-change + celebration payloads use broadcastToEvent instead.
   broadcast(event: string, payload: object) {
@@ -155,7 +174,11 @@ export class EventsGateway implements OnGatewayDisconnect {
   // Emit an event/task payload only to members of that event (plus admins/
   // organizers via the catch-all room). Falls back to a global broadcast if no
   // event id is known.
-  broadcastToEvent(eventId: string | undefined, event: string, payload: object) {
+  broadcastToEvent(
+    eventId: string | undefined,
+    event: string,
+    payload: object,
+  ) {
     if (!eventId) {
       this.broadcast(event, payload);
       return;
