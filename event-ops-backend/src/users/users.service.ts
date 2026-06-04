@@ -465,10 +465,4 @@ export class UsersService {
     return this.findOne(id);
   }
 
-  // Deactivate user (soft delete — never hard delete users)
-  async deactivate(id: string) {
-    await this.findOne(id);
-    await this.userRepo.update(id, { is_active: false });
-    return { message: 'User deactivated' };
-  }
 }

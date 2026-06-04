@@ -345,24 +345,6 @@ describe('UsersService — profile / CRUD', () => {
     });
   });
 
-  describe('deactivate', () => {
-    it('sets is_active=false and returns the message', async () => {
-      const { service, userRepo } = build();
-      const result = await service.deactivate('user-1');
-      expect(userRepo.update).toHaveBeenCalledWith('user-1', {
-        is_active: false,
-      });
-      expect(result).toEqual({ message: 'User deactivated' });
-    });
-
-    it('throws NotFound when the user does not exist', async () => {
-      const { service } = build();
-      await expect(service.deactivate('ghost')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
   describe('findAll', () => {
     it("includes 'is_active' in the select only for an admin viewer", async () => {
       const { service, userRepo } = build();

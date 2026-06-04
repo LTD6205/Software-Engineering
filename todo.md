@@ -1,7 +1,40 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 batch 3: input validation / DTOs — see below).
+Last updated 2026-06-04 (audit round-2 batch 4: dead-code cleanup + a11y; scoped for a student project).
+
+## 2026-06-04 — audit round-2, batch 4 (#13 cleanup + a11y; rest descoped)
+
+Kept this batch deliberately small — heavy refactors are over-engineering for a
+student project (see decision below).
+
+- **#13 dead code removed** (no callers / not used by the UI; verified):
+  - Frontend `lib/api.ts`: `eventsApi.getOne`, `tasksApi.getOne`, `tasksApi.assign`,
+    `tasksApi.unassign`, `usersApi.getOne`, `usersApi.deactivate`.
+  - Backend: `TasksService.findOverdue()`; the `POST /tasks/:id/assign` and
+    `DELETE /tasks/:id/assign/:userId` routes + `unassignUser()` (the avatar
+    re-select picker uses `PUT /tasks/:id/assignments`); the unused
+    `PUT /users/:id/deactivate` route + `deactivate()` (the UI toggles active via
+    `PUT /users/:id`) and its two unit tests. `assignUser()` is **kept** (the AI
+    service uses it); `GET /tasks/:id/assignments` is **kept** (now viewer-scoped).
+- **#19 a11y:** the sidebar Sign Out control is now a real `<button>` (was a
+  clickable `<div>`), with an `aria-label`.
+
+Verified: backend unit 161 + e2e 51; frontend tsc + lint + build green.
+
+### Descoped as over-engineering for this project (won't do)
+- **#9 httpOnly cookies** — would rework login/CORS/socket auth + the cross-origin
+  demo tunnel; not worth the complexity here (the session is already re-validated
+  via `/auth/me` and a 401 logs out).
+- **#11 single socket provider** — multiple sockets/tab is only overhead; presence
+  is per-user (not visibly inflated), so low value.
+- **#12 raw-SQL → repository/policy service**, **#17 large-file decomposition** —
+  maintainability refactors, no behaviour change.
+- **#18 timeline keyboard/touch a11y rebuild** — large; desktop-only was accepted.
+- **#22 re-enable strict lint rules** — would surface widespread `any`/raw-query
+  warnings to fix; churn without functional benefit. (CI keeps lint non-blocking.)
+- `task_dependencies` table/entity + `depRepo` injection remain (unused but
+  harmless; removing churns the schema/service constructor for no gain).
 
 ## 2026-06-04 — audit round-2, batch 3 (#6 input validation)
 
@@ -139,10 +172,11 @@ open (see "Still open — audit round-2" below).
 - **#5/#7 cron + event-date** routed through a shared task-transition/recompute
   method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).
 - **#6 global ValidationPipe + DTO classes** — ✅ done (batch 3).
-- **#9 httpOnly-cookie auth** (replaces localStorage JWT — invasive; its own change).
-- **#11 single socket provider**, **#12 raw-SQL → repository/policy service**,
-  **#13 dead-route cleanup**, **#17 large-file decomposition**, **#18/#19 timeline
-  a11y + semantic controls + inline-style extraction**, **#22 re-enable lint rules**.
+- **#13 dead-route cleanup** — ✅ done (batch 4); a few harmless unused bits left.
+- **#19 logout button (a11y)** — ✅ done (batch 4).
+- **Descoped for a student project (won't do):** #9 httpOnly cookies, #11 single
+  socket provider, #12 raw-SQL→repository, #17 large-file decomposition, #18
+  timeline keyboard/touch a11y, #22 strict-lint re-enable. (See batch 4 notes.)
 
 ## 2026-06-04 — role rename: `eventmanager` → `organizer` (audit #43)
 

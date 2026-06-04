@@ -6,7 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, Not, In } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskDependency } from '../entities/task-dependency.entity';
@@ -470,15 +470,6 @@ export class TasksService {
     }
   }
 
-  findOverdue() {
-    return this.taskRepo.find({
-      where: {
-        deadline: LessThan(new Date()),
-        status: Not(In(['completed', 'overdue'])),
-      },
-    });
-  }
-
   // ── Assignments ────────────────────────────────────────────
 
   getAssignments(taskId: string) {
@@ -539,16 +530,6 @@ export class TasksService {
       taskId,
     );
     return saved;
-  }
-
-  async unassignUser(
-    taskId: string,
-    userId: string,
-    actor?: { sub: string; role: string },
-  ) {
-    const task = await this.findOne(taskId);
-    if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
-    return this.assignRepo.delete({ task_id: taskId, user_id: userId });
   }
 
   // Replace a task's entire assignee set in one call (used by create and the

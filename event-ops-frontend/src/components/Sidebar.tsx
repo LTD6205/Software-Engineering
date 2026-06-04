@@ -102,17 +102,20 @@ export default function Sidebar({
             <p style={{ fontSize: '11px', color: roleColor, fontWeight: 600 }}>{roleLabel}</p>
           </div>
         </div>
-        <div
+        <button
+          type="button"
           onClick={logout}
+          aria-label={t('Sign Out', 'Đăng xuất')}
           style={{
-            display: 'flex', alignItems: 'center', gap: '10px',
+            display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
             padding: '9px 10px', borderRadius: '8px', cursor: 'pointer',
+            background: 'transparent', border: 'none', textAlign: 'left',
           }}
           onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
           onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
           <LogOut size={16} color="var(--accent-red)" />
-          <p style={{ fontSize: '13px', color: 'var(--accent-red)' }}>{t('Sign Out', 'Đăng xuất')}</p>
-        </div>
+          <span style={{ fontSize: '13px', color: 'var(--accent-red)' }}>{t('Sign Out', 'Đăng xuất')}</span>
+        </button>
       </div>
     </aside>
   )

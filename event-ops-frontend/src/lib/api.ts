@@ -44,7 +44,6 @@ export const authApi = {
 
 export const eventsApi = {
   getAll:  ()                         => api.get('/events').then(r => r.data),
-  getOne:  (id: string)               => api.get(`/events/${id}`).then(r => r.data),
   create:  (data: object)             => api.post('/events', data).then(r => r.data),
   update:  (id: string, data: object) => api.put(`/events/${id}`, data).then(r => r.data),
   updateDates: (id: string, data: { start_time: string; end_time: string; task_strategy: 'delete' | 'shift' }) =>
@@ -58,13 +57,10 @@ export const eventsApi = {
 
 export const tasksApi = {
   getByEvent:        (eventId: string)                => api.get(`/tasks/event/${eventId}`).then(r => r.data),
-  getOne:            (id: string)                     => api.get(`/tasks/${id}`).then(r => r.data),
   create:            (data: object)                   => api.post('/tasks', data).then(r => r.data),
   update:            (id: string, data: object)       => api.put(`/tasks/${id}`, data).then(r => r.data),
   remove:            (id: string)                     => api.delete(`/tasks/${id}`).then(r => r.data),
-  assign:            (taskId: string, userId: string) => api.post(`/tasks/${taskId}/assign`, { user_id: userId }).then(r => r.data),
   setAssignees:      (taskId: string, userIds: string[]) => api.put(`/tasks/${taskId}/assignments`, { user_ids: userIds }).then(r => r.data),
-  unassign:          (taskId: string, userId: string) => api.delete(`/tasks/${taskId}/assign/${userId}`).then(r => r.data),
   // Merged tasks (groups)
   merge:        (sourceId: string, targetId: string) => api.post('/tasks/groups/merge', { source_id: sourceId, target_id: targetId }).then(r => r.data),
   addToGroup:   (groupId: string, taskId: string)     => api.post(`/tasks/groups/${groupId}/add`, { task_id: taskId }).then(r => r.data),
@@ -76,10 +72,8 @@ export const usersApi = {
   getAll: () => api.get('/users').then(r => r.data),
   directory: () => api.get('/users/directory').then(r => r.data),
   updateProfile: (data: object) => api.put('/users/me', data).then(r => r.data),
-  getOne: (id: string) => api.get(`/users/${id}`).then(r => r.data),
   create: (data: object) => api.post('/users', data).then(r => r.data),
   update: (id: string, data: object) => api.put(`/users/${id}`, data).then(r => r.data),
-  deactivate: (id: string) => api.put(`/users/${id}/deactivate`).then(r => r.data),
   // Staff → manager reassignment workflow
   reassignRequests: ()                              => api.get('/users/reassign-requests').then(r => r.data),
   reassign:        (staffId: string, mid: string)   => api.post(`/users/${staffId}/reassign`, { target_manager_id: mid }).then(r => r.data),

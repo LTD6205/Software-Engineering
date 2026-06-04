@@ -156,11 +156,4 @@ export class UsersController {
       );
     }
   }
-
-  // PUT /api/users/:id/deactivate — admin only
-  @Put(':id/deactivate')
-  @Roles('admin')
-  deactivate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.deactivate(id);
-  }
 }
