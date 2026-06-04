@@ -304,10 +304,14 @@ function TasksContent() {
     setError('')
     setShowModal(true)
   }
-  // Drag a block along the timeline to reschedule it (keeps its length).
+  // Drag a block along the timeline to reschedule it (keeps its length). The
+  // optimistic move gives instant feedback; reloadTasks() then pulls the
+  // server-recomputed auto priorities (a reschedule re-buckets the task — and,
+  // for a grouped task, re-ranks it within its group — so its High/Med/Low can
+  // change), which the optimistic update alone wouldn't reflect.
   const handleReschedule = async (taskId: string, startISO: string, deadlineISO: string) => {
     setTasks(p => p.map(t => t.task_id === taskId ? { ...t, start_time: startISO, deadline: deadlineISO } : t))
-    try { await tasksApi.update(taskId, { start_time: startISO, deadline: deadlineISO }); refreshEvents() }
+    try { await tasksApi.update(taskId, { start_time: startISO, deadline: deadlineISO }); await reloadTasks() }
     catch (e) { await reloadTasks(); alert(tError(getErrorMessage(e, 'Could not move the task / Không thể di chuyển công việc'))) }
   }
 

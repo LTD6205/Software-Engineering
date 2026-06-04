@@ -234,9 +234,15 @@ export class TasksService {
   }
 
   // Auto priority: bucket each 'auto' task into High/Medium/Low by where its
-  // deadline (or start) falls across the event's overall task timeline — the
-  // earliest third is High, the middle Medium, the latest Low. Tasks a manager
-  // set by hand (source 'user') and AI tasks ('ai') are left untouched.
+  // deadline (or start) falls across a timeline — the earliest third is High,
+  // the middle Medium, the latest Low. Tasks a manager set by hand
+  // (source 'user') and AI tasks ('ai') are left untouched.
+  //
+  // The timeline a task is ranked against depends on whether it's grouped:
+  //   • ungrouped tasks rank across the whole event's task timeline;
+  //   • a group's members rank WITHIN their own group's span, so reordering two
+  //     members by time (e.g. dragging b ahead of a) flips their relative
+  //     priority — a narrow group no longer collapses to one shared bucket.
   // Public so EventsService can re-bucket after an event's dates change (#7).
   async recomputeAutoPriorities(eventId: string) {
     if (!eventId) return;
@@ -246,14 +252,18 @@ export class TasksService {
       const s = t.start_time ? new Date(t.start_time).getTime() : NaN;
       return !isNaN(d) ? d : s;
     };
-    const times = tasks.map(basis).filter((v) => !isNaN(v));
-    if (times.length === 0) return;
-    const min = Math.min(...times);
-    const span = Math.max(...times) - min;
-    for (const t of tasks) {
-      if (t.priority_source !== 'auto') continue;
+    // The [min, span] of a set of tasks' basis times (undated tasks ignored).
+    const windowOf = (cohort: Task[]): [number, number] | null => {
+      const times = cohort.map(basis).filter((v) => !isNaN(v));
+      if (times.length === 0) return null;
+      const min = Math.min(...times);
+      return [min, Math.max(...times) - min];
+    };
+    // Re-bucket a single 'auto' task against a [min, span] window.
+    const bucket = async (t: Task, min: number, span: number) => {
+      if (t.priority_source !== 'auto') return;
       const b = basis(t);
-      if (isNaN(b)) continue;
+      if (isNaN(b)) return;
       const frac = span <= 0 ? 0 : (b - min) / span;
       const label = frac < 1 / 3 ? 'high' : frac < 2 / 3 ? 'medium' : 'low';
       const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10;
@@ -263,6 +273,29 @@ export class TasksService {
           priority_score: score,
         });
       }
+    };
+    // Ungrouped tasks rank across the whole event's timeline (unchanged); each
+    // group's members rank within their own span.
+    const ungrouped: Task[] = [];
+    const byGroup = new Map<string, Task[]>();
+    for (const t of tasks) {
+      if (t.group_id) {
+        const members = byGroup.get(t.group_id) ?? [];
+        members.push(t);
+        byGroup.set(t.group_id, members);
+      } else {
+        ungrouped.push(t);
+      }
+    }
+    const eventWindow = windowOf(tasks);
+    if (eventWindow) {
+      for (const t of ungrouped)
+        await bucket(t, eventWindow[0], eventWindow[1]);
+    }
+    for (const members of byGroup.values()) {
+      const w = windowOf(members);
+      if (!w) continue;
+      for (const t of members) await bucket(t, w[0], w[1]);
     }
   }
 
@@ -552,7 +585,9 @@ export class TasksService {
     await this.assignRepo.manager.transaction(async (em) => {
       await em.delete(TaskAssignment, { task_id: taskId });
       for (const uid of ids) {
-        await em.save(em.create(TaskAssignment, { task_id: taskId, user_id: uid }));
+        await em.save(
+          em.create(TaskAssignment, { task_id: taskId, user_id: uid }),
+        );
       }
     });
     // Notifications/broadcast run only after the replacement has committed.
@@ -619,6 +654,9 @@ export class TasksService {
     if (oldGroup && oldGroup !== groupId) {
       await this.dissolveIfTooSmall(oldGroup);
     }
+    // Membership changed which timeline each task ranks against, so re-bucket
+    // the event's auto priorities (the new group ranks within itself).
+    await this.recomputeAutoPriorities(target.event_id);
     this.broadcastChange(target.event_id);
     return { group_id: groupId };
   }
@@ -647,6 +685,8 @@ export class TasksService {
     if (oldGroup) {
       await this.dissolveIfTooSmall(oldGroup);
     }
+    // The task now ranks within this group's span — re-bucket auto priorities.
+    await this.recomputeAutoPriorities(group.event_id);
     this.broadcastChange(group.event_id);
     return { group_id: groupId };
   }
@@ -659,6 +699,8 @@ export class TasksService {
     if (!groupId) return { ok: true };
     await this.taskRepo.update(taskId, { group_id: null });
     await this.dissolveIfTooSmall(groupId);
+    // Leaving the group, the task re-ranks across the whole event timeline.
+    await this.recomputeAutoPriorities(task.event_id);
     this.broadcastChange(task.event_id);
     return { ok: true };
   }
