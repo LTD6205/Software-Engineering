@@ -25,6 +25,10 @@ function build() {
   const tasksService = {
     create: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
     assignUser: jest.fn(),
+    update: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
+    setAssignees: jest.fn().mockResolvedValue(undefined),
+    // The current task list fed to the model (empty unless a test overrides it).
+    findAllByEvent: jest.fn().mockResolvedValue([]),
   };
   // The actor may always manage the event in these tests; event-scope
   // enforcement is covered by the EventsService/e2e tests.
@@ -226,5 +230,94 @@ describe('AiService.processCommand', () => {
     const arg = tasksService.create.mock.calls[0][0];
     expect(arg.deadline).toBeUndefined();
     expect(arg.priority_score).toBe(10);
+  });
+
+  it('updates an existing task referenced by name (reschedule + reprioritise)', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 'tk9', task_name: 'Book venue' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'update',
+            task_ref: 'Book venue',
+            priority: 'high',
+            deadline: '2026-08-01T09:00:00',
+          },
+        ]),
+      ),
+    );
+
+    const result = (await service.processCommand(
+      ACTOR,
+      'e1',
+      'push the venue booking to August and make it high priority',
+    )) as { status: string; tasks_updated: unknown[] };
+
+    expect(result.status).toBe('success');
+    expect(result.tasks_updated).toHaveLength(1);
+    expect(tasksService.update).toHaveBeenCalledWith(
+      'tk9',
+      expect.objectContaining({ priority_label: 'high', priority_score: 90 }),
+      ACTOR,
+    );
+    // The new deadline is a real Date, not an "Invalid Date".
+    const patch = tasksService.update.mock.calls[0][1];
+    expect(patch.deadline instanceof Date).toBe(true);
+    expect(tasksService.create).not.toHaveBeenCalled();
+  });
+
+  it('reassigns an existing task to a matched active user', async () => {
+    const { service, tasksService, userRepo } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 'tk9', task_name: 'Call caterer' },
+    ]);
+    userRepo.findOne.mockResolvedValue({ user_id: 'carol' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'reassign', task_ref: 'Call caterer', assigned_to: 'Carol' },
+        ]),
+      ),
+    );
+
+    const result = (await service.processCommand(
+      ACTOR,
+      'e1',
+      "move the caterer call to Carol",
+    )) as { status: string; tasks_reassigned: unknown[] };
+
+    expect(result.status).toBe('success');
+    expect(result.tasks_reassigned).toHaveLength(1);
+    expect(tasksService.setAssignees).toHaveBeenCalledWith(
+      'tk9',
+      ['carol'],
+      ACTOR,
+    );
+  });
+
+  it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 'tk9', task_name: 'Book venue' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'update', task_ref: 'Nonexistent task', status: 'completed' },
+        ]),
+      ),
+    );
+
+    const result = (await service.processCommand(ACTOR, 'e1', 'finish X')) as {
+      status: string;
+      unresolved: string[];
+    };
+
+    expect(result.status).toBe('success');
+    expect(result.unresolved).toContain('Nonexistent task');
+    expect(tasksService.update).not.toHaveBeenCalled();
   });
 });

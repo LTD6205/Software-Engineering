@@ -1,7 +1,7 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
 import { Bot, Send, User, CheckCircle, XCircle, Loader } from 'lucide-react'
-import { aiApi, eventsApi } from '@/lib/api'
+import { aiApi, eventsApi, getErrorMessage } from '@/lib/api'
 import { Event, Task } from '@/lib/types'
 import TopBar from '@/components/TopBar'
 import EventPicker from '@/components/EventPicker'
@@ -22,18 +22,18 @@ export default function AiPage() {
   const [input, setInput]       = useState('')
   const [loading, setLoading]   = useState(false)
   const bottomRef               = useRef<HTMLDivElement>(null)
-  const { t, lang } = useLang()
+  const { t, tError, lang } = useLang()
 
   const examples = lang === 'en'
     ? [
         'Create 3 tasks for venue setup by next Friday, assign to the team, high priority',
-        'Add a task to check audio equipment with medium priority, deadline this Sunday',
-        'Create catering coordination task with high priority, deadline 2025-09-01',
+        'Push the venue booking deadline to next Monday and make it high priority',
+        'Reassign the catering coordination task to Carol',
       ]
     : [
         'Tạo 3 công việc chuẩn bị địa điểm trước thứ Sáu tới, giao cho nhóm, ưu tiên cao',
-        'Thêm công việc kiểm tra thiết bị âm thanh, ưu tiên trung bình, hạn chủ nhật này',
-        'Tạo công việc điều phối ăn uống, ưu tiên cao, hạn chót 2025-09-01',
+        'Dời hạn đặt địa điểm sang thứ Hai tới và đặt ưu tiên cao',
+        'Giao lại công việc điều phối ăn uống cho Carol',
       ]
 
   const prioLabel = (p: string) =>
@@ -63,21 +63,40 @@ export default function AiPage() {
 
     try {
       const result = await aiApi.command(eventId, text)
-      const n = result.tasks_created?.length ?? 0
+      const created    = result.tasks_created?.length    ?? 0
+      const updated    = result.tasks_updated?.length    ?? 0
+      const reassigned = result.tasks_reassigned?.length ?? 0
+      const unresolved = result.unresolved?.length       ?? 0
+      // The AI can now create, update and reassign in one command — summarise
+      // whatever actually happened rather than assuming everything was a create.
+      const parts: string[] = []
+      if (created)    parts.push(lang === 'en' ? `created ${created}`       : `tạo ${created}`)
+      if (updated)    parts.push(lang === 'en' ? `updated ${updated}`       : `cập nhật ${updated}`)
+      if (reassigned) parts.push(lang === 'en' ? `reassigned ${reassigned}` : `giao lại ${reassigned}`)
+      const summary = parts.length
+        ? (lang === 'en' ? `Done: ${parts.join(', ')} task(s).` : `Hoàn tất: ${parts.join(', ')} công việc.`)
+        : (lang === 'en' ? 'No changes were made.' : 'Không có thay đổi nào.')
+      const unresolvedNote = unresolved
+        ? (lang === 'en' ? ` (${unresolved} reference(s) could not be matched)` : ` (${unresolved} tham chiếu không khớp)`)
+        : ''
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id ? {
           ...m,
           status: result.status,
           text: result.status === 'success'
-            ? (lang === 'en' ? `Successfully created ${n} task(s).` : `Đã tạo thành công ${n} công việc.`)
+            ? summary + unresolvedNote
             : `${t('Could not process', 'Không thể xử lý')}: ${JSON.stringify(result.reason)}`,
-          tasks: result.tasks_created,
+          tasks: [...(result.tasks_created ?? []), ...(result.tasks_updated ?? [])],
         } : m
       ))
-    } catch {
+    } catch (e) {
+      // Surface the real backend reason (e.g. "Task times cannot be in the past")
+      // instead of always blaming connectivity; fall back to the generic
+      // connection hint only when there's no server message.
+      const reason = tError(getErrorMessage(e, 'Could not reach the AI service. Check your DeepSeek API key in .env / Không thể kết nối dịch vụ AI. Kiểm tra khóa API DeepSeek trong .env'))
       setMessages(prev => prev.map(m =>
         m.id === aiMsg.id
-          ? { ...m, status: 'rejected', text: t('Could not reach the AI service. Check your DeepSeek API key in .env', 'Không thể kết nối dịch vụ AI. Kiểm tra khóa API DeepSeek trong .env') }
+          ? { ...m, status: 'rejected', text: reason }
           : m
       ))
     } finally { setLoading(false) }
@@ -109,7 +128,7 @@ export default function AiPage() {
               {t('AI Task Assistant', 'Trợ lý công việc AI')}
             </p>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '24px' }}>
-              {t('Type a command in English or Vietnamese to create tasks automatically.', 'Nhập lệnh bằng tiếng Anh hoặc tiếng Việt để tạo công việc tự động.')}
+              {t('Type a command in English or Vietnamese to create, reschedule, re-prioritise or reassign tasks automatically.', 'Nhập lệnh bằng tiếng Anh hoặc tiếng Việt để tạo, dời hạn, đổi ưu tiên hoặc giao lại công việc tự động.')}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '500px', margin: '0 auto' }}>
               {examples.map((ex, i) => (
