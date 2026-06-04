@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Param,
+  ParseUUIDPipe,
   Body,
   UseGuards,
   Request,
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { CreateUserDto, UpdateUserDto, UpdateProfileDto } from './dto/user.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -50,7 +52,10 @@ export class UsersController {
   // peer manager, or themselves (so a raw id can't read an arbitrary user).
   @Get(':id')
   @Roles('manager', 'admin')
-  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  findOne(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.usersService.findOneForViewer(id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -63,7 +68,7 @@ export class UsersController {
   @Roles('manager', 'admin')
   reassign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { target_manager_id: string },
   ) {
     return this.usersService.requestReassign(
@@ -78,7 +83,7 @@ export class UsersController {
   @Roles('manager', 'admin')
   acceptReassign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.usersService.acceptReassign(id, req.user);
   }
@@ -88,7 +93,7 @@ export class UsersController {
   @Roles('manager', 'admin')
   rejectReassign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.usersService.rejectReassign(id, req.user);
   }
@@ -99,25 +104,15 @@ export class UsersController {
   @Roles('manager', 'admin')
   cancelReassign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.usersService.cancelReassign(id, req.user);
   }
 
-  // POST /api/users — manager creates staff/manager; only admin creates admin
+  // POST /api/users — manager creates staff; only admin creates non-staff roles
   @Post()
   @Roles('manager', 'admin')
-  create(
-    @Request() req: { user: JwtPayload },
-    @Body()
-    body: {
-      name: string;
-      email: string;
-      password: string;
-      phone?: string;
-      role?: string;
-    },
-  ) {
+  create(@Request() req: { user: JwtPayload }, @Body() body: CreateUserDto) {
     this.assertCanAssignRole(req.user.role, body.role);
     return this.usersService.create(body, req.user);
   }
@@ -127,32 +122,19 @@ export class UsersController {
   @Put('me')
   updateProfile(
     @Request() req: { user: JwtPayload },
-    @Body()
-    body: {
-      current_password: string;
-      name?: string;
-      email?: string;
-      phone?: string;
-      avatar?: string;
-      new_password?: string;
-    },
+    @Body() body: UpdateProfileDto,
   ) {
     return this.usersService.updateProfile(req.user.sub, body);
   }
 
-  // PUT /api/users/:id — manager updates staff; only admin sets admin role
+  // PUT /api/users/:id — manager updates their own staff; only admin sets roles,
+  // resets passwords, or (de)activates accounts.
   @Put(':id')
   @Roles('manager', 'admin')
   update(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
-    @Body()
-    body: {
-      name?: string;
-      role?: string;
-      is_active?: boolean;
-      password?: string;
-    },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateUserDto,
   ) {
     this.assertCanAssignRole(req.user.role, body.role);
     // Activating/deactivating an account is admin-only.
@@ -178,7 +160,7 @@ export class UsersController {
   // PUT /api/users/:id/deactivate — admin only
   @Put(':id/deactivate')
   @Roles('admin')
-  deactivate(@Param('id') id: string) {
+  deactivate(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.deactivate(id);
   }
 }

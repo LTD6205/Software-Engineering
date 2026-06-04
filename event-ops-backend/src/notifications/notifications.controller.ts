@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   Request,
@@ -31,7 +32,7 @@ export class NotificationsController {
   @Get('user/:userId')
   getUnread(
     @Request() req: { user: JwtPayload },
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
   ) {
     this.assertSelf(req.user.sub, userId);
     return this.notifsService.getUnread(req.user.sub);
@@ -41,7 +42,7 @@ export class NotificationsController {
   @Get('user/:userId/all')
   getAll(
     @Request() req: { user: JwtPayload },
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
@@ -56,7 +57,7 @@ export class NotificationsController {
   @Put('user/:userId/read-all')
   markAllRead(
     @Request() req: { user: JwtPayload },
-    @Param('userId') userId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
   ) {
     this.assertSelf(req.user.sub, userId);
     return this.notifsService.markAllRead(req.user.sub);
@@ -65,7 +66,10 @@ export class NotificationsController {
   // Scoped to the actor: a notification is only marked read if it belongs to
   // them (a foreign id is a harmless no-op rather than tampering another user's).
   @Put(':id/read')
-  markRead(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  markRead(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.notifsService.markRead(id, req.user.sub);
   }
 }

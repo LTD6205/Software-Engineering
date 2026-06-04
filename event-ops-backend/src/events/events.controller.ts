@@ -5,6 +5,7 @@ import {
   Put,
   Delete,
   Param,
+  ParseUUIDPipe,
   Body,
   UseGuards,
   Request,
@@ -15,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { CreateEventDto, UpdateDatesDto } from './dto/event.dto';
 
 @Controller('events')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -40,7 +42,7 @@ export class EventsController {
   @Get(':id/managers')
   getEventManagers(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.eventsService.getEventManagersForViewer(id, {
       sub: req.user.sub,
@@ -49,7 +51,10 @@ export class EventsController {
   }
 
   @Get(':id')
-  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  findOne(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.eventsService.findOneForViewer(id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -59,20 +64,23 @@ export class EventsController {
   // Only organizers (and admins) create events.
   @Post()
   @Roles('organizer')
-  create(
-    @Request() req: { user: JwtPayload },
-    @Body() body: Partial<Event> & { manager_ids?: string[] },
-  ) {
-    const { manager_ids, ...data } = body;
+  create(@Request() req: { user: JwtPayload }, @Body() body: CreateEventDto) {
+    // DTO dates arrive as ISO strings → coerce to Date for the entity.
+    const { manager_ids, start_time, end_time, ...data } = body;
     return this.eventsService.create(
-      { ...data, created_by: req.user.sub },
+      {
+        ...data,
+        start_time: new Date(start_time),
+        end_time: new Date(end_time),
+        created_by: req.user.sub,
+      },
       manager_ids ?? [],
     );
   }
 
   @Put(':id')
   @Roles('organizer')
-  update(@Param('id') id: string, @Body() body: Partial<Event>) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: Partial<Event>) {
     return this.eventsService.update(id, body);
   }
 
@@ -80,13 +88,8 @@ export class EventsController {
   @Put(':id/dates')
   @Roles('organizer')
   updateDates(
-    @Param('id') id: string,
-    @Body()
-    body: {
-      start_time: string;
-      end_time: string;
-      task_strategy: 'delete' | 'shift';
-    },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateDatesDto,
   ) {
     return this.eventsService.updateDates(
       id,
@@ -98,21 +101,24 @@ export class EventsController {
 
   @Delete(':id')
   @Roles('organizer')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.eventsService.remove(id);
   }
 
   @Post(':id/managers')
   @Roles('organizer')
-  addManager(@Param('id') id: string, @Body() body: { manager_id: string }) {
+  addManager(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { manager_id: string },
+  ) {
     return this.eventsService.addManager(id, body.manager_id, true);
   }
 
   @Delete(':id/managers/:managerId')
   @Roles('organizer')
   removeManager(
-    @Param('id') id: string,
-    @Param('managerId') managerId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('managerId', ParseUUIDPipe) managerId: string,
   ) {
     return this.eventsService.removeManager(id, managerId);
   }

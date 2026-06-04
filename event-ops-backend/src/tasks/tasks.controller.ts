@@ -5,6 +5,7 @@ import {
   Put,
   Delete,
   Param,
+  ParseUUIDPipe,
   Body,
   UseGuards,
   Request,
@@ -15,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { CreateTaskDto } from './dto/create-task.dto';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -24,7 +26,7 @@ export class TasksController {
   @Get('event/:eventId')
   findByEvent(
     @Request() req: { user: JwtPayload },
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseUUIDPipe) eventId: string,
   ) {
     return this.tasksService.findAllByEvent(eventId, {
       sub: req.user.sub,
@@ -50,7 +52,7 @@ export class TasksController {
   @Roles('manager')
   addToGroup(
     @Request() req: { user: JwtPayload },
-    @Param('groupId') groupId: string,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
     @Body() body: { task_id: string },
   ) {
     return this.tasksService.addToGroup(groupId, body.task_id, {
@@ -63,7 +65,7 @@ export class TasksController {
   @Roles('manager')
   renameGroup(
     @Request() req: { user: JwtPayload },
-    @Param('groupId') groupId: string,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
     @Body() body: { title: string },
   ) {
     return this.tasksService.renameGroup(groupId, body.title, {
@@ -76,7 +78,7 @@ export class TasksController {
   @Roles('manager')
   ungroup(
     @Request() req: { user: JwtPayload },
-    @Param('taskId') taskId: string,
+    @Param('taskId', ParseUUIDPipe) taskId: string,
   ) {
     return this.tasksService.ungroup(taskId, {
       sub: req.user.sub,
@@ -85,7 +87,10 @@ export class TasksController {
   }
 
   @Get(':id')
-  findOne(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  findOne(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.tasksService.findOneForViewer(id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -94,19 +99,24 @@ export class TasksController {
 
   @Post()
   @Roles('manager')
-  create(@Request() req: { user: JwtPayload }, @Body() body: Partial<Task>) {
+  create(@Request() req: { user: JwtPayload }, @Body() body: CreateTaskDto) {
     // created_by and event membership are enforced from the verified JWT, not
-    // the request body.
-    return this.tasksService.create(body, {
-      sub: req.user.sub,
-      role: req.user.role,
-    });
+    // the request body. DTO dates arrive as ISO strings → coerce to Date.
+    const { start_time, deadline, ...rest } = body;
+    return this.tasksService.create(
+      {
+        ...rest,
+        start_time: start_time ? new Date(start_time) : undefined,
+        deadline: deadline ? new Date(deadline) : undefined,
+      },
+      { sub: req.user.sub, role: req.user.role },
+    );
   }
 
   @Put(':id')
   update(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: Partial<Task> & { actor_user_id?: string },
   ) {
     // The actor is taken from the verified JWT (not the spoofable body field);
@@ -121,7 +131,10 @@ export class TasksController {
 
   @Delete(':id')
   @Roles('manager')
-  remove(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  remove(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.tasksService.remove(id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -130,7 +143,10 @@ export class TasksController {
 
   // Assignments
   @Get(':id/assignments')
-  getAssignments(@Request() req: { user: JwtPayload }, @Param('id') id: string) {
+  getAssignments(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.tasksService.getAssignmentsForViewer(id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -141,7 +157,7 @@ export class TasksController {
   @Roles('manager')
   assign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { user_id: string },
   ) {
     return this.tasksService.assignUser(id, body.user_id, {
@@ -155,7 +171,7 @@ export class TasksController {
   @Roles('manager')
   setAssignees(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { user_ids: string[] },
   ) {
     return this.tasksService.setAssignees(id, body.user_ids ?? [], {
@@ -168,8 +184,8 @@ export class TasksController {
   @Roles('manager')
   unassign(
     @Request() req: { user: JwtPayload },
-    @Param('id') id: string,
-    @Param('userId') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
   ) {
     return this.tasksService.unassignUser(id, userId, {
       sub: req.user.sub,

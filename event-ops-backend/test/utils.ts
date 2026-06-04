@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -27,6 +27,8 @@ export async function createTestApp(): Promise<{
   // DeepSeek failure (no API key in tests) would otherwise dump a stack trace.
   const app = moduleRef.createNestApplication({ logger: false });
   app.setGlobalPrefix('api');
+  // Mirror main.ts so e2e exercises the same request validation as production.
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   await app.init();
   return { app, moduleRef };
 }

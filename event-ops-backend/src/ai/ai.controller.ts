@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { AiCommandDto } from './dto/ai-command.dto';
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -16,7 +17,7 @@ export class AiController {
     @Request() req: { user: JwtPayload },
     // Only eventId and message come from the body. The acting user is taken
     // from the verified JWT, never from a client-supplied userId.
-    @Body() body: { eventId: string; message: string },
+    @Body() body: AiCommandDto,
   ): Promise<object> {
     return this.aiService.processCommand(
       { sub: req.user.sub, role: req.user.role },

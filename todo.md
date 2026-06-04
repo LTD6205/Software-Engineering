@@ -1,7 +1,27 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 batch 2c: #7 event-date recompute + #5 analysis — see below).
+Last updated 2026-06-04 (audit round-2 batch 3: input validation / DTOs — see below).
+
+## 2026-06-04 — audit round-2, batch 3 (#6 input validation)
+
+- Added `class-validator` + `class-transformer`; enabled a global
+  `ValidationPipe({ transform: true, whitelist: true })` in `main.ts` (and in the
+  e2e `createTestApp`, so e2e mirrors production). **Not** `forbidNonWhitelisted`
+  — extra fields (e.g. a client-sent `created_by`/`userId`) are silently stripped
+  rather than 400'd, so clients aren't broken. Interface-typed bodies still pass
+  through untouched (no metadata), so only converted endpoints are validated.
+- DTO classes for the key bodies: `LoginDto` (no missing field reaches bcrypt),
+  `AiCommandDto` (uuid eventId + message), `CreateUserDto`/`UpdateUserDto`/
+  `UpdateProfileDto` (avatar capped at ~1.5 MB), `CreateEventDto`/`UpdateDatesDto`,
+  `CreateTaskDto`. Controllers coerce ISO date strings → `Date` for the entities.
+- `ParseUUIDPipe` on every entity-id path param (tasks/events/users/notifications)
+  — a malformed id now returns 400 instead of a low-level DB error.
+- New `test/validation.e2e-spec.ts` (missing login field → 400, bad UUID param →
+  400, non-uuid AI eventId → 400). **Verified:** backend unit 163 + e2e 51 green.
+
+Deferred: converting the remaining looser bodies (event update, task update,
+group/assign bodies) to DTOs — the services already allowlist those, so lower value.
 
 ## 2026-06-04 — audit round-2, batch 2c (#7, #5, more #4)
 
@@ -118,7 +138,7 @@ open (see "Still open — audit round-2" below).
 - **#7 event-date priority recompute** — ✅ done (batch 2c).
 - **#5/#7 cron + event-date** routed through a shared task-transition/recompute
   method (blocked by a Tasks↔Notifications/Events circular dep — needs forwardRef).
-- **#6 global ValidationPipe + DTO classes** (whitelist needs real DTOs first).
+- **#6 global ValidationPipe + DTO classes** — ✅ done (batch 3).
 - **#9 httpOnly-cookie auth** (replaces localStorage JWT — invasive; its own change).
 - **#11 single socket provider**, **#12 raw-SQL → repository/policy service**,
   **#13 dead-route cleanup**, **#17 large-file decomposition**, **#18/#19 timeline
