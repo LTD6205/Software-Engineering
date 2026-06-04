@@ -5,6 +5,7 @@ import { Repository, LessThan, Between, Not, In } from 'typeorm';
 import { Task } from '../entities/task.entity';
 import { Notification } from '../entities/notification.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
+import { TaskLog } from '../entities/task-log.entity';
 import { EventsGateway } from '../websocket/events.gateway';
 
 @Injectable()
@@ -17,8 +18,8 @@ export class NotificationsService {
     private readonly gateway: EventsGateway,
   ) {}
 
-  // Runs every 30 minutes automatically
-  @Cron(CronExpression.EVERY_30_MINUTES)
+  // Runs every minute automatically
+  @Cron(CronExpression.EVERY_MINUTE)
   async checkDeadlines() {
     const now = new Date();
     const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -37,7 +38,7 @@ export class NotificationsService {
 
     // Tasks already past deadline — mark overdue + alert.
     // Exclude tasks already flagged 'overdue' so the alert is only sent once
-    // (otherwise this cron would re-notify every 30 minutes forever).
+    // (otherwise this cron would re-notify every minute forever).
     const overdue = await this.taskRepo.find({
       where: {
         deadline: LessThan(now),
@@ -45,12 +46,36 @@ export class NotificationsService {
       },
     });
     for (const task of overdue) {
-      await this.taskRepo.update(task.task_id, { status: 'overdue' });
+      // Overdue is past the "now" line → always top priority. Bump auto-priority
+      // tasks to High as we flag them (manual 'user'/'ai' priorities are kept).
+      const patch: Partial<Task> = { status: 'overdue' };
+      if (task.priority_source === 'auto') {
+        patch.priority_label = 'high';
+        patch.priority_score = 90;
+      }
+      // Alert the recipients BEFORE flipping the status. sendNotification dedupes
+      // per (user, task, type), so if the status write below fails the task is
+      // re-scanned next minute and re-alerted harmlessly — a task can never end
+      // up 'overdue' with no notification ever sent (the overdue scan excludes
+      // tasks already at status 'overdue', so there'd otherwise be no retry).
       await this.sendNotification(
         task,
         'overdue',
         `OVERDUE: "${task.task_name}" has passed its deadline. / QUÁ HẠN: "${task.task_name}" đã quá hạn chót.`,
       );
+      // Flip the status and record the system-driven transition in task_logs in
+      // one transaction, so a cron status change is always audited (actor_type
+      // 'system' — neither a user nor an AI request).
+      await this.taskRepo.manager.transaction(async (em) => {
+        await em.update(Task, task.task_id, patch);
+        await em.getRepository(TaskLog).save({
+          task_id: task.task_id,
+          action_type: 'status_change',
+          old_value: { status: task.status },
+          new_value: patch,
+          actor_type: 'system',
+        });
+      });
       // Tell the event's members so the board reflects the system status change
       // without waiting for a manual refresh.
       this.gateway.broadcastToEvent(task.event_id, 'data_changed', {
@@ -184,7 +209,10 @@ export class NotificationsService {
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async pruneOldNotifications() {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    await this.notifRepo.delete({ is_read: true, created_at: LessThan(cutoff) });
+    await this.notifRepo.delete({
+      is_read: true,
+      created_at: LessThan(cutoff),
+    });
   }
 
   async markAllRead(userId: string) {

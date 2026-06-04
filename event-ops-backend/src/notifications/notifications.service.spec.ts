@@ -1,14 +1,29 @@
 import { NotificationsService } from './notifications.service';
 
 function makeRepo() {
-  return {
+  // Captures task_logs written through em.getRepository(TaskLog).save(...).
+  const logSave = jest.fn((x) => Promise.resolve(x));
+  const manager: Record<string, jest.Mock> = { query: jest.fn() };
+  const repo = {
     find: jest.fn(),
     findOne: jest.fn(),
     save: jest.fn((x) => Promise.resolve({ notification_id: 'n1', ...x })),
     update: jest.fn(),
     delete: jest.fn(),
-    manager: { query: jest.fn() },
+    manager,
+    logSave,
   };
+  // A transaction runs its callback with an entity-manager that proxies update
+  // to repo.update (so existing assertions still see ('id', patch)) and routes
+  // getRepository(...).save to repo.logSave.
+  manager.transaction = jest.fn((cb: (em: unknown) => unknown) =>
+    cb({
+      update: (_e: unknown, criteria: unknown, partial: unknown) =>
+        repo.update(criteria, partial),
+      getRepository: () => ({ save: logSave }),
+    }),
+  );
+  return repo;
 }
 
 function build() {
@@ -115,6 +130,28 @@ describe('NotificationsService', () => {
       expect(gateway.sendToUser).toHaveBeenCalledWith(
         'u1',
         expect.objectContaining({ type: 'overdue' }),
+      );
+    });
+
+    it('records the overdue transition as a system task_log', async () => {
+      const { service, taskRepo, notifRepo } = build();
+      taskRepo.find
+        .mockResolvedValueOnce([]) // upcoming
+        .mockResolvedValueOnce([
+          { task_id: 'late', task_name: 'Ship it', status: 'in_progress' },
+        ]); // overdue
+      notifRepo.manager.query.mockResolvedValue([{ uid: 'u1' }]);
+      notifRepo.findOne.mockResolvedValue(null);
+
+      await service.checkDeadlines();
+
+      expect(taskRepo.manager.transaction).toHaveBeenCalled();
+      expect(taskRepo.logSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task_id: 'late',
+          action_type: 'status_change',
+          actor_type: 'system',
+        }),
       );
     });
 

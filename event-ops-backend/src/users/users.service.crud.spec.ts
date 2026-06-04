@@ -372,6 +372,29 @@ describe('UsersService — profile / CRUD', () => {
       const select = userRepo.find.mock.calls[0][0].select;
       expect(select).not.toContain('is_active');
     });
+
+    it('also includes the organizer who added the manager to an event', async () => {
+      const { service, userRepo } = build();
+      // 1st find() = base roster; manager.query returns the manager's event
+      // creator id; 2nd find() = that creator (their organizer).
+      userRepo.find
+        .mockResolvedValueOnce([{ user_id: 'mgr-me', role: 'manager' }])
+        .mockResolvedValueOnce([{ user_id: 'org-1', role: 'organizer' }]);
+      userRepo.manager.query.mockResolvedValueOnce([{ created_by: 'org-1' }]);
+
+      const result = await service.findAll({ sub: 'mgr-me', role: 'manager' });
+
+      // The creator lookup is scoped to this manager's events…
+      expect(userRepo.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('event_managers'),
+        ['mgr-me'],
+      );
+      // …and the creator is fetched by id, then appended to the roster.
+      expect(userRepo.find.mock.calls[1][0].where.user_id).toBeDefined();
+      expect(
+        (result as Array<{ user_id: string }>).map((u) => u.user_id),
+      ).toEqual(['mgr-me', 'org-1']);
+    });
   });
 
   describe('findOneForViewer', () => {
