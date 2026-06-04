@@ -12,6 +12,9 @@ interface Props {
   onClick: (event: Event) => void
   canDelete?: boolean
   onManageMembers?: (event: Event) => void
+  // Read-only members view for people who can see the event but can't edit its
+  // roster (e.g. a member manager or staff). Ignored when onManageMembers is set.
+  onViewMembers?: (event: Event) => void
   onEditDates?: (event: Event) => void
   onEditDetails?: (event: Event) => void
 }
@@ -26,7 +29,7 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'var(--accent-green)',
 }
 
-export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onEditDates, onEditDetails }: Props) {
+export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onViewMembers, onEditDates, onEditDetails }: Props) {
   const { t, lang } = useLang()
   const [expanded, setExpanded] = useState(false)
   const desc = event.description?.trim()
@@ -49,6 +52,9 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
   // An event with no members needs a manager — warn whoever can manage members
   // (an organizer) so they don't forget to staff it.
   const needsMembers = event.people_count === 0 && !!onManageMembers
+  // Whoever may open the member list (editors via onManageMembers, viewers via
+  // onViewMembers). Editors take precedence so they get the editable modal.
+  const memberClick = onManageMembers ?? onViewMembers
   const borderIdle = needsMembers ? 'var(--accent-amber)' : 'var(--border)'
   return (
     <div
@@ -105,16 +111,20 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
         </div>
         {event.people_count != null && (
           <span
-            onClick={onManageMembers ? (e => { e.stopPropagation(); onManageMembers(event) }) : undefined}
-            title={onManageMembers ? t('Manage members', 'Quản lý thành viên') : t('People in this event', 'Số người trong sự kiện')}
+            onClick={memberClick ? (e => { e.stopPropagation(); memberClick(event) }) : undefined}
+            title={onManageMembers
+              ? t('Manage members', 'Quản lý thành viên')
+              : onViewMembers
+                ? t('View members', 'Xem thành viên')
+                : t('People in this event', 'Số người trong sự kiện')}
             style={{
               display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600,
               // An empty event (no members) is flagged amber so it's obvious it needs a manager.
               color: event.people_count === 0 ? 'var(--accent-amber)' : 'var(--text-secondary)',
               background: 'var(--bg-hover)',
               padding: '4px 10px', borderRadius: '20px',
-              border: `1px solid ${onManageMembers ? 'var(--border-light)' : 'var(--border)'}`,
-              cursor: onManageMembers ? 'pointer' : 'default',
+              border: `1px solid ${memberClick ? 'var(--border-light)' : 'var(--border)'}`,
+              cursor: memberClick ? 'pointer' : 'default',
             }}>
             <Users size={13} /> {event.people_count === 0 ? t('No members', 'Chưa có thành viên') : event.people_count}
           </span>

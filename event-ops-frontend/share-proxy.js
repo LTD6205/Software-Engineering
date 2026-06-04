@@ -26,9 +26,12 @@ const PORT = Number(process.env.SHARE_PORT) || 8080;
 const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true });
 proxy.on('error', (err, _req, res) => {
   console.error('proxy error:', err.message);
-  if (res && res.writeHead && !res.headersSent) {
+  // `res` is a ServerResponse for web() errors, or a raw Socket for ws() errors.
+  if (res && typeof res.writeHead === 'function' && !res.headersSent) {
     res.writeHead(502);
     res.end('Bad gateway');
+  } else if (res && typeof res.destroy === 'function') {
+    res.destroy(); // a WebSocket-side error: just tear the socket down
   }
 });
 
@@ -42,6 +45,12 @@ const server = http.createServer((req, res) => {
 // Forward WebSocket upgrades: socket.io -> backend, everything else (Next HMR)
 // -> frontend.
 server.on('upgrade', (req, socket, head) => {
+  // A client that drops a WebSocket mid-write makes this raw socket emit
+  // 'error' (ECONNABORTED/ECONNRESET). Without a listener Node treats it as an
+  // unhandled 'error' event and crashes the whole proxy — so swallow it.
+  socket.on('error', (err) => {
+    console.error('ws socket error:', err.message);
+  });
   const target = (req.url || '').startsWith('/socket.io') ? BACKEND : FRONTEND;
   proxy.ws(req, socket, head, { target });
 });

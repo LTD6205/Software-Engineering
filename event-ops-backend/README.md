@@ -192,9 +192,9 @@ typeorm:          0.3.20
 
 ## Cron Job
 
-- Runs every 30 minutes automatically
+- Runs every minute automatically
 - Checks tasks due within 24 hours → sends `reminder` notification
-- Checks tasks past deadline → marks `overdue`, sends `overdue` notification
+- Checks tasks past deadline → marks `overdue`, bumps `auto`-priority tasks to High, sends `overdue` notification
 - Located in: `src/notifications/notifications.service.ts`
 
 ---
@@ -215,6 +215,36 @@ DEEPSEEK_API_KEY=your_key_here
 
 PORT=3000
 ```
+
+> The values above and everything in `.env.example` / `docker-compose.yml`
+> (`postgres/postgres`, the dev JWT placeholder, the seeded demo accounts) are
+> **local-development defaults only**. See the checklist below before any
+> non-local deployment.
+
+---
+
+## Production deployment checklist ⚠️
+
+The repo ships with convenient local/demo defaults. Do **not** carry them into a
+public or shared deployment — work through this list first:
+
+- [ ] **`JWT_SECRET`** — set a long random value. In production a missing secret
+      is a hard start-up failure (`src/auth/jwt-secret.ts`); never reuse the dev
+      default `eventops_secret_key`.
+- [ ] **`NODE_ENV=production`** — enables the JWT hard-fail above and disables
+      dev conveniences.
+- [ ] **`FRONTEND_ORIGIN`** — set to the real frontend URL. CORS (HTTP + the
+      Socket.io gateway) is locked to this origin, defaulting to
+      `http://localhost:3001` only for local dev (`src/main.ts`).
+- [ ] **Database credentials** — replace `postgres/postgres` with a strong,
+      unique password and a least-privilege role.
+- [ ] **Don't expose Postgres publicly** — `docker-compose.yml` publishes 5432 on
+      the host for local convenience. Remove that port mapping (or bind it to
+      `127.0.0.1`) and put the DB on a private network in production.
+- [ ] **Demo accounts** — `seed.js` loads known demo logins documented in the
+      README. Don't seed them in production, or rotate every password immediately.
+- [ ] **`DEEPSEEK_API_KEY`** — use a production key with its own quota; rotate any
+      key that was ever committed or shared.
 
 ---
 
