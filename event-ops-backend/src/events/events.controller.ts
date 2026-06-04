@@ -11,12 +11,15 @@ import {
   Request,
 } from '@nestjs/common';
 import { EventsService } from './events.service';
-import { Event } from '../entities/event.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
-import { CreateEventDto, UpdateDatesDto } from './dto/event.dto';
+import {
+  CreateEventDto,
+  UpdateDatesDto,
+  UpdateEventDto,
+} from './dto/event.dto';
 
 @Controller('events')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -78,9 +81,12 @@ export class EventsController {
     );
   }
 
+  // Edit name/description only. Dates are handled by PUT /events/:id/dates so
+  // task shift/delete logic isn't bypassed; server-owned fields are never
+  // accepted (UpdateEventDto + global whitelist strip anything else).
   @Put(':id')
   @Roles('organizer')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: Partial<Event>) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateEventDto) {
     return this.eventsService.update(id, body);
   }
 

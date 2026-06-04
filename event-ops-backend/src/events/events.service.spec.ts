@@ -38,7 +38,13 @@ function makeRepo() {
 function build() {
   const eventRepo = makeRepo();
   const notifications = { notifyUsers: jest.fn(), notifyUser: jest.fn() };
-  const gateway = { broadcast: jest.fn(), sendToUser: jest.fn(), broadcastToEvent: jest.fn() };
+  const gateway = {
+    broadcast: jest.fn(),
+    sendToUser: jest.fn(),
+    broadcastToEvent: jest.fn(),
+    addUsersToEventRoom: jest.fn(),
+    removeUsersFromEventRoom: jest.fn(),
+  };
   // EventsService calls back into TasksService to re-bucket priorities after a
   // date change (#7); mocked here.
   const tasks = { recomputeAutoPriorities: jest.fn() };
@@ -188,16 +194,25 @@ describe('EventsService', () => {
     });
   });
 
-  describe('update — date validation', () => {
-    it('rejects an invalid date range', async () => {
+  describe('update — name/description allowlist', () => {
+    it('persists only event_name/description, ignoring date & server-owned fields', async () => {
       const { service, eventRepo } = build();
       eventRepo.findOne.mockResolvedValue({ event_id: 'e1' });
-      await expect(
-        service.update('e1', {
-          start_time: new Date('2026-06-10T10:00:00Z'),
-          end_time: new Date('2026-06-10T08:00:00Z'),
-        }),
-      ).rejects.toThrow(/End time must be after/);
+      // A caller tries to smuggle in server-owned and date fields; the service
+      // must drop everything but name/description (dates go through updateDates).
+      await service.update('e1', {
+        event_name: 'New name',
+        description: 'New desc',
+        status: 'completed',
+        created_by: 'someone-else',
+        event_id: 'e2',
+        start_time: new Date('2026-06-10T10:00:00Z'),
+        end_time: new Date('2026-06-10T08:00:00Z'),
+      } as never);
+      expect(eventRepo.update).toHaveBeenCalledWith('e1', {
+        event_name: 'New name',
+        description: 'New desc',
+      });
     });
   });
 

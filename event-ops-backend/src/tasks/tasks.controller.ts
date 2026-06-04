@@ -17,6 +17,13 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { CreateTaskDto } from './dto/create-task.dto';
+import {
+  UpdateTaskDto,
+  MergeTasksDto,
+  AddToGroupDto,
+  RenameGroupDto,
+  SetAssigneesDto,
+} from './dto/task.dto';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,10 +45,7 @@ export class TasksController {
   // "groups" segment is never swallowed by a param route. ──
   @Post('groups/merge')
   @Roles('manager')
-  merge(
-    @Request() req: { user: JwtPayload },
-    @Body() body: { source_id: string; target_id: string },
-  ) {
+  merge(@Request() req: { user: JwtPayload }, @Body() body: MergeTasksDto) {
     return this.tasksService.merge(body.source_id, body.target_id, {
       sub: req.user.sub,
       role: req.user.role,
@@ -53,7 +57,7 @@ export class TasksController {
   addToGroup(
     @Request() req: { user: JwtPayload },
     @Param('groupId', ParseUUIDPipe) groupId: string,
-    @Body() body: { task_id: string },
+    @Body() body: AddToGroupDto,
   ) {
     return this.tasksService.addToGroup(groupId, body.task_id, {
       sub: req.user.sub,
@@ -66,7 +70,7 @@ export class TasksController {
   renameGroup(
     @Request() req: { user: JwtPayload },
     @Param('groupId', ParseUUIDPipe) groupId: string,
-    @Body() body: { title: string },
+    @Body() body: RenameGroupDto,
   ) {
     return this.tasksService.renameGroup(groupId, body.title, {
       sub: req.user.sub,
@@ -117,12 +121,16 @@ export class TasksController {
   update(
     @Request() req: { user: JwtPayload },
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: Partial<Task> & { actor_user_id?: string },
+    @Body() body: UpdateTaskDto,
   ) {
     // The actor is taken from the verified JWT (not the spoofable body field);
-    // actor_user_id isn't a Task column so it's dropped from the update data.
-    const data: Partial<Task> & { actor_user_id?: string } = { ...body };
+    // actor_user_id isn't a Task column so it's dropped. DTO dates arrive as ISO
+    // strings → coerce to Date for the entity, only for the fields actually set.
+    const { start_time, deadline, ...rest } = body;
+    const data: Partial<Task> & { actor_user_id?: string } = { ...rest };
     delete data.actor_user_id;
+    if (start_time !== undefined) data.start_time = new Date(start_time);
+    if (deadline !== undefined) data.deadline = new Date(deadline);
     return this.tasksService.update(id, data, {
       sub: req.user.sub,
       role: req.user.role,
@@ -159,7 +167,7 @@ export class TasksController {
   setAssignees(
     @Request() req: { user: JwtPayload },
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { user_ids: string[] },
+    @Body() body: SetAssigneesDto,
   ) {
     return this.tasksService.setAssignees(id, body.user_ids ?? [], {
       sub: req.user.sub,
