@@ -49,6 +49,12 @@ event-ops-frontend/   Next.js dashboard (port 3001)
 
 Clone, then set up each project once.
 
+### EC2 Docker Deployment
+
+For an AWS EC2 Amazon Linux deployment with Docker Compose and Nginx on port `80`, use [EC2_DOCKER_DEPLOYMENT.md](EC2_DOCKER_DEPLOYMENT.md).
+
+Database initialization on EC2 is manual because the backend has TypeORM `synchronize: false`: apply the root `database_creating.txt`, run `npm run db:migrate` inside the backend container, then run `npm run seed`. The EC2 guide includes the exact Docker commands.
+
 ### Windows one-click (optional)
 
 If you're on **Windows** with **Docker Desktop** and **Node.js 20+** installed, you can skip the
