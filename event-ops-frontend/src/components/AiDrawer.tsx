@@ -1,7 +1,7 @@
 'use client'
 import { useState, useRef, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Bot, Send, User, CheckCircle, XCircle, Loader, X, Sparkles } from 'lucide-react'
+import { Bot, Send, User, CheckCircle, XCircle, Loader, X, Sparkles, RotateCcw } from 'lucide-react'
 import { aiApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
 
@@ -222,6 +222,14 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
     }
   }
 
+  // Start a fresh conversation: clear the transcript and the persisted history.
+  const resetChat = () => {
+    setTranscript([])
+    setInput('')
+    try { localStorage.removeItem(AI_CHAT_KEY) } catch { /* storage unavailable — non-fatal */ }
+    inputRef.current?.focus()
+  }
+
   const modeBtn = (m: Mode, label: string) => (
     <button
       onClick={() => setModePersist(m)}
@@ -266,12 +274,27 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
             </p>
           </div>
         </div>
-        <button onClick={onClose} aria-label={t('Close', 'Đóng')} style={{
-          background: 'none', border: 'none', color: 'var(--text-muted)',
-          padding: '4px', borderRadius: '6px', display: 'flex', cursor: 'pointer',
-        }}>
-          <X size={18} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button
+            onClick={resetChat}
+            disabled={transcript.length === 0 && !input}
+            aria-label={t('New chat', 'Trò chuyện mới')}
+            title={t('New chat', 'Trò chuyện mới')}
+            style={{
+              background: 'none', border: 'none', color: 'var(--text-muted)',
+              padding: '4px', borderRadius: '6px', display: 'flex',
+              cursor: transcript.length === 0 && !input ? 'default' : 'pointer',
+              opacity: transcript.length === 0 && !input ? 0.4 : 1,
+            }}>
+            <RotateCcw size={17} />
+          </button>
+          <button onClick={onClose} aria-label={t('Close', 'Đóng')} style={{
+            background: 'none', border: 'none', color: 'var(--text-muted)',
+            padding: '4px', borderRadius: '6px', display: 'flex', cursor: 'pointer',
+          }}>
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       {/* Mode toggle */}
