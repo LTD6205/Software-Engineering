@@ -1077,4 +1077,24 @@ describe('AiService.processCommand', () => {
     });
   });
 
+  it('executes a generative create plan without asking (anti-nag)', async () => {
+    const { service, userRepo } = build('manager');
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { task_name: 'Buy cake', priority: 'low', group: 'Food' },
+          { task_name: 'Send invites', priority: 'medium' },
+          { task_name: 'Book venue', priority: 'high' },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'create all the tasks for a birthday party',
+    })) as { status: string; tasks_created: unknown[] };
+    expect(r.status).toBe('success');
+    expect(r.tasks_created.length).toBeGreaterThanOrEqual(1);
+  });
+
 });

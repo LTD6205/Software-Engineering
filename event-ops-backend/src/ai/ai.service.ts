@@ -39,7 +39,7 @@ import {
   RejectReassignAction,
   CancelReassignAction,
 } from './ai.types';
-import { isActionAllowedForRole } from './ai.authz';
+import { isActionAllowedForRole, AI_ACTION_ROLES } from './ai.authz';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
 
@@ -733,6 +733,62 @@ export class AiService {
     return lines.join('\n');
   }
 
+  // One-line JSON shape per action kind, advertised to the model. Only the
+  // shapes whose role allow-list includes the actor are emitted (so the prompt
+  // never describes an action the role cannot perform).
+  private static readonly ACTION_SHAPES: Record<AiActionKind, string> = {
+    create:
+      '{ "action": "create", "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "deadline": "YYYY-MM-DDTHH:mm:ss", "group"?: "group title" }',
+    update:
+      '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string", "priority"?: "low|medium|high", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }',
+    reassign:
+      '{ "action": "reassign", "task_ref": "task name or id", "assigned_to": "name or email" }',
+    unassign: '{ "action": "unassign", "task_ref": "task name or id" }',
+    delete: '{ "action": "delete", "task_ref": "task name or id" }',
+    merge:
+      '{ "action": "merge", "task_ref": "source task", "target_ref": "target task" }',
+    add_to_group:
+      '{ "action": "add_to_group", "group_ref": "group title or id", "task_ref": "task name or id" }',
+    rename_group:
+      '{ "action": "rename_group", "group_ref": "group title or id", "title": "new title" }',
+    ungroup: '{ "action": "ungroup", "task_ref": "task name or id" }',
+    create_event:
+      '{ "action": "create_event", "event_name": "string", "start_time": "YYYY-MM-DDTHH:mm:ss", "end_time": "YYYY-MM-DDTHH:mm:ss", "description"?: "string" }',
+    update_event:
+      '{ "action": "update_event", "event_ref": "event name or id", "event_name"?: "string", "description"?: "string" }',
+    delete_event:
+      '{ "action": "delete_event", "event_ref": "event name or id" }',
+    add_event_manager:
+      '{ "action": "add_event_manager", "event_ref": "event name or id", "manager_ref": "manager name or email" }',
+    remove_event_manager:
+      '{ "action": "remove_event_manager", "event_ref": "event name or id", "manager_ref": "manager name or email" }',
+    create_user:
+      '{ "action": "create_user", "name": "string", "email": "string", "role"?: "staff|manager|organizer", "phone"?: "string" }',
+    update_user:
+      '{ "action": "update_user", "user_ref": "name or email", "name"?: "string", "role"?: "string", "is_active"?: true|false }',
+    reset_password:
+      '{ "action": "reset_password", "user_ref": "name or email", "new_password": "string" }',
+    request_reassign:
+      '{ "action": "request_reassign", "staff_ref": "name or email", "target_manager_ref": "manager name or email" }',
+    accept_reassign: '{ "action": "accept_reassign", "staff_ref": "name or email" }',
+    reject_reassign: '{ "action": "reject_reassign", "staff_ref": "name or email" }',
+    cancel_reassign: '{ "action": "cancel_reassign", "staff_ref": "name or email" }',
+  };
+
+  // The allowed action shapes for a role, one per line, derived from the same
+  // role allow-list used by the hard gate.
+  private buildActionCatalog(role: string): string {
+    const shapes = (
+      Object.keys(AI_ACTION_ROLES) as AiActionKind[]
+    ).filter((kind) => isActionAllowedForRole(role, kind));
+    if (!shapes.length) {
+      return '  (your role has no write actions; you may only answer questions)';
+    }
+    return shapes
+      .map((kind) => `  ${AiService.ACTION_SHAPES[kind]}`)
+      .join('\n');
+  }
+
   // Single execution path for the validated action list. `currentTasks` is the
   // resolvable task list (mutated as creates land); `defaultEventId` is the
   // request event used when an action omits an explicit event. The actor's role
@@ -1419,29 +1475,39 @@ export class AiService {
 - Spread multiple tasks across times INSIDE this window; do not exceed it.`;
     }
 
-    const systemPrompt = `You are an event operations assistant. The user issues a
-natural-language command about an event's task list. You may CREATE new tasks,
-UPDATE existing ones (reschedule, rename, re-prioritise, change status), or
-REASSIGN an existing task to a different person.
+    // The advertised action catalog is filtered to the actor's role so the model
+    // only ever sees shapes it is permitted to use (the hard gate still re-checks
+    // each action in executeActions).
+    const actionCatalog = this.buildActionCatalog(actor.role);
+
+    const systemPrompt = `You are an event operations partner for the role "${actor.role}".
+The user issues a natural-language command or question about events, tasks,
+groups, people, and (for some roles) accounts. Use the context below to answer
+questions, resolve references, and plan work.
 
 CONTEXT (everything you can see right now):
 ${contextBlock}
 
 ${windowInfo}
 
-Return ONLY a valid JSON array of action objects — no explanation, no markdown,
-no preamble. Each object uses one of these shapes:
+You reply with ONE of three JSON shapes — and NOTHING else (no markdown, no
+prose, no preamble):
 
-  { "action": "create",   "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "deadline": "YYYY-MM-DDTHH:mm:ss" }
-  { "action": "update",   "task_ref": "existing task name or id", "task_name"?: "string", "priority"?: "low|medium|high", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }
-  { "action": "reassign", "task_ref": "existing task name or id", "assigned_to": "name or email" }
+1) A JSON ARRAY of action objects to perform. Allowed action shapes for your role:
+${actionCatalog}
 
-Reference existing tasks by their exact name (or id) from the context above.
+2) A direct ANSWER to a question, answered ONLY from the context above:
+  { "answer": "..." }
 
-For an update, include ONLY the fields that change. To push deadlines back/forward,
-emit one update per affected task with the new deadline.
-If the command is too vague to act on, return instead:
-{ "error": "insufficient info", "missing": ["field1", "field2"] }`;
+3) A CLARIFICATION request, ONLY when truly blocked and you cannot infer a sane default:
+  { "clarification_needed": true, "question": "..." }
+
+RULES:
+- Reference existing tasks/events/groups/people by their exact name (or id) from the context.
+- For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
+- ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
+- GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions with sensible deadlines INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.
+- If a command is too vague to act on and a clarification would not help, return: { "error": "insufficient info", "missing": ["field1", "field2"] }.`;
 
     const aiRequest = await this.aiRequestRepo.save({
       user_id: userId,
