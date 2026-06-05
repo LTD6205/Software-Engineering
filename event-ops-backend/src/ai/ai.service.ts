@@ -532,6 +532,18 @@ export class AiService {
     });
   }
 
+  // Resolve a user reference by name or email REGARDLESS of active state. Used
+  // for admin account-management actions (update_user/reset_password) so an
+  // admin can target a deactivated account — e.g. "reactivate Bob" — which the
+  // active-only resolveAssignee above could never match.
+  private async resolveUserRef(ref?: string): Promise<User | null> {
+    const needle = ref?.trim();
+    if (!needle) return null;
+    return this.userRepo.findOne({
+      where: [{ email: needle }, { name: needle }],
+    });
+  }
+
   // Assign a task to an AI-named user if one matches. Permission failures (an
   // out-of-team assignee) are swallowed so the task is simply left unassigned
   // rather than aborting the whole command.
@@ -1142,14 +1154,26 @@ export class AiService {
       }
 
       case 'create_event': {
+        // Validate the model's dates are parseable before persisting, mirroring
+        // the task path's parseDeadline — an Invalid Date would slip past
+        // EventsService.assertValidDateRange (NaN comparisons are false).
+        const start = AiService.parseDeadline(item.start_time);
+        const end = AiService.parseDeadline(item.end_time);
+        if (!start || !end) {
+          res.rejected.push({
+            ref: item.event_name,
+            reason: 'Event start/end date was missing or unparseable',
+          });
+          return;
+        }
         // created_by always comes from the verified JWT, never the model output.
         try {
           const ev = await this.events.create(
             {
               event_name: item.event_name,
               description: item.description,
-              start_time: new Date(item.start_time),
-              end_time: new Date(item.end_time),
+              start_time: start,
+              end_time: end,
               created_by: actor.sub,
             },
             [],
@@ -1296,7 +1320,9 @@ export class AiService {
       }
 
       case 'update_user': {
-        const target = await this.resolveAssignee(item.user_ref);
+        // Resolve regardless of active state so an admin can reactivate a
+        // deactivated account ("reactivate Bob").
+        const target = await this.resolveUserRef(item.user_ref);
         if (!target) {
           res.unresolved.push(item.user_ref);
           return;
@@ -1344,7 +1370,9 @@ export class AiService {
           });
           return;
         }
-        const target = await this.resolveAssignee(item.user_ref);
+        // Resolve regardless of active state (a deactivated account may still
+        // need a password reset before reactivation).
+        const target = await this.resolveUserRef(item.user_ref);
         if (!target) {
           res.unresolved.push(item.user_ref);
           return;

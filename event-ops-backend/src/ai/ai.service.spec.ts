@@ -162,6 +162,56 @@ describe('AiService.processCommand', () => {
     expect(events.assertCanManageEvent).not.toHaveBeenCalled();
   });
 
+  it('create_event with an unparseable date is rejected without calling events.create', async () => {
+    const { service, events } = build();
+    events.create = jest.fn();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'create_event',
+            event_name: 'Bad Date Gala',
+            start_time: 'not-a-date',
+            end_time: 'also-bad',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'make an event' },
+    )) as { events_changed: unknown[]; rejected: { reason: string }[] };
+    expect(events.create).not.toHaveBeenCalled();
+    expect(r.events_changed).toHaveLength(0);
+    expect(r.rejected[0].reason).toMatch(/date/i);
+  });
+
+  it('update_user resolves the target without an is_active filter (admin can reactivate)', async () => {
+    const { service, userRepo, usersService } = build();
+    let captured: unknown;
+    userRepo.findOne.mockImplementation((opts: { where: unknown }) => {
+      captured = opts.where;
+      return Promise.resolve({ user_id: 'd1', name: 'Bob', role: 'staff' });
+    });
+    usersService.update = jest.fn().mockResolvedValue({ user_id: 'd1' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'update_user', user_ref: 'Bob', is_active: true },
+        ]),
+      ),
+    );
+    await service.processCommand({ sub: 'a1', role: 'admin' }, { message: 'reactivate Bob' });
+    expect(usersService.update).toHaveBeenCalledWith(
+      'd1',
+      expect.objectContaining({ is_active: true }),
+      expect.objectContaining({ role: 'admin' }),
+    );
+    // The resolver query must NOT constrain is_active (else a deactivated
+    // account could never be matched for reactivation).
+    expect(JSON.stringify(captured)).not.toContain('is_active');
+  });
+
   it('rate-limits a user after too many requests', async () => {
     const { service } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
