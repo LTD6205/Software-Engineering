@@ -45,7 +45,7 @@ Modules can be extracted into microservices later if the system grows.
 | PostgreSQL     | v13, pgAdmin 4, C: drive                        |
 | VS Code       | D:\Software_Engineering\event-ops-backend       |
 | Redis         | Upstash (cloud, free tier) — not yet configured |
-| AI Provider   | DeepSeek API — not yet configured               |
+| AI Provider   | Any OpenAI-compatible API (DeepSeek by default) — not yet configured |
 
 ---
 
@@ -211,7 +211,9 @@ DB_NAME=event_ops
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-DEEPSEEK_API_KEY=your_key_here
+AI_API_KEY=your_key_here
+AI_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL=deepseek-chat
 
 PORT=3000
 ```
@@ -243,8 +245,9 @@ public or shared deployment — work through this list first:
       `127.0.0.1`) and put the DB on a private network in production.
 - [ ] **Demo accounts** — `seed.js` loads known demo logins documented in the
       README. Don't seed them in production, or rotate every password immediately.
-- [ ] **`DEEPSEEK_API_KEY`** — use a production key with its own quota; rotate any
-      key that was ever committed or shared.
+- [ ] **`AI_API_KEY`** (with `AI_BASE_URL` / `AI_MODEL`) — point at your chosen
+      OpenAI-compatible provider; use a production key with its own quota and
+      rotate any key that was ever committed or shared.
 
 ---
 

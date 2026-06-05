@@ -59,9 +59,17 @@ interface TaskRef {
   task_name: string;
 }
 
-interface DeepSeekResponse {
+// The provider is any OpenAI-compatible chat-completions API (DeepSeek, OpenAI,
+// Together, a local Ollama/vLLM endpoint, …) — selected via AI_BASE_URL /
+// AI_MODEL / AI_API_KEY in the environment, not hard-coded to one vendor.
+interface ChatCompletionResponse {
   choices: { message: { content: string } }[];
 }
+
+// OpenAI-compatible defaults point at DeepSeek so an existing DEEPSEEK_API_KEY
+// setup keeps working without any new config.
+const DEFAULT_AI_BASE_URL = 'https://api.deepseek.com/v1';
+const DEFAULT_AI_MODEL = 'deepseek-chat';
 
 @Injectable()
 export class AiService {
@@ -241,18 +249,26 @@ export class AiService {
       );
     }
     // The actor may only drive AI changes on an event they manage — checked
-    // before we spend a DeepSeek call.
+    // before we spend an external AI call.
     await this.events.assertCanManageEvent(actor, eventId);
     // Throttle this expensive endpoint per user.
     this.assertWithinRateLimit(userId);
     // Don't attempt an external call with a missing key (would send
     // "Bearer undefined" and leak a confusing provider error to the client).
-    const apiKey = this.config.get<string>('DEEPSEEK_API_KEY');
+    // AI_API_KEY is preferred; DEEPSEEK_API_KEY is kept as a backward-compatible
+    // fallback for existing setups.
+    const apiKey =
+      this.config.get<string>('AI_API_KEY') ||
+      this.config.get<string>('DEEPSEEK_API_KEY');
     if (!apiKey) {
       throw new BadRequestException(
         'The AI assistant is not configured / Trợ lý AI chưa được cấu hình',
       );
     }
+    const baseUrl = (
+      this.config.get<string>('AI_BASE_URL') || DEFAULT_AI_BASE_URL
+    ).replace(/\/+$/, '');
+    const model = this.config.get<string>('AI_MODEL') || DEFAULT_AI_MODEL;
 
     // Give the model the event's current tasks so it can target existing ones
     // for update/reassign (not just create new ones). Viewer-scoped read; the
@@ -294,9 +310,9 @@ If the command is too vague to act on, return instead:
 
     try {
       const response = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
+        `${baseUrl}/chat/completions`,
         {
-          model: 'deepseek-chat',
+          model,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userMessage },
@@ -314,7 +330,7 @@ If the command is too vague to act on, return instead:
         },
       );
 
-      const data = response.data as DeepSeekResponse;
+      const data = response.data as ChatCompletionResponse;
       const raw: string = data.choices[0].message.content.trim();
 
       let parsed: unknown;
