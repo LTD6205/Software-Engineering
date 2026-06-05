@@ -1,8 +1,10 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -342,6 +344,117 @@ export class AiService {
       rejected: [],
       skipped: 0,
     };
+  }
+
+  // Load the event's task list and task-group context, shared by processCommand
+  // (to build the prompt + resolve refs) and confirmCommand (to re-resolve refs
+  // when applying a stored plan). When no eventId is supplied (cross-event
+  // commands) this returns empty context without touching the DB.
+  private async loadEventContext(
+    eventId: string | undefined,
+    actor: Actor,
+  ): Promise<{
+    currentTasks: TaskRef[];
+    groupIds: Set<string>;
+    groupByTitle: Map<string, string>;
+  }> {
+    const groupByTitle = new Map<string, string>(); // lower(title) -> group_id
+    const groupIds = new Set<string>();
+    if (!eventId) {
+      return { currentTasks: [], groupIds, groupByTitle };
+    }
+    const rows = (await this.tasksService.findAllByEvent(
+      eventId,
+      actor,
+    )) as Array<{
+      task_id: string;
+      task_name: string;
+      group_id?: string;
+      group_title?: string;
+    }>;
+    const currentTasks: TaskRef[] = rows.map((t) => ({
+      task_id: t.task_id,
+      task_name: t.task_name,
+    }));
+    for (const t of rows) {
+      if (t.group_id) {
+        groupIds.add(t.group_id);
+        if (t.group_title)
+          groupByTitle.set(t.group_title.trim().toLowerCase(), t.group_id);
+      }
+    }
+    return { currentTasks, groupIds, groupByTitle };
+  }
+
+  // Produce a human-readable, one-line-per-action preview of a validated plan,
+  // shown to the user in Ask mode before they confirm or cancel.
+  private describePlan(
+    actions: AiAction[],
+    currentTasks: TaskRef[],
+    groupIds: Set<string>,
+    groupByTitle: Map<string, string>,
+  ): { kind: string; description: string }[] {
+    const taskName = (ref: string): string => {
+      const t = this.resolveTaskRef(ref, currentTasks);
+      return t ? t.task_name : ref;
+    };
+    const groupName = (ref: string): string => {
+      const gid = this.resolveGroupRef(ref, groupIds, groupByTitle);
+      if (!gid) return ref;
+      for (const [title, id] of groupByTitle) if (id === gid) return title;
+      return ref;
+    };
+    return actions.map((item) => {
+      switch (item.action) {
+        case 'create':
+          return {
+            kind: 'create',
+            description: `Create "${item.task_name}"`,
+          };
+        case 'update':
+          return {
+            kind: 'update',
+            description: `Update task "${taskName(item.task_ref)}"`,
+          };
+        case 'reassign':
+          return {
+            kind: 'reassign',
+            description: `Reassign "${taskName(item.task_ref)}" to ${item.assigned_to}`,
+          };
+        case 'unassign':
+          return {
+            kind: 'unassign',
+            description: `Unassign "${taskName(item.task_ref)}"`,
+          };
+        case 'delete':
+          return {
+            kind: 'delete',
+            description: `Delete task "${taskName(item.task_ref)}"`,
+          };
+        case 'merge':
+          return {
+            kind: 'merge',
+            description: `Merge "${taskName(item.task_ref)}" into "${taskName(item.target_ref)}"`,
+          };
+        case 'add_to_group':
+          return {
+            kind: 'add_to_group',
+            description: `Add "${taskName(item.task_ref)}" to group "${groupName(item.group_ref)}"`,
+          };
+        case 'rename_group':
+          return {
+            kind: 'rename_group',
+            description: `Rename group "${groupName(item.group_ref)}" to "${item.title}"`,
+          };
+        case 'ungroup':
+          return {
+            kind: 'ungroup',
+            description: `Remove "${taskName(item.task_ref)}" from its group`,
+          };
+        default:
+          return { kind: 'unknown', description: 'Unknown action' };
+      }
+    });
   }
 
   // Single execution path for the validated action list. `currentTasks` is the
@@ -706,32 +819,11 @@ export class AiService {
     const model = this.config.get<string>('AI_MODEL') || DEFAULT_AI_MODEL;
 
     // Give the model the event's current tasks so it can target existing ones
-    // for update/reassign (not just create new ones). Viewer-scoped read; the
-    // actor already passed the manage check above.
-    const rows = (await this.tasksService.findAllByEvent(
-      eventId,
-      actor,
-    )) as Array<{
-      task_id: string;
-      task_name: string;
-      group_id?: string;
-      group_title?: string;
-    }>;
-    const currentTasks: TaskRef[] = rows.map((t) => ({
-      task_id: t.task_id,
-      task_name: t.task_name,
-    }));
-    // Build the event's task-group context so group_ref/title can be resolved
-    // (and so same-titled new tasks can reuse an existing group).
-    const groupByTitle = new Map<string, string>(); // lower(title) -> group_id
-    const groupIds = new Set<string>();
-    for (const t of rows) {
-      if (t.group_id) {
-        groupIds.add(t.group_id);
-        if (t.group_title)
-          groupByTitle.set(t.group_title.trim().toLowerCase(), t.group_id);
-      }
-    }
+    // for update/reassign (not just create new ones), plus the task-group
+    // context so group_ref/title can be resolved. Viewer-scoped read; the actor
+    // already passed the manage check above.
+    const { currentTasks, groupIds, groupByTitle } =
+      await this.loadEventContext(eventId, actor);
     const taskList = currentTasks.length
       ? currentTasks
           .map((t) => `- "${t.task_name}" (id ${t.task_id})`)
@@ -860,6 +952,16 @@ If the command is too vague to act on, return instead:
         return { status: 'rejected', reason: parsed };
       }
 
+      // Anything that isn't a JSON array of actions at this point (e.g. a bare
+      // string/number) is an unexpected shape — treat as a rejection.
+      if (!Array.isArray(parsed)) {
+        await this.aiRequestRepo.update(aiRequest.request_id, {
+          response: parsed as object,
+          status: 'rejected',
+        });
+        return { status: 'rejected', reason: parsed };
+      }
+
       // Drop malformed items; reject outright if nothing usable came back.
       const { actions, skipped } = this.validateActions(parsed);
       if (actions.length === 0) {
@@ -870,6 +972,28 @@ If the command is too vague to act on, return instead:
         return {
           status: 'rejected',
           reason: { error: 'The AI response contained no valid actions.' },
+        };
+      }
+
+      // Ask mode: persist the validated plan for a later /confirm instead of
+      // applying it now. Nothing is executed until the user confirms.
+      if (opts.mode === 'ask') {
+        const plan = this.describePlan(
+          actions,
+          currentTasks,
+          groupIds,
+          groupByTitle,
+        );
+        await this.aiRequestRepo.update(aiRequest.request_id, {
+          response: { plan: actions, eventId, descriptions: plan } as object,
+          status: 'awaiting_confirmation',
+        });
+        return {
+          status: 'pending_confirmation',
+          request_id: aiRequest.request_id,
+          plan,
+          unresolved: [],
+          skipped,
         };
       }
 
@@ -899,11 +1023,65 @@ If the command is too vague to act on, return instead:
     }
   }
 
-  async confirmCommand(_actor: Actor, _requestId: string): Promise<object> {
-    throw new Error('not implemented'); // Phase 3
+  // A pending Ask-mode plan expires after this long, so a stale preview can't be
+  // applied long after the event/task state it was built against has changed.
+  private static readonly CONFIRM_TTL_MS = 15 * 60 * 1000;
+
+  // Apply a previously-previewed plan. Re-resolves task/group refs against the
+  // current event state (the plan stores refs, not resolved ids), then runs the
+  // same executeActions path as auto mode.
+  async confirmCommand(actor: Actor, requestId: string): Promise<object> {
+    const row = await this.loadPending(actor, requestId);
+    const stored = row.response as { plan: AiAction[]; eventId?: string };
+    const { currentTasks, groupIds, groupByTitle } =
+      await this.loadEventContext(stored.eventId, actor);
+    const result = await this.executeActions(
+      stored.plan ?? [],
+      currentTasks,
+      stored.eventId,
+      actor,
+      requestId,
+      groupIds,
+      groupByTitle,
+    );
+    await this.aiRequestRepo.update(requestId, { status: 'success' });
+    return { status: 'success', ...result };
   }
 
-  async cancelCommand(_actor: Actor, _requestId: string): Promise<object> {
-    throw new Error('not implemented'); // Phase 3
+  // Discard a previously-previewed plan without applying anything.
+  async cancelCommand(actor: Actor, requestId: string): Promise<object> {
+    await this.loadPending(actor, requestId);
+    await this.aiRequestRepo.update(requestId, { status: 'cancelled' });
+    return { status: 'cancelled' };
+  }
+
+  // Load and validate a request that is awaiting confirmation: must exist, be
+  // owned by the actor, still be awaiting confirmation, and not be expired.
+  private async loadPending(actor: Actor, requestId: string) {
+    const row = await this.aiRequestRepo.findOne({
+      where: { request_id: requestId },
+    });
+    if (!row) {
+      throw new NotFoundException(
+        'AI request not found / Không tìm thấy yêu cầu AI',
+      );
+    }
+    if (row.user_id !== actor.sub) {
+      throw new ForbiddenException(
+        'You do not have permission for this request / Bạn không có quyền với yêu cầu này',
+      );
+    }
+    if (row.status !== 'awaiting_confirmation') {
+      throw new BadRequestException(
+        'This request is no longer awaiting confirmation / Yêu cầu này không còn chờ xác nhận',
+      );
+    }
+    if (Date.now() - new Date(row.created_at).getTime() > AiService.CONFIRM_TTL_MS) {
+      await this.aiRequestRepo.update(requestId, { status: 'cancelled' });
+      throw new BadRequestException(
+        'This AI plan has expired — please re-issue the command / Kế hoạch AI đã hết hạn — vui lòng yêu cầu lại',
+      );
+    }
+    return row;
   }
 }

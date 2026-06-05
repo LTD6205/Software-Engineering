@@ -19,6 +19,7 @@ function build() {
   const aiRequestRepo = {
     save: jest.fn().mockResolvedValue({ request_id: 'req1' }),
     update: jest.fn(),
+    findOne: jest.fn(),
   };
   const aiTaskMapRepo = { save: jest.fn() };
   const userRepo = { findOne: jest.fn() };
@@ -597,5 +598,94 @@ describe('AiService.processCommand', () => {
     expect(result.status).toBe('success');
     expect(result.unresolved).toContain('Nonexistent task');
     expect(tasksService.update).not.toHaveBeenCalled();
+  });
+
+  it('ask mode persists a plan and executes nothing', async () => {
+    const { service, tasksService, aiRequestRepo } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify([{ task_name: 'A', priority: 'low' }])),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add A',
+      mode: 'ask',
+    })) as { status: string; request_id: string; plan: unknown[] };
+    expect(r.status).toBe('pending_confirmation');
+    expect(r.request_id).toBe('req1');
+    expect(Array.isArray(r.plan)).toBe(true);
+    expect(tasksService.create).not.toHaveBeenCalled();
+    expect(aiRequestRepo.update).toHaveBeenCalledWith(
+      'req1',
+      expect.objectContaining({ status: 'awaiting_confirmation' }),
+    );
+  });
+
+  it('confirm executes a stored plan owned by the actor', async () => {
+    const { service, tasksService, aiRequestRepo } = build();
+    aiRequestRepo.findOne.mockResolvedValue({
+      request_id: 'req1',
+      user_id: 'u1',
+      status: 'awaiting_confirmation',
+      created_at: new Date(),
+      response: {
+        plan: [
+          {
+            action: 'create',
+            task_name: 'A',
+            priority: 'low',
+            assigned_to: '',
+            deadline: '',
+          },
+        ],
+        eventId: 'e1',
+      },
+    });
+    const r = (await service.confirmCommand(ACTOR, 'req1')) as {
+      status: string;
+    };
+    expect(tasksService.create).toHaveBeenCalled();
+    expect(r.status).toBe('success');
+  });
+
+  it('confirm rejects a foreign request (403) and an expired one (400)', async () => {
+    const { service, aiRequestRepo } = build();
+    aiRequestRepo.findOne.mockResolvedValue({
+      request_id: 'req1',
+      user_id: 'someone-else',
+      status: 'awaiting_confirmation',
+      created_at: new Date(),
+      response: { plan: [], eventId: 'e1' },
+    });
+    await expect(service.confirmCommand(ACTOR, 'req1')).rejects.toThrow(
+      /permission|forbidden/i,
+    );
+    aiRequestRepo.findOne.mockResolvedValue({
+      request_id: 'req1',
+      user_id: 'u1',
+      status: 'awaiting_confirmation',
+      created_at: new Date(Date.now() - 16 * 60 * 1000),
+      response: { plan: [], eventId: 'e1' },
+    });
+    await expect(service.confirmCommand(ACTOR, 'req1')).rejects.toThrow(
+      /expired/i,
+    );
+  });
+
+  it('cancel marks the request cancelled', async () => {
+    const { service, aiRequestRepo } = build();
+    aiRequestRepo.findOne.mockResolvedValue({
+      request_id: 'req1',
+      user_id: 'u1',
+      status: 'awaiting_confirmation',
+      created_at: new Date(),
+      response: { plan: [], eventId: 'e1' },
+    });
+    const r = (await service.cancelCommand(ACTOR, 'req1')) as {
+      status: string;
+    };
+    expect(r.status).toBe('cancelled');
+    expect(aiRequestRepo.update).toHaveBeenCalledWith('req1', {
+      status: 'cancelled',
+    });
   });
 });
