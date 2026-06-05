@@ -41,8 +41,11 @@ export class UsersController {
   // GET /api/users/directory — any signed-in user (online/presence board).
   // Must be declared before :id so it isn't captured as an id.
   @Get('directory')
-  directory() {
-    return this.usersService.directory();
+  directory(@Request() req: { user: JwtPayload }) {
+    return this.usersService.directory({
+      sub: req.user.sub,
+      role: req.user.role,
+    });
   }
 
   // GET /api/users/reassign-requests — staff reassignment requests addressed to
