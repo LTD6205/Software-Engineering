@@ -274,6 +274,43 @@ function TasksContent() {
     }
   }
 
+  const handleRename = async (id: string, name: string) => {
+    const clean = name.trim()
+    const task = tasks.find(t => t.task_id === id)
+    if (!task || !clean || clean === task.task_name) return
+    const before = tasks
+    setTasks(p => p.map(t => t.task_id === id ? { ...t, task_name: clean } : t))
+    try {
+      await tasksApi.update(id, { task_name: clean })
+    } catch (e) {
+      setTasks(before)
+      showToast(tError(getErrorMessage(e, 'Could not rename the task / Không thể đổi tên công việc')))
+    }
+  }
+
+  const handleStartChange = async (id: string, isoStart: string) => {
+    const task = tasks.find(t => t.task_id === id)
+    if (!task) return
+    // A start time can't be in the past (the live "now" line) and must stay
+    // before the deadline (the server enforces both; guard here for a clear toast).
+    if (new Date(isoStart).getTime() < nowMs()) {
+      showToast(t('Start time cannot be moved to the past', 'Không thể dời thời gian bắt đầu về quá khứ'))
+      return
+    }
+    if (task.deadline && new Date(isoStart).getTime() >= new Date(task.deadline).getTime()) {
+      showToast(t('Start time must be before the deadline', 'Thời gian bắt đầu phải trước hạn chót'))
+      return
+    }
+    const before = tasks
+    setTasks(p => p.map(t => t.task_id === id ? { ...t, start_time: isoStart } : t))
+    try {
+      await tasksApi.update(id, { start_time: isoStart })
+    } catch (e) {
+      setTasks(before)
+      showToast(tError(getErrorMessage(e, 'Could not update the start time / Không thể cập nhật thời gian bắt đầu')))
+    }
+  }
+
   // Open the avatar re-select picker for a task, prefilled with its assignees.
   const openAssignees = (task: Task) => {
     setEditingAssignees(task)
@@ -428,7 +465,9 @@ function TasksContent() {
             matches={matches}
             canManage={isManager}
             onStatusChange={handleStatusChange}
+            onRename={handleRename}
             onEditPriority={handleEditPriority}
+            onStartChange={handleStartChange}
             onDeadlineChange={handleDeadlineChange}
             onEditAssignees={openAssignees}
             onDelete={setPendingTaskDelete}
