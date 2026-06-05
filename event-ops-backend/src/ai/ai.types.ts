@@ -85,6 +85,31 @@ export interface RemoveEventManagerAction {
   manager_ref: string;
 }
 
+// Account / team action shapes (manager/admin; reset_password admin-only). Each
+// routes to a UsersService method. AiService replicates the controller-level
+// role gates the service itself doesn't enforce (a manager creating only staff,
+// admin-only is_active) before calling.
+export interface CreateUserAction {
+  action: 'create_user';
+  name: string;
+  email: string;
+  role?: string;
+  phone?: string;
+  password?: string;
+}
+export interface UpdateUserAction {
+  action: 'update_user';
+  user_ref: string;
+  name?: string;
+  role?: string;
+  is_active?: boolean;
+}
+export interface ResetPasswordAction {
+  action: 'reset_password';
+  user_ref: string;
+  new_password: string;
+}
+
 export interface Actor {
   sub: string;
   role: string;

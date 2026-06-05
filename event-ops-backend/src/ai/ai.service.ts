@@ -30,8 +30,12 @@ import {
   DeleteEventAction,
   AddEventManagerAction,
   RemoveEventManagerAction,
+  CreateUserAction,
+  UpdateUserAction,
+  ResetPasswordAction,
 } from './ai.types';
 import { isActionAllowedForRole } from './ai.authz';
+import { UsersService } from '../users/users.service';
 import axios from 'axios';
 
 type Priority = 'low' | 'medium' | 'high';
@@ -83,7 +87,10 @@ type AiAction =
   | UpdateEventAction
   | DeleteEventAction
   | AddEventManagerAction
-  | RemoveEventManagerAction;
+  | RemoveEventManagerAction
+  | CreateUserAction
+  | UpdateUserAction
+  | ResetPasswordAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 interface TaskRef {
@@ -112,6 +119,7 @@ export class AiService {
     @InjectRepository(User) private userRepo: Repository<User>,
     private readonly tasksService: TasksService,
     private readonly events: EventsService,
+    private readonly users: UsersService,
   ) {}
 
   // Simple in-memory per-user rate limit for this expensive external endpoint.
@@ -187,6 +195,18 @@ export class AiService {
         typeof item.description === 'string' ? item.description.trim() : '';
       const managerRef =
         typeof item.manager_ref === 'string' ? item.manager_ref.trim() : '';
+      const userName = typeof item.name === 'string' ? item.name.trim() : '';
+      const email = typeof item.email === 'string' ? item.email.trim() : '';
+      const phone = typeof item.phone === 'string' ? item.phone.trim() : '';
+      const password =
+        typeof item.password === 'string' ? item.password : undefined;
+      const role = typeof item.role === 'string' ? item.role.trim() : '';
+      const userRef =
+        typeof item.user_ref === 'string' ? item.user_ref.trim() : '';
+      const newPassword =
+        typeof item.new_password === 'string' ? item.new_password : '';
+      const isActive =
+        typeof item.is_active === 'boolean' ? item.is_active : undefined;
 
       if (action === 'update') {
         if (!ref) {
@@ -320,6 +340,42 @@ export class AiService {
           event_ref: eventRef,
           manager_ref: managerRef,
         });
+      } else if (action === 'create_user') {
+        if (!userName || !email) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'create_user',
+          name: userName,
+          email,
+          ...(role ? { role } : {}),
+          ...(phone ? { phone } : {}),
+          ...(password !== undefined ? { password } : {}),
+        });
+      } else if (action === 'update_user') {
+        // Need a target plus at least one changeable field.
+        if (!userRef || (!userName && !role && isActive === undefined)) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'update_user',
+          user_ref: userRef,
+          ...(userName ? { name: userName } : {}),
+          ...(role ? { role } : {}),
+          ...(isActive !== undefined ? { is_active: isActive } : {}),
+        });
+      } else if (action === 'reset_password') {
+        if (!userRef || !newPassword) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'reset_password',
+          user_ref: userRef,
+          new_password: newPassword,
+        });
       } else {
         // create (default)
         if (!name) {
@@ -383,6 +439,15 @@ export class AiService {
     const needle = ref.trim().toLowerCase();
     if (groupIds.has(ref)) return ref;
     return groupByTitle.get(needle) ?? null;
+  }
+
+  // A non-trivial fallback password for an AI-created user when the command did
+  // not supply one. Deliberately avoids Math.random: a Date.now()-derived suffix
+  // keeps it reproducible-by-time and easy to reason about in tests/logs while
+  // still satisfying the policy (mixed case, digit, symbol, length). The new
+  // account is expected to have its password reset on first use.
+  private tempPassword(): string {
+    return `Temp#${Date.now().toString(36)}A1`;
   }
 
   // Turn a thrown service error into a short, client-safe reason string.
@@ -994,6 +1059,100 @@ export class AiService {
         }
         return;
       }
+
+      case 'create_user': {
+        // Replicate UsersController.assertCanAssignRole: the UsersService does
+        // NOT block a manager from creating a non-staff role — the controller
+        // does — so the AI must enforce it before calling create.
+        if (actor.role !== 'admin' && item.role && item.role !== 'staff') {
+          res.rejected.push({
+            ref: item.email,
+            reason: 'Only an admin can assign a non-staff role',
+          });
+          return;
+        }
+        try {
+          const u = await this.users.create(
+            {
+              name: item.name,
+              email: item.email,
+              phone: item.phone ?? '',
+              password: item.password ?? this.tempPassword(),
+              role: item.role,
+            },
+            actor,
+          );
+          res.users_changed.push({
+            action: 'create_user',
+            user_id: (u as { user_id: string }).user_id,
+            summary: `Created ${item.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.email, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'update_user': {
+        const target = await this.resolveAssignee(item.user_ref);
+        if (!target) {
+          res.unresolved.push(item.user_ref);
+          return;
+        }
+        // Activating/deactivating an account is admin-only (mirrors the
+        // controller's gate inside PUT /users/:id; the service does not enforce
+        // it on is_active alone).
+        if (item.is_active !== undefined && actor.role !== 'admin') {
+          res.rejected.push({
+            ref: item.user_ref,
+            reason: 'Only an admin can activate or deactivate accounts',
+          });
+          return;
+        }
+        try {
+          await this.users.update(
+            target.user_id,
+            {
+              name: item.name,
+              role: item.role,
+              is_active: item.is_active,
+            },
+            actor,
+          );
+          res.users_changed.push({
+            action: 'update_user',
+            user_id: target.user_id,
+            summary: `Updated ${target.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.user_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'reset_password': {
+        const target = await this.resolveAssignee(item.user_ref);
+        if (!target) {
+          res.unresolved.push(item.user_ref);
+          return;
+        }
+        try {
+          await this.users.update(
+            target.user_id,
+            { password: item.new_password },
+            actor,
+          );
+          res.users_changed.push({
+            action: 'reset_password',
+            user_id: target.user_id,
+            summary: `Reset password for ${target.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.user_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
     }
   }
 

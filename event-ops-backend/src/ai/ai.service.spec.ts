@@ -55,6 +55,12 @@ function build(role = 'manager') {
     addManager: jest.fn().mockResolvedValue(undefined),
     removeManager: jest.fn().mockResolvedValue(undefined),
   };
+  // Account/team management (Phase 5). Each method enforces its own
+  // ownership/role rules in production; mocked to "allow" here.
+  const usersService = {
+    create: jest.fn().mockResolvedValue({ user_id: 'n1', name: 'New' }),
+    update: jest.fn().mockResolvedValue({ user_id: 'n1', name: 'New' }),
+  };
   const service = new AiService(
     config as never,
     aiRequestRepo as never,
@@ -62,6 +68,7 @@ function build(role = 'manager') {
     userRepo as never,
     tasksService as never,
     events as never,
+    usersService as never,
   );
   return {
     service,
@@ -70,6 +77,7 @@ function build(role = 'manager') {
     userRepo,
     tasksService,
     events,
+    usersService,
     config,
   };
 }
@@ -933,4 +941,49 @@ describe('AiService.processCommand', () => {
     expect(events.addManager).not.toHaveBeenCalled();
     expect(r.unresolved).toContain('Sam');
   });
+
+  it('manager create_user is rejected if it names a non-staff role', async () => {
+    const { service, usersService } = build('manager');
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'create_user',
+            name: 'New',
+            email: 'n@x.com',
+            phone: '0900000001',
+            role: 'manager',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { message: 'add a manager named New' },
+    )) as { rejected: Array<{ reason: string }> };
+    expect(usersService.create).not.toHaveBeenCalled();
+    expect(r.rejected[0].reason).toMatch(/admin/i);
+  });
+
+  it('manager reset_password is rejected by the role gate', async () => {
+    const { service, usersService } = build('manager');
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'reset_password',
+            user_ref: 'staff01@eventops.com',
+            new_password: 'x12345',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { message: 'reset their password' },
+    )) as { rejected: Array<{ reason: string }> };
+    expect(usersService.update).not.toHaveBeenCalled();
+    expect(r.rejected[0].reason).toMatch(/role/i);
+  });
+
 });
