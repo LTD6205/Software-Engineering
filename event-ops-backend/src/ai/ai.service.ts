@@ -12,12 +12,8 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
+import { Actor, CommandOptions } from './ai.types';
 import axios from 'axios';
-
-interface Actor {
-  sub: string;
-  role: string;
-}
 
 type Priority = 'low' | 'medium' | 'high';
 
@@ -237,11 +233,12 @@ export class AiService {
     }
   }
 
-  async processCommand(
-    actor: Actor,
-    eventId: string,
-    userMessage: string,
-  ): Promise<object> {
+  async processCommand(actor: Actor, opts: CommandOptions): Promise<object> {
+    const { message: userMessage } = opts;
+    // eventId is optional on the DTO (cross-event commands arrive in later
+    // phases); today's task-scoped flow always carries one. Coerce so the
+    // existing event-scoped calls keep their non-optional contract.
+    const eventId = opts.eventId ?? '';
     const userId = actor.sub;
     if (!userMessage || !userMessage.trim()) {
       throw new BadRequestException(
@@ -282,6 +279,24 @@ export class AiService {
           .join('\n')
       : '(no tasks yet)';
 
+    // Tell the model the event's date window (and "now") so it picks deadlines
+    // that pass the server-side rule that every task must sit inside the event
+    // window and not in the past — otherwise dates like "next Friday" get
+    // rejected. The actor already passed the manage check above.
+    const event = await this.events.findOneForViewer(eventId, actor);
+    const fmt = (d: Date | string | null | undefined) =>
+      d ? new Date(d).toISOString() : 'unspecified';
+    const windowInfo = `HARD DATE CONSTRAINT — read carefully:
+- Today (now, ISO 8601) is ${new Date().toISOString()}.
+- This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (ISO 8601).
+- EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
+  must not be in the past. A date outside this window will be REJECTED.
+- NEVER output a deadline later than ${fmt(event.end_time)}. If the user asks for a
+  later date (e.g. "next Friday" that falls after the event end), use exactly
+  ${fmt(event.end_time)} instead. If they ask for an earlier/past date, use the
+  later of now and the event start.
+- Spread multiple tasks across times INSIDE this window; do not exceed it.`;
+
     const systemPrompt = `You are an event operations assistant. The user issues a
 natural-language command about an event's task list. You may CREATE new tasks,
 UPDATE existing ones (reschedule, rename, re-prioritise, change status), or
@@ -296,6 +311,8 @@ no preamble. Each object uses one of these shapes:
 
 Reference existing tasks by their exact name (or id) from this list:
 ${taskList}
+
+${windowInfo}
 
 For an update, include ONLY the fields that change. To push deadlines back/forward,
 emit one update per affected task with the new deadline.
@@ -371,20 +388,39 @@ If the command is too vague to act on, return instead:
       const reassignedTasks: object[] = [];
       // task_ref values the model named but we couldn't match to a real task.
       const unresolved: string[] = [];
+      // Tasks the server refused (e.g. a deadline outside the event window or in
+      // the past). Recorded per-task so one bad task doesn't abort the command.
+      const rejected: { task_name: string; reason: string }[] = [];
 
       for (const item of actions) {
         if (item.action === 'create') {
-          const task = await this.tasksService.create(
-            {
-              event_id: eventId,
+          let task: { task_id: string; task_name: string };
+          try {
+            task = await this.tasksService.create(
+              {
+                event_id: eventId,
+                task_name: item.task_name,
+                priority_label: item.priority,
+                priority_score: AiService.priorityScore(item.priority),
+                priority_source: 'ai',
+                deadline: AiService.parseDeadline(item.deadline),
+              },
+              actor,
+            );
+          } catch (e) {
+            // A disallowed create (deadline outside the event window or in the
+            // past) is skipped with a reason rather than failing the whole
+            // command, so the other tasks in the same prompt still go through.
+            rejected.push({
               task_name: item.task_name,
-              priority_label: item.priority,
-              priority_score: AiService.priorityScore(item.priority),
-              priority_source: 'ai',
-              deadline: AiService.parseDeadline(item.deadline),
-            },
-            actor,
-          );
+              reason:
+                e instanceof HttpException
+                  ? (e.getResponse() as { message?: string }).message ||
+                    e.message
+                  : 'Could not be created',
+            });
+            continue;
+          }
           // Assign if the AI named a matchable user. The assignment obeys the
           // same rules as a manual one (actor manages the event and, for a plain
           // manager, the assignee is their own staff), so an out-of-team
@@ -478,6 +514,7 @@ If the command is too vague to act on, return instead:
         tasks_updated: updatedTasks,
         tasks_reassigned: reassignedTasks,
         unresolved,
+        rejected,
         skipped,
       };
     } catch (err) {
@@ -486,5 +523,13 @@ If the command is too vague to act on, return instead:
       });
       throw err;
     }
+  }
+
+  async confirmCommand(_actor: Actor, _requestId: string): Promise<object> {
+    throw new Error('not implemented'); // Phase 3
+  }
+
+  async cancelCommand(_actor: Actor, _requestId: string): Promise<object> {
+    throw new Error('not implemented'); // Phase 3
   }
 }

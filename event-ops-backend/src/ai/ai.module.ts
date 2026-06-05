@@ -7,12 +7,14 @@ import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
 import { TasksModule } from '../tasks/tasks.module';
 import { EventsModule } from '../events/events.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([AiRequest, AiTaskMap, User]),
     TasksModule,
     EventsModule,
+    UsersModule,
   ],
   providers: [AiService],
   controllers: [AiController],

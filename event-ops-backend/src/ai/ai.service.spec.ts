@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ForbiddenException,
   HttpException,
@@ -34,6 +34,12 @@ function build() {
   // enforcement is covered by the EventsService/e2e tests.
   const events = {
     assertCanManageEvent: jest.fn().mockResolvedValue(undefined),
+    // The service reads the event's date window to put it in the AI prompt.
+    findOneForViewer: jest.fn().mockResolvedValue({
+      event_id: 'e1',
+      start_time: '2026-01-01T00:00:00Z',
+      end_time: '2030-01-01T00:00:00Z',
+    }),
   };
   const service = new AiService(
     config as never,
@@ -64,7 +70,7 @@ describe('AiService.processCommand', () => {
     const { service, events, tasksService } = build();
     events.assertCanManageEvent.mockRejectedValue(new ForbiddenException());
     await expect(
-      service.processCommand(ACTOR, 'e1', 'do stuff'),
+      service.processCommand(ACTOR, { eventId: 'e1', message: 'do stuff' }),
     ).rejects.toThrow(ForbiddenException);
     expect(mockedAxios.post).not.toHaveBeenCalled();
     expect(tasksService.create).not.toHaveBeenCalled();
@@ -74,27 +80,30 @@ describe('AiService.processCommand', () => {
     const { service, config } = build();
     config.get.mockReturnValue(undefined);
     await expect(
-      service.processCommand(ACTOR, 'e1', 'do stuff'),
+      service.processCommand(ACTOR, { eventId: 'e1', message: 'do stuff' }),
     ).rejects.toThrow(/not configured/);
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
 
   it('rejects a blank command message', async () => {
     const { service } = build();
-    await expect(service.processCommand(ACTOR, 'e1', '   ')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.processCommand(ACTOR, { eventId: 'e1', message: '   ' }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('rejects when the AI returns no valid task items', async () => {
     const { service, tasksService } = build();
-    // One item missing task_name, one with a blank name → nothing usable.
+    // One item missing task_name, one with a blank name â†’ nothing usable.
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
         JSON.stringify([{ priority: 'high' }, { task_name: '   ' }]),
       ),
     );
-    const result = (await service.processCommand(ACTOR, 'e1', 'do stuff')) as {
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'do stuff',
+    })) as {
       status: string;
     };
     expect(result.status).toBe('rejected');
@@ -105,11 +114,11 @@ describe('AiService.processCommand', () => {
     const { service } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
     for (let i = 0; i < 20; i++) {
-      await service.processCommand(ACTOR, 'e1', 'x');
+      await service.processCommand(ACTOR, { eventId: 'e1', message: 'x' });
     }
-    await expect(service.processCommand(ACTOR, 'e1', 'x')).rejects.toThrow(
-      HttpException,
-    );
+    await expect(
+      service.processCommand(ACTOR, { eventId: 'e1', message: 'x' }),
+    ).rejects.toThrow(HttpException);
   });
 
   it('creates a task for each item in a valid JSON array response', async () => {
@@ -128,11 +137,10 @@ describe('AiService.processCommand', () => {
       ),
     );
 
-    const result = (await service.processCommand(
-      ACTOR,
-      'e1',
-      'book a venue',
-    )) as {
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'book a venue',
+    })) as {
       status: string;
       tasks_created: unknown[];
     };
@@ -171,7 +179,10 @@ describe('AiService.processCommand', () => {
       ),
     );
 
-    await service.processCommand(ACTOR, 'e1', 'call the caterer');
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'call the caterer',
+    });
 
     expect(tasksService.assignUser).toHaveBeenCalledWith('tk1', 's5', ACTOR);
   });
@@ -184,7 +195,10 @@ describe('AiService.processCommand', () => {
       ),
     );
 
-    const result = (await service.processCommand(ACTOR, 'e1', 'do stuff')) as {
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'do stuff',
+    })) as {
       status: string;
     };
 
@@ -200,9 +214,9 @@ describe('AiService.processCommand', () => {
     const { service, aiRequestRepo } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply('not json at all'));
 
-    await expect(service.processCommand(ACTOR, 'e1', 'hi')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.processCommand(ACTOR, { eventId: 'e1', message: 'hi' }),
+    ).rejects.toThrow(BadRequestException);
     expect(aiRequestRepo.update).toHaveBeenCalledWith(
       'req1',
       expect.objectContaining({ status: 'rejected' }),
@@ -225,7 +239,10 @@ describe('AiService.processCommand', () => {
       ),
     );
 
-    await service.processCommand(ACTOR, 'e1', 'do a vague thing');
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'do a vague thing',
+    });
 
     const arg = tasksService.create.mock.calls[0][0];
     expect(arg.deadline).toBeUndefined();
@@ -250,11 +267,10 @@ describe('AiService.processCommand', () => {
       ),
     );
 
-    const result = (await service.processCommand(
-      ACTOR,
-      'e1',
-      'push the venue booking to August and make it high priority',
-    )) as { status: string; tasks_updated: unknown[] };
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'push the venue booking to August and make it high priority',
+    })) as { status: string; tasks_updated: unknown[] };
 
     expect(result.status).toBe('success');
     expect(result.tasks_updated).toHaveLength(1);
@@ -278,16 +294,19 @@ describe('AiService.processCommand', () => {
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
         JSON.stringify([
-          { action: 'reassign', task_ref: 'Call caterer', assigned_to: 'Carol' },
+          {
+            action: 'reassign',
+            task_ref: 'Call caterer',
+            assigned_to: 'Carol',
+          },
         ]),
       ),
     );
 
-    const result = (await service.processCommand(
-      ACTOR,
-      'e1',
-      "move the caterer call to Carol",
-    )) as { status: string; tasks_reassigned: unknown[] };
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'move the caterer call to Carol',
+    })) as { status: string; tasks_reassigned: unknown[] };
 
     expect(result.status).toBe('success');
     expect(result.tasks_reassigned).toHaveLength(1);
@@ -306,12 +325,19 @@ describe('AiService.processCommand', () => {
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
         JSON.stringify([
-          { action: 'update', task_ref: 'Nonexistent task', status: 'completed' },
+          {
+            action: 'update',
+            task_ref: 'Nonexistent task',
+            status: 'completed',
+          },
         ]),
       ),
     );
 
-    const result = (await service.processCommand(ACTOR, 'e1', 'finish X')) as {
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'finish X',
+    })) as {
       status: string;
       unresolved: string[];
     };
