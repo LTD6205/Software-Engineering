@@ -6,9 +6,10 @@ import { Menu } from 'lucide-react'
 import { useLang } from '@/context/LanguageContext'
 import Sidebar from './Sidebar'
 import Celebration from './Celebration'
+import AiDrawer from './AiDrawer'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading, isManager, isAdmin, canManageEvents } = useAuth()
   const { t } = useLang()
   const pathname = usePathname()
   const router   = useRouter()
@@ -100,6 +101,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <Celebration />
+      {/* Global, route-aware AI surface (its own floating launcher + slide-over
+          panel). Only roles that can act through the AI see it: managers/admins
+          (tasks, team, AI) and organizers/admins (events). Staff are excluded. */}
+      {(isManager || canManageEvents || isAdmin) && <AiDrawer />}
     </div>
   )
 }
