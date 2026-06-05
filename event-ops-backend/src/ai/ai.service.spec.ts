@@ -522,6 +522,25 @@ describe('AiService.processCommand', () => {
     expect(r.tasks_created).toHaveLength(2);
   });
 
+  it('forwards history into the chat messages in order', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'the gala',
+      history: [
+        { role: 'user', content: 'reschedule it' },
+        { role: 'assistant', content: 'Which event?' },
+      ],
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as {
+      messages: { role: string; content: string }[];
+    };
+    const roles = body.messages.map((m) => m.role);
+    expect(roles).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(body.messages[3].content).toBe('the gala');
+  });
+
   it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([

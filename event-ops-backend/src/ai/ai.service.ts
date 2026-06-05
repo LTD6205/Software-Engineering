@@ -784,15 +784,21 @@ If the command is too vague to act on, return instead:
       status: 'pending',
     });
 
+    // Forward any prior conversation turns between the system prompt and the
+    // latest user message so the model can resolve references ("it", "the same
+    // people") across a multi-turn clarification exchange.
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...(opts.history ?? []).map((h) => ({ role: h.role, content: h.content })),
+      { role: 'user', content: userMessage },
+    ];
+
     try {
       const response = await axios.post(
         `${baseUrl}/chat/completions`,
         {
           model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage },
-          ],
+          messages,
           temperature: 0.2,
           max_tokens: 2000,
         },
