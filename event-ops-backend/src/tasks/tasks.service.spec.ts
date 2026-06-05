@@ -35,6 +35,7 @@ function build() {
   const depRepo = makeRepo();
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
+  const changeLogRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
   const gateway = {
@@ -57,6 +58,7 @@ function build() {
     depRepo as never,
     groupRepo as never,
     logRepo as never,
+    changeLogRepo as never,
     userRepo as never,
     eventRepo as never,
     gateway as never,
@@ -68,6 +70,8 @@ function build() {
     taskRepo,
     assignRepo,
     groupRepo,
+    logRepo,
+    changeLogRepo,
     userRepo,
     eventRepo,
     gateway,
@@ -77,6 +81,74 @@ function build() {
 }
 
 describe('TasksService', () => {
+  describe('undoLastChange', () => {
+    it('reverts the most recent EDIT, restoring the old field values and dropping the row', async () => {
+      const { service, taskRepo, changeLogRepo, eventRepo } = build();
+      changeLogRepo.findOne.mockResolvedValue({
+        id: 'C1',
+        change_type: 'edit',
+        task_id: 't1',
+        snapshot: {
+          fields: { task_name: 'Old', deadline: '2026-06-01T09:00:00.000Z' },
+        },
+      });
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      taskRepo.find.mockResolvedValue([]);
+
+      await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
+
+      expect(taskRepo.update).toHaveBeenCalledWith('t1', {
+        task_name: 'Old',
+        deadline: '2026-06-01T09:00:00.000Z',
+      });
+      expect(changeLogRepo.delete).toHaveBeenCalledWith({ id: 'C1' });
+    });
+
+    it('reverts the most recent DELETE by re-creating the task and its assignees', async () => {
+      const { service, taskRepo, assignRepo, changeLogRepo, eventRepo } =
+        build();
+      changeLogRepo.findOne.mockResolvedValue({
+        id: 'C2',
+        change_type: 'delete',
+        task_id: 'gone',
+        snapshot: {
+          task: {
+            task_name: 'Order cake',
+            priority_label: 'low',
+            priority_score: 10,
+            priority_source: 'ai',
+            status: 'in_progress',
+            created_by: 'u1',
+            group_id: null,
+          },
+          assignees: ['s1', 's2'],
+        },
+      });
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      taskRepo.find.mockResolvedValue([]);
+      // taskRepo.save returns the re-created task (makeRepo's save echoes input).
+
+      await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
+
+      // A new task row is saved into the same event…
+      expect(taskRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ event_id: 'e1', task_name: 'Order cake' }),
+      );
+      // …and both assignees are re-attached.
+      expect(assignRepo.save).toHaveBeenCalledTimes(2);
+      expect(changeLogRepo.delete).toHaveBeenCalledWith({ id: 'C2' });
+    });
+
+    it('throws when there is nothing to undo', async () => {
+      const { service, changeLogRepo } = build();
+      changeLogRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.undoLastChange('e1', { sub: 'm1', role: 'manager' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('create — validation', () => {
     it('rejects a task with no name', async () => {
       const { service } = build();

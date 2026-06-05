@@ -7,6 +7,7 @@ export type AiActionKind =
   | 'reassign'
   | 'unassign'
   | 'delete'
+  | 'undo'
   | 'merge'
   | 'add_to_group'
   | 'rename_group'
@@ -34,6 +35,10 @@ export interface UnassignAction {
 export interface DeleteAction {
   action: 'delete';
   task_ref: string;
+}
+// Undo the most recent change (edit or deletion) in the command's current event.
+export interface UndoAction {
+  action: 'undo';
 }
 export interface MergeAction {
   action: 'merge';

@@ -29,6 +29,9 @@ function build(role = 'manager') {
     update: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
     setAssignees: jest.fn().mockResolvedValue(undefined),
     remove: jest.fn().mockResolvedValue(undefined),
+    undoLastChange: jest
+      .fn()
+      .mockResolvedValue({ undone: { type: 'edit', label: 'A · name' } }),
     merge: jest.fn().mockResolvedValue({ group_id: 'g1' }),
     addToGroup: jest.fn().mockResolvedValue(undefined),
     ungroup: jest.fn().mockResolvedValue(undefined),
@@ -331,6 +334,20 @@ describe('AiService.processCommand', () => {
       (mockedAxios.post.mock.calls[1][1] as { response_format?: unknown })
         .response_format,
     ).toBeUndefined();
+  });
+
+  it('routes an "undo" action to the event-level undoLastChange', async () => {
+    const { service, tasksService } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify([{ action: 'undo' }])),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'undo the last change',
+    })) as { status: string; tasks_updated: unknown[] };
+    expect(result.status).toBe('success');
+    expect(tasksService.undoLastChange).toHaveBeenCalledWith('e1', ACTOR);
+    expect(result.tasks_updated).toHaveLength(1);
   });
 
   it('does not run an event-scoped manage check when no eventId is given', async () => {

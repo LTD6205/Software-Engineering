@@ -12,6 +12,7 @@ import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskGroup } from '../entities/task-group.entity';
 import { TaskLog } from '../entities/task-log.entity';
+import { TaskChangeLog } from '../entities/task-change-log.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
 import { EventsGateway } from '../websocket/events.gateway';
@@ -28,6 +29,8 @@ export class TasksService {
     private depRepo: Repository<TaskDependency>,
     @InjectRepository(TaskGroup) private groupRepo: Repository<TaskGroup>,
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
+    @InjectRepository(TaskChangeLog)
+    private changeLogRepo: Repository<TaskChangeLog>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Event) private eventRepo: Repository<Event>,
     private readonly gateway: EventsGateway,
@@ -510,6 +513,29 @@ export class TasksService {
         actor_type: 'user',
         actor_user_id: actor.sub,
       });
+      // Record an undoable 'edit' in the event's bounded history: snapshot the
+      // OLD values of the editable fields this update set, so undo can restore
+      // them. Only user/AI edits are tracked (system cron changes have no actor),
+      // so the 3-slot history stays focused on changes a person can undo.
+      const changedKeys = Object.keys(data).filter((k) =>
+        (TasksService.UPDATABLE_FIELDS as readonly string[]).includes(k),
+      );
+      if (changedKeys.length) {
+        const fields: Record<string, unknown> = {};
+        const oldRow = old as unknown as Record<string, unknown>;
+        for (const k of changedKeys) fields[k] = oldRow[k];
+        const labels = [
+          ...new Set(changedKeys.map((k) => TasksService.FIELD_LABELS[k] ?? k)),
+        ].join(', ');
+        await this.recordChange(
+          old.event_id,
+          id,
+          'edit',
+          { fields },
+          `${old.task_name} · ${labels}`,
+          actor.sub,
+        );
+      }
     }
     // Celebrate a task that was just completed.
     if (data.status === 'completed' && old.status !== 'completed') {
@@ -536,9 +562,172 @@ export class TasksService {
     return this.findOne(id);
   }
 
+  // ── Undo history (per-event, bounded to the 3 most recent changes) ──────────
+  // A delete-surviving log (task_change_log) records each user/AI task change —
+  // an 'edit' (snapshot of the old values of the fields that changed) or a
+  // 'delete' (full task + assignees so it can be re-created). The Undo button and
+  // the AI "undo" action both call undoLastChange to revert the most recent one;
+  // repeating it walks back up to MAX_EVENT_CHANGES.
+  private static readonly MAX_EVENT_CHANGES = 3;
+
+  private static readonly FIELD_LABELS: Record<string, string> = {
+    task_name: 'name',
+    status: 'status',
+    priority_label: 'priority',
+    priority_score: 'priority',
+    priority_source: 'priority',
+    start_time: 'start time',
+    deadline: 'deadline',
+  };
+
+  // Append a change to the event's undo history, then prune to the newest N.
+  private async recordChange(
+    eventId: string,
+    taskId: string,
+    changeType: 'edit' | 'delete',
+    snapshot: Record<string, unknown>,
+    label: string,
+    actorId?: string,
+  ) {
+    await this.changeLogRepo.save(
+      this.changeLogRepo.create({
+        event_id: eventId,
+        task_id: taskId,
+        change_type: changeType,
+        snapshot,
+        label,
+        ...(actorId ? { actor_user_id: actorId } : {}),
+      }),
+    );
+    await this.changeLogRepo.manager.query(
+      `DELETE FROM task_change_log
+         WHERE event_id = $1
+           AND id NOT IN (
+             SELECT id FROM task_change_log
+             WHERE event_id = $1
+             ORDER BY created_at DESC, id DESC
+             LIMIT $2
+           )`,
+      [eventId, TasksService.MAX_EVENT_CHANGES],
+    );
+  }
+
+  // The event's recent changes (newest first) for the Undo button. Manager/admin.
+  async getEventChanges(eventId: string, actor?: { sub: string; role: string }) {
+    if (actor) await this.events.assertCanManageEvent(actor, eventId);
+    const rows = await this.changeLogRepo.find({
+      where: { event_id: eventId },
+      order: { created_at: 'DESC' },
+      take: TasksService.MAX_EVENT_CHANGES,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      change_type: r.change_type,
+      label: r.label,
+      created_at: r.created_at,
+    }));
+  }
+
+  // Revert the event's most recent change: restore an edit's old field values, or
+  // re-create a deleted task (with its assignees). Drops that history row so a
+  // repeat undo steps further back. Applied directly so a restored time lands
+  // exactly even if now past (the old pair was valid, so deadline > start holds).
+  // Manager/admin of the event gated — the single path the button and AI share.
+  async undoLastChange(eventId: string, actor?: { sub: string; role: string }) {
+    if (actor) await this.events.assertCanManageEvent(actor, eventId);
+    const last = await this.changeLogRepo.findOne({
+      where: { event_id: eventId },
+      order: { created_at: 'DESC' },
+    });
+    if (!last) {
+      throw new BadRequestException(
+        'Nothing to undo / Không có thay đổi nào để hoàn tác',
+      );
+    }
+    if (last.change_type === 'edit') {
+      const fields = (last.snapshot?.fields ?? {}) as Record<string, unknown>;
+      const restore: Partial<Task> = {};
+      for (const k of Object.keys(fields)) {
+        if ((TasksService.UPDATABLE_FIELDS as readonly string[]).includes(k)) {
+          (restore[k as keyof Task] as unknown) = fields[k];
+        }
+      }
+      const stillThere = await this.taskRepo.findOne({
+        where: { task_id: last.task_id },
+      });
+      if (stillThere && Object.keys(restore).length) {
+        await this.taskRepo.update(last.task_id, restore);
+      }
+    } else {
+      // delete → re-create the task (new id) and re-attach its assignees.
+      const snap = (last.snapshot?.task ?? {}) as Record<string, unknown>;
+      const assignees = (last.snapshot?.assignees ?? []) as string[];
+      let groupId: string | null = (snap.group_id as string | null) ?? null;
+      if (groupId) {
+        const g = await this.groupRepo.findOne({ where: { group_id: groupId } });
+        if (!g) groupId = null; // its group was dissolved on delete
+      }
+      const recreated = await this.taskRepo.save(
+        this.taskRepo.create({
+          event_id: eventId,
+          task_name: snap.task_name as string,
+          description: (snap.description as string | null) ?? null,
+          priority_label: (snap.priority_label as string) ?? 'medium',
+          priority_score: (snap.priority_score as number) ?? 50,
+          priority_source: (snap.priority_source as string) ?? 'auto',
+          status: (snap.status as string) ?? 'in_progress',
+          start_time: (snap.start_time as Date | null) ?? null,
+          deadline: (snap.deadline as Date | null) ?? null,
+          created_by: (snap.created_by as string) ?? actor?.sub,
+          group_id: groupId,
+        } as Partial<Task>),
+      );
+      for (const uid of assignees) {
+        await this.assignRepo.save(
+          this.assignRepo.create({ task_id: recreated.task_id, user_id: uid }),
+        );
+      }
+    }
+    await this.changeLogRepo.delete({ id: last.id });
+    await this.recomputeEventStatus(eventId);
+    await this.recomputeAutoPriorities(eventId);
+    this.broadcastChange(eventId);
+    return { undone: { type: last.change_type, label: last.label } };
+  }
+
   async remove(id: string, actor?: { sub: string; role: string }) {
     const task = await this.findOne(id);
     if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
+    // Record an undoable 'delete' BEFORE removing the task: snapshot the full task
+    // plus its assignees so undo can re-create it. (task_change_log has no FK to
+    // tasks, so this survives the delete below.) Only user/AI deletes are tracked.
+    if (actor?.sub) {
+      const assignees = (
+        await this.assignRepo.find({ where: { task_id: id } })
+      ).map((a) => a.user_id);
+      await this.recordChange(
+        task.event_id,
+        id,
+        'delete',
+        {
+          task: {
+            task_name: task.task_name,
+            description: task.description,
+            priority_label: task.priority_label,
+            priority_score: task.priority_score,
+            priority_source: task.priority_source,
+            status: task.status,
+            start_time: task.start_time,
+            deadline: task.deadline,
+            created_by: task.created_by,
+            group_id: task.group_id,
+          },
+          assignees,
+        },
+        `Deleted "${task.task_name}"`,
+        actor.sub,
+      );
+    }
     // Child rows are removed automatically by ON DELETE CASCADE once the FK
     // migration (npm run db:migrate) has been applied. We still clear them here
     // as a fallback so deletion also works on databases created before that

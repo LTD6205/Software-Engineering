@@ -37,6 +37,7 @@ function build() {
   const depRepo = makeRepo();
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
+  const changeLogRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
   const gateway = {
@@ -58,6 +59,7 @@ function build() {
     depRepo as never,
     groupRepo as never,
     logRepo as never,
+    changeLogRepo as never,
     userRepo as never,
     eventRepo as never,
     gateway as never,

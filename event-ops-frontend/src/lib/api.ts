@@ -66,6 +66,9 @@ export const tasksApi = {
   addToGroup:   (groupId: string, taskId: string)     => api.post(`/tasks/groups/${groupId}/add`, { task_id: taskId }).then(r => r.data),
   ungroup:      (taskId: string)                       => api.delete(`/tasks/groups/tasks/${taskId}`).then(r => r.data),
   renameGroup:  (groupId: string, title: string)       => api.put(`/tasks/groups/${groupId}`, { title }).then(r => r.data),
+  // Per-event undo history (3 most recent task changes) + undo the latest.
+  changes:      (eventId: string)                      => api.get(`/tasks/event/${eventId}/changes`).then(r => r.data),
+  undoLast:     (eventId: string)                      => api.post(`/tasks/event/${eventId}/undo`).then(r => r.data),
 }
 
 export const usersApi = {
