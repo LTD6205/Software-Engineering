@@ -60,6 +60,11 @@ interface CreateAction {
   task_name: string;
   priority: Priority;
   assigned_to: string;
+  // The AI chooses each task's length: a start_time and a deadline (start before
+  // deadline). start_time is optional on the wire — executeActions fills in a
+  // sensible default window when the model omits it — but a real duration is what
+  // keeps the task draggable on the timeline.
+  start_time?: string;
   deadline: string;
   // Optional group title: new tasks sharing the same group are linked into one
   // task group after the action loop (see executeActions).
@@ -68,8 +73,9 @@ interface CreateAction {
 interface UpdateAction {
   action: 'update';
   task_ref: string; // existing task id or (case-insensitive) name
-  task_name?: string;
+  task_name?: string; // rename the task
   priority?: Priority;
+  start_time?: string; // move the task's start time
   deadline?: string;
   status?: 'in_progress' | 'completed' | 'overdue';
 }
@@ -102,14 +108,23 @@ type AiAction =
   | CancelReassignAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
+// `assignees` lets the model scope commands like "reassign all of Bob's tasks"
+// to the right tasks — without it, it can't tell whose tasks are whose.
 interface TaskRef {
   task_id: string;
   task_name: string;
+  assignees?: { user_id: string; name: string }[];
 }
 
-// The provider is any OpenAI-compatible chat-completions API (DeepSeek, OpenAI,
-// Together, a local Ollama/vLLM endpoint, …) — selected via AI_BASE_URL /
-// AI_MODEL / AI_API_KEY in the environment, not hard-coded to one vendor.
+// The provider is any OpenAI-compatible chat-completions API — selected via
+// AI_BASE_URL / AI_MODEL / AI_API_KEY in the environment, not hard-coded to one
+// vendor. Switching providers is config-only (no code change). Examples:
+//   DeepSeek (default): AI_BASE_URL=https://api.deepseek.com/v1            AI_MODEL=deepseek-chat
+//   Gemini (free tier): AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai  AI_MODEL=gemini-2.5-flash
+//   Groq:               AI_BASE_URL=https://api.groq.com/openai/v1         AI_MODEL=llama-3.3-70b-versatile
+//   OpenRouter:         AI_BASE_URL=https://openrouter.ai/api/v1           AI_MODEL=<a :free model>
+// AI_JSON_MODE=off disables the strict response_format request for a provider
+// that rejects it (requestChatCompletion also auto-retries without it on a 4xx).
 interface ChatCompletionResponse {
   choices: { message: { content: string } }[];
 }
@@ -255,6 +270,7 @@ export class AiService {
         if (
           !name &&
           item.priority === undefined &&
+          !startTime &&
           item.deadline === undefined &&
           !status
         ) {
@@ -268,6 +284,7 @@ export class AiService {
           ...(item.priority !== undefined
             ? { priority: AiService.normalisePriority(item.priority) }
             : {}),
+          ...(startTime ? { start_time: startTime } : {}),
           ...(typeof item.deadline === 'string'
             ? { deadline: item.deadline }
             : {}),
@@ -443,6 +460,7 @@ export class AiService {
           task_name: name,
           priority: AiService.normalisePriority(item.priority),
           assigned_to: assignedTo,
+          ...(startTime ? { start_time: startTime } : {}),
           deadline: typeof item.deadline === 'string' ? item.deadline : '',
           ...(group ? { group } : {}),
         });
@@ -599,10 +617,15 @@ export class AiService {
       task_name: string;
       group_id?: string;
       group_title?: string;
+      assignees?: { user_id: string; name: string }[];
     }>;
     const currentTasks: TaskRef[] = rows.map((t) => ({
       task_id: t.task_id,
       task_name: t.task_name,
+      assignees: (t.assignees ?? []).map((a) => ({
+        user_id: a.user_id,
+        name: a.name,
+      })),
     }));
     for (const t of rows) {
       if (t.group_id) {
@@ -740,7 +763,12 @@ export class AiService {
       if (currentTasks.length) {
         lines.push("Current event's tasks (reference these by exact name or id):");
         for (const t of currentTasks) {
-          lines.push(`- "${t.task_name}" (id ${t.task_id})`);
+          const who = t.assignees?.length
+            ? t.assignees.map((a) => a.name).join(', ')
+            : 'unassigned';
+          lines.push(
+            `- "${t.task_name}" (id ${t.task_id}) — assigned to: ${who}`,
+          );
         }
       } else {
         lines.push("Current event's tasks: (none yet)");
@@ -774,9 +802,9 @@ export class AiService {
   // never describes an action the role cannot perform).
   private static readonly ACTION_SHAPES: Record<AiActionKind, string> = {
     create:
-      '{ "action": "create", "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "deadline": "YYYY-MM-DDTHH:mm:ss", "group"?: "group title" }',
+      '{ "action": "create", "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "start_time": "YYYY-MM-DDTHH:mm:ss", "deadline": "YYYY-MM-DDTHH:mm:ss", "group"?: "group title" }',
     update:
-      '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string", "priority"?: "low|medium|high", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }',
+      '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string (rename)", "priority"?: "low|medium|high", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }',
     reassign:
       '{ "action": "reassign", "task_ref": "task name or id", "assigned_to": "name or email" }',
     unassign: '{ "action": "unassign", "task_ref": "task name or id" }',
@@ -876,22 +904,26 @@ export class AiService {
     // Link newly-created tasks that share a group title. Reuse an existing event
     // group with that title if present, else chain members via merge (the first
     // pair creates the group; subsequent members add to it).
-    const byTitle = new Map<string, string[]>();
+    // Keep the original-case title (the map key is lower-cased for matching) so
+    // the group is labelled with exactly what the AI named it.
+    const byTitle = new Map<string, { ids: string[]; label: string }>();
     for (const g of createdGroups) {
-      const arr = byTitle.get(g.title.toLowerCase()) ?? [];
-      arr.push(g.taskId);
-      byTitle.set(g.title.toLowerCase(), arr);
+      const key = g.title.toLowerCase();
+      const entry = byTitle.get(key);
+      if (entry) entry.ids.push(g.taskId);
+      else byTitle.set(key, { ids: [g.taskId], label: g.title });
     }
-    for (const [title, taskIds] of byTitle) {
+    for (const [title, { ids: taskIds, label }] of byTitle) {
       const existing = groupByTitle.get(title);
       try {
         if (existing) {
+          // Reuse the existing event group (keep its current title).
           for (const id of taskIds)
             await this.tasksService.addToGroup(existing, id, actor);
           res.groups_changed.push({
             action: 'add_to_group',
             group_id: existing,
-            title,
+            title: label,
           });
         } else if (taskIds.length >= 2) {
           const g = await this.tasksService.merge(
@@ -902,10 +934,18 @@ export class AiService {
           const gid = (g as { group_id?: string }).group_id;
           for (const id of taskIds.slice(2))
             if (gid) await this.tasksService.addToGroup(gid, id, actor);
-          res.groups_changed.push({ action: 'merge', group_id: gid, title });
+          // merge() creates the group with a blank title; apply the name the AI
+          // chose so it isn't shown as "Untitled group".
+          if (gid && label)
+            await this.tasksService.renameGroup(gid, label, actor);
+          res.groups_changed.push({
+            action: 'merge',
+            group_id: gid,
+            title: label,
+          });
         }
       } catch (e) {
-        res.rejected.push({ ref: title, reason: this.reason(e) });
+        res.rejected.push({ ref: label, reason: this.reason(e) });
       }
     }
     return res;
@@ -930,6 +970,25 @@ export class AiService {
         // in the request event.
         const eventId = defaultEventId;
         let task: { task_id: string; task_name: string };
+        // Every AI task gets a real [start_time, deadline] window so it renders as
+        // a draggable block. A task with only a deadline collapses to zero width on
+        // the timeline, and the first drag (start === deadline) trips the
+        // tasks_time_check (deadline > start_time) DB constraint. Honour a
+        // model-supplied start_time; otherwise default to a one-hour lead-in ending
+        // at the deadline, clamped to "now" so it isn't rejected as a past time.
+        const deadline = AiService.parseDeadline(item.deadline);
+        let startTime = AiService.parseDeadline(item.start_time);
+        if (
+          deadline &&
+          (!startTime || startTime.getTime() >= deadline.getTime())
+        ) {
+          const HOUR = 60 * 60 * 1000;
+          const lead = Math.max(deadline.getTime() - HOUR, Date.now());
+          startTime =
+            lead < deadline.getTime()
+              ? new Date(lead)
+              : new Date(deadline.getTime() - 60 * 1000);
+        }
         try {
           task = await this.tasksService.create(
             {
@@ -938,7 +997,8 @@ export class AiService {
               priority_label: item.priority,
               priority_score: AiService.priorityScore(item.priority),
               priority_source: 'ai',
-              deadline: AiService.parseDeadline(item.deadline),
+              ...(startTime ? { start_time: startTime } : {}),
+              deadline,
             },
             actor,
           );
@@ -992,6 +1052,10 @@ export class AiService {
         if (item.priority) {
           patch.priority_label = item.priority;
           patch.priority_score = AiService.priorityScore(item.priority);
+        }
+        if (item.start_time !== undefined) {
+          const s = AiService.parseDeadline(item.start_time);
+          if (s) patch.start_time = s;
         }
         if (item.deadline !== undefined) {
           const d = AiService.parseDeadline(item.deadline);
@@ -1517,7 +1581,8 @@ export class AiService {
       d ? new Date(d).toISOString() : 'unspecified';
     let windowInfo = `DATE GUIDANCE:
 - Today (now, ISO 8601) is ${new Date().toISOString()}.
-- Never output a deadline in the past.`;
+- Never output a start_time or deadline in the past.
+- Give every "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).`;
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
       windowInfo = `HARD DATE CONSTRAINT — read carefully:
@@ -1529,6 +1594,9 @@ export class AiService {
   later date (e.g. "next Friday" that falls after the event end), use exactly
   ${fmt(event.end_time)} instead. If they ask for an earlier/past date, use the
   later of now and the event start.
+- Give every task BOTH a "start_time" and a "deadline": both MUST sit inside this
+  window, with the start_time strictly BEFORE the deadline (a sensible duration,
+  e.g. about an hour), so the task has a real length on the timeline.
 - Spread multiple tasks across times INSIDE this window; do not exceed it.`;
     }
 
@@ -1547,23 +1615,26 @@ ${contextBlock}
 
 ${windowInfo}
 
-You reply with ONE of three JSON shapes — and NOTHING else (no markdown, no
-prose, no preamble):
+You reply with a SINGLE JSON OBJECT — and NOTHING else (no markdown, no prose,
+no preamble). It MUST be exactly one of these three json shapes:
 
-1) A JSON ARRAY of action objects to perform. Allowed action shapes for your role:
+1) ACTIONS to perform — "kind":"actions" with an "actions" array of action
+   objects: { "kind": "actions", "actions": [ <action>, <action>, ... ] }
+   Allowed action shapes for the "actions" array (for your role):
 ${actionCatalog}
 
 2) A direct ANSWER to a question, answered ONLY from the context above:
-  { "answer": "..." }
+  { "kind": "answer", "answer": "..." }
 
 3) A CLARIFICATION request, ONLY when truly blocked and you cannot infer a sane default:
-  { "clarification_needed": true, "question": "..." }
+  { "kind": "clarification", "question": "..." }
 
 RULES:
 - Reference existing tasks/events/groups/people by their exact name (or id) from the context.
 - For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
+- SCOPED BULK CHANGES: When a command targets "all of <person>'s tasks" (reassign, reschedule, etc.), act ONLY on tasks whose "assigned to:" in the context lists that person. Emit one action per such task by its exact name, and DO NOT touch tasks assigned to anyone else. If no task is assigned to that person, make no changes and say so (an answer) instead of guessing.
 - ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
-- GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions with sensible deadlines INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.
+- GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions, each with a "start_time" and a "deadline" (start before deadline, a sensible duration) INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.
 - If a command is too vague to act on and a clarification would not help, return: { "error": "insufficient info", "missing": ["field1", "field2"] }.`;
 
     const aiRequest = await this.aiRequestRepo.save({
@@ -1582,26 +1653,9 @@ RULES:
     ];
 
     try {
-      const response = await axios.post(
-        `${baseUrl}/chat/completions`,
-        {
-          model,
-          messages,
-          temperature: 0.2,
-          max_tokens: 2000,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          // Don't hang the request indefinitely on a slow provider.
-          timeout: 30000,
-        },
-      );
-
-      const data = response.data as ChatCompletionResponse;
-      const raw: string = data.choices[0].message.content.trim();
+      const raw: string = (
+        await this.requestChatCompletion(baseUrl, model, apiKey, messages)
+      ).trim();
 
       let parsed: unknown;
 
@@ -1612,6 +1666,29 @@ RULES:
         throw new BadRequestException(
           'The AI returned an unexpected response. Please try rephrasing. / Trợ lý AI trả về phản hồi không hợp lệ. Vui lòng thử lại.',
         );
+      }
+
+      // Preferred protocol: a single wrapped object { "kind": "...", ... } so the
+      // response is always a JSON object (what response_format json_object
+      // requires — a top-level array isn't allowed). Unwrap it into the shapes the
+      // routing below already handles. A bare top-level array and the legacy
+      // { answer } / { clarification_needed } objects still work as a fallback
+      // (older prompts, or providers that ignore response_format).
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const wrapped = parsed as Record<string, unknown>;
+        if (Array.isArray(wrapped.actions)) {
+          parsed = wrapped.actions;
+        } else if (
+          wrapped.kind === 'clarification' &&
+          typeof wrapped.question === 'string'
+        ) {
+          parsed = {
+            clarification_needed: true,
+            question: wrapped.question,
+          };
+        }
+        // { kind: 'answer', answer } needs no change — the answer branch below
+        // already keys off a string `answer` field.
       }
 
       // A non-array object is one of: a direct answer to a question, a
@@ -1726,6 +1803,53 @@ RULES:
         status: 'rejected',
       });
       throw err;
+    }
+  }
+
+  // One OpenAI-compatible chat-completion call, resilient to switching providers
+  // (DeepSeek ↔ Gemini ↔ Groq ↔ OpenRouter, via AI_BASE_URL/AI_MODEL/AI_API_KEY).
+  // We ask for a strict JSON object with response_format, but providers/models
+  // vary in whether they accept that field — so if the first attempt fails with a
+  // client error (4xx), we retry once WITHOUT response_format. The wrapped-object
+  // prompt plus the markdown-fence-stripping parser still yield usable JSON, so a
+  // model switch "just works". Set AI_JSON_MODE=off to skip response_format
+  // entirely for a provider you know rejects it.
+  private async requestChatCompletion(
+    baseUrl: string,
+    model: string,
+    apiKey: string,
+    messages: { role: string; content: string }[],
+  ): Promise<string> {
+    const url = `${baseUrl}/chat/completions`;
+    const base = { model, messages, temperature: 0.2, max_tokens: 2000 };
+    const options = {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      // Don't hang the request indefinitely on a slow provider.
+      timeout: 30000,
+    };
+    const jsonMode =
+      (this.config.get<string>('AI_JSON_MODE') ?? 'on').toLowerCase() !== 'off';
+    const send = async (body: object): Promise<string> => {
+      const res = await axios.post(url, body, options);
+      return (res.data as ChatCompletionResponse).choices[0].message.content;
+    };
+
+    if (!jsonMode) return send(base);
+    try {
+      return await send({ ...base, response_format: { type: 'json_object' } });
+    } catch (e) {
+      const status = (e as { response?: { status?: number } } | undefined)
+        ?.response?.status;
+      // 400/422 most likely means this provider/model doesn't accept
+      // response_format — retry once without it rather than failing the switch.
+      // (Auth/rate-limit/5xx errors are re-thrown; retrying those is pointless.)
+      if (status === 400 || status === 422) {
+        return send(base);
+      }
+      throw e;
     }
   }
 

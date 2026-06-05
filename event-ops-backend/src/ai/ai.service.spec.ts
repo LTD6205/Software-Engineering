@@ -153,6 +153,186 @@ describe('AiService.processCommand', () => {
     expect(tasksService.create).toHaveBeenCalled();
   });
 
+  it('gives an AI-created task a start_time before its deadline (a real, draggable window)', async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    // Model supplies only a deadline; the service must still fill in a start_time
+    // so the task has a length and never collapses to a zero-width block (which
+    // would trip the deadline > start_time constraint the moment it's dragged).
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Decorate',
+            priority: 'medium',
+            assigned_to: '',
+            deadline: '2030-01-01T10:00:00Z',
+          },
+        ]),
+      ),
+    );
+    await service.processCommand(ACTOR, { eventId: 'e1', message: 'add a task' });
+    const arg = tasksService.create.mock.calls[0][0] as {
+      start_time?: Date;
+      deadline?: Date;
+    };
+    expect(arg.start_time).toBeInstanceOf(Date);
+    expect(arg.deadline).toBeInstanceOf(Date);
+    expect((arg.start_time as Date).getTime()).toBeLessThan(
+      (arg.deadline as Date).getTime(),
+    );
+  });
+
+  it('honours a model-supplied start_time for a created task', async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Setup',
+            priority: 'low',
+            assigned_to: '',
+            start_time: '2030-01-01T08:00:00Z',
+            deadline: '2030-01-01T10:00:00Z',
+          },
+        ]),
+      ),
+    );
+    await service.processCommand(ACTOR, { eventId: 'e1', message: 'add setup' });
+    const arg = tasksService.create.mock.calls[0][0] as { start_time?: Date };
+    expect((arg.start_time as Date).toISOString()).toBe(
+      '2030-01-01T08:00:00.000Z',
+    );
+  });
+
+  it('asks the provider for a strict JSON object (response_format)', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    await service.processCommand(ACTOR, { eventId: 'e1', message: 'noop' });
+    const body = mockedAxios.post.mock.calls[0][1] as {
+      response_format?: { type?: string };
+    };
+    expect(body.response_format).toEqual({ type: 'json_object' });
+  });
+
+  it('executes a wrapped { kind: "actions", actions: [...] } response', async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify({
+          kind: 'actions',
+          actions: [
+            {
+              task_name: 'Wrapped task',
+              priority: 'low',
+              assigned_to: '',
+              deadline: '2030-01-01T09:00:00Z',
+            },
+          ],
+        }),
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add a task',
+    })) as { status: string; tasks_created: unknown[] };
+    expect(result.status).toBe('success');
+    expect(result.tasks_created).toHaveLength(1);
+    expect(tasksService.create).toHaveBeenCalled();
+  });
+
+  it('returns answered for a wrapped { kind: "answer" } response', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify({ kind: 'answer', answer: 'You have 3 events.' }),
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'how many events?',
+    })) as { status: string; answer: string };
+    expect(result.status).toBe('answered');
+    expect(result.answer).toBe('You have 3 events.');
+  });
+
+  it('returns needs_clarification for a wrapped { kind: "clarification" } response', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify({ kind: 'clarification', question: 'Which event?' }),
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      message: 'do the thing',
+    })) as { status: string; question: string };
+    expect(result.status).toBe('needs_clarification');
+    expect(result.question).toBe('Which event?');
+  });
+
+  it('shows each task\'s current assignee in the prompt (so reassignment is scoped to the right person)', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'Alpha', assignees: [{ user_id: 'u1', name: 'Alice' }] },
+      { task_id: 't2', task_name: 'Beta', assignees: [{ user_id: 'u6', name: 'Frank' }] },
+      { task_id: 't3', task_name: 'Gamma', assignees: [] },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify({ kind: 'answer', answer: 'ok' })),
+    );
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'who has what?',
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as {
+      messages: { role: string; content: string }[];
+    };
+    const systemPrompt = body.messages[0].content;
+    expect(systemPrompt).toContain('"Alpha" (id t1) — assigned to: Alice');
+    expect(systemPrompt).toContain('"Beta" (id t2) — assigned to: Frank');
+    expect(systemPrompt).toContain('"Gamma" (id t3) — assigned to: unassigned');
+  });
+
+  it('retries without response_format when a provider rejects it (4xx) — model switches keep working', async () => {
+    const { service, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockReset();
+    mockedAxios.post
+      .mockRejectedValueOnce({ response: { status: 400 } })
+      .mockResolvedValueOnce(
+        deepSeekReply(
+          JSON.stringify({
+            kind: 'actions',
+            actions: [
+              {
+                task_name: 'X',
+                priority: 'low',
+                assigned_to: '',
+                deadline: '2030-01-01T09:00:00Z',
+              },
+            ],
+          }),
+        ),
+      );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add a task',
+    })) as { status: string };
+    expect(result.status).toBe('success');
+    // First attempt sent response_format; the 4xx triggered a retry without it.
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+    expect(
+      (mockedAxios.post.mock.calls[0][1] as { response_format?: unknown })
+        .response_format,
+    ).toEqual({ type: 'json_object' });
+    expect(
+      (mockedAxios.post.mock.calls[1][1] as { response_format?: unknown })
+        .response_format,
+    ).toBeUndefined();
+  });
+
   it('does not run an event-scoped manage check when no eventId is given', async () => {
     const { service, events } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
@@ -385,6 +565,73 @@ describe('AiService.processCommand', () => {
     const patch = tasksService.update.mock.calls[0][1];
     expect(patch.deadline instanceof Date).toBe(true);
     expect(tasksService.create).not.toHaveBeenCalled();
+  });
+
+  it('renames a task and moves its start_time via update', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 'tk9', task_name: 'Setup' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'update',
+            task_ref: 'Setup',
+            task_name: 'Stage setup',
+            start_time: '2026-08-01T07:00:00',
+          },
+        ]),
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'rename Setup to Stage setup and start it at 7am Aug 1',
+    })) as { status: string; tasks_updated: unknown[] };
+    expect(result.status).toBe('success');
+    expect(result.tasks_updated).toHaveLength(1);
+    const patch = tasksService.update.mock.calls[0][1] as {
+      task_name?: string;
+      start_time?: Date;
+    };
+    expect(patch.task_name).toBe('Stage setup');
+    expect(patch.start_time instanceof Date).toBe(true);
+  });
+
+  it('names a new AI-created group (no blank "Untitled group")', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Order cake',
+            priority: 'low',
+            assigned_to: '',
+            deadline: '2030-01-01T09:00:00Z',
+            group: 'Catering',
+          },
+          {
+            task_name: 'Hire caterer',
+            priority: 'low',
+            assigned_to: '',
+            deadline: '2030-01-01T10:00:00Z',
+            group: 'Catering',
+          },
+        ]),
+      ),
+    );
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'plan catering with two tasks in a Catering group',
+    });
+    expect(tasksService.merge).toHaveBeenCalled();
+    // The group the AI named must be titled, not left blank.
+    expect(tasksService.renameGroup).toHaveBeenCalledWith(
+      'g1',
+      'Catering',
+      ACTOR,
+    );
   });
 
   it('reassigns an existing task to a matched active user', async () => {

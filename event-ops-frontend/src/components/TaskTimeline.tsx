@@ -41,7 +41,9 @@ interface Props {
   matches: (t: Task) => boolean
   canManage: boolean
   onStatusChange: (id: string, status: string) => void
+  onRename: (id: string, name: string) => void
   onEditPriority: (id: string, label: string) => void
+  onStartChange: (id: string, iso: string) => void
   onDeadlineChange: (id: string, iso: string) => void
   onEditAssignees: (task: Task) => void
   onDelete: (id: string) => void
@@ -649,6 +651,18 @@ export default function TaskTimeline(props: Props) {
               </p>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {canManage && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>{t('Task name', 'Tên công việc')}</label>
+                  <input
+                    key={tk.task_id}
+                    defaultValue={tk.task_name}
+                    onBlur={e => { const v = e.target.value.trim(); if (v && v !== tk.task_name) props.onRename(tk.task_id, v) }}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur() }}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>{t('Status', 'Trạng thái')}</label>
                 <Dropdown fullWidth value={tk.status} onChange={v => props.onStatusChange(tk.task_id, v)}
@@ -671,6 +685,28 @@ export default function TaskTimeline(props: Props) {
                     ]} />
                 </div>
               )}
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>{t('Start time', 'Thời gian bắt đầu')}</label>
+                {canManage ? (() => {
+                  const st = tk.start_time ? new Date(tk.start_time) : null
+                  const p = (n: number) => String(n).padStart(2, '0')
+                  const stDate = st ? `${st.getFullYear()}-${p(st.getMonth() + 1)}-${p(st.getDate())}` : ''
+                  const stTime = st ? `${p(st.getHours())}:${p(st.getMinutes())}` : '08:00'
+                  const combine = (date: string, time: string) => {
+                    if (date && time) props.onStartChange(tk.task_id, new Date(`${date}T${time}`).toISOString())
+                  }
+                  return (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input type="date" value={stDate} onChange={e => combine(e.target.value, stTime)} style={{ width: 'auto' }} />
+                      <TimePicker value={stTime} onChange={v => combine(stDate, v)} />
+                    </div>
+                  )
+                })() : (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    <Clock size={13} /> {fmtFull(tk.start_time)}
+                  </span>
+                )}
+              </div>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>{t('Deadline', 'Hạn chót')}</label>
                 {canManage ? (() => {

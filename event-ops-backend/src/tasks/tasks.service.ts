@@ -460,6 +460,23 @@ export class TasksService {
       // values present in this update are checked (not the merged old ones), so
       // editing one field of an already-running task isn't blocked by the other.
       this.assertNotInPast(data.start_time, data.deadline);
+
+      // The DB enforces deadline > start_time (tasks_time_check). Check the
+      // effective (merged) window here so a zero- or negative-length reschedule —
+      // e.g. dragging a task that had only a deadline, so start === deadline —
+      // returns a clean validation error instead of an unhandled 500 from the
+      // constraint.
+      const effStart = data.start_time ?? old.start_time;
+      const effDeadline = data.deadline ?? old.deadline;
+      if (
+        effStart &&
+        effDeadline &&
+        new Date(effDeadline).getTime() <= new Date(effStart).getTime()
+      ) {
+        throw new BadRequestException(
+          'Deadline must be after the start time / Hạn chót phải sau thời gian bắt đầu',
+        );
+      }
     }
 
     // A manual priority edit pins the task to 'user' so auto-recompute won't
