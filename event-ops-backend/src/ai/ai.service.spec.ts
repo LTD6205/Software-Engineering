@@ -317,6 +317,34 @@ describe('AiService.processCommand', () => {
     );
   });
 
+  it('returns the full set of result buckets on success', async () => {
+    const { service, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify([{ task_name: 'A', priority: 'low' }])),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'x',
+    })) as Record<string, unknown>;
+    expect(r.status).toBe('success');
+    for (const key of [
+      'tasks_created',
+      'tasks_updated',
+      'tasks_reassigned',
+      'tasks_deleted',
+      'unassigned',
+      'groups_changed',
+      'events_changed',
+      'users_changed',
+      'unresolved',
+      'rejected',
+      'skipped',
+    ]) {
+      expect(r).toHaveProperty(key);
+    }
+  });
+
   it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([

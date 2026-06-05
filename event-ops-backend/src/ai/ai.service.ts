@@ -12,7 +12,8 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
-import { Actor, CommandOptions } from './ai.types';
+import { Actor, CommandOptions, ExecResult, AiActionKind } from './ai.types';
+import { isActionAllowedForRole } from './ai.authz';
 import axios from 'axios';
 
 type Priority = 'low' | 'medium' | 'high';
@@ -233,6 +234,194 @@ export class AiService {
     }
   }
 
+  // All result buckets, empty. Each kind of action writes into its own bucket.
+  private emptyResult(): ExecResult {
+    return {
+      tasks_created: [],
+      tasks_updated: [],
+      tasks_reassigned: [],
+      tasks_deleted: [],
+      unassigned: [],
+      groups_changed: [],
+      events_changed: [],
+      users_changed: [],
+      unresolved: [],
+      rejected: [],
+      skipped: 0,
+    };
+  }
+
+  // Single execution path for the validated action list. `currentTasks` is the
+  // resolvable task list (mutated as creates land); `defaultEventId` is the
+  // request event used when an action omits an explicit event. The actor's role
+  // gates each action up front — a disallowed action is recorded in `rejected`
+  // and skipped (this is the hard role gate; not every service self-enforces).
+  private async executeActions(
+    actions: AiAction[],
+    currentTasks: TaskRef[],
+    defaultEventId: string | undefined,
+    actor: Actor,
+    aiRequestId: string,
+  ): Promise<ExecResult> {
+    const res = this.emptyResult();
+    for (const item of actions) {
+      if (
+        !isActionAllowedForRole(
+          actor.role,
+          (item as { action: AiActionKind }).action,
+        )
+      ) {
+        res.rejected.push({
+          ref:
+            (item as { task_ref?: string }).task_ref ??
+            (item as { task_name?: string }).task_name ??
+            item.action,
+          reason: `Your role (${actor.role}) cannot perform "${item.action}"`,
+        });
+        continue;
+      }
+      await this.runAction(
+        item,
+        currentTasks,
+        defaultEventId,
+        actor,
+        aiRequestId,
+        res,
+      );
+    }
+    return res;
+  }
+
+  // Execute one already-role-allowed action, writing its outcome into `res`.
+  private async runAction(
+    item: AiAction,
+    currentTasks: TaskRef[],
+    defaultEventId: string | undefined,
+    actor: Actor,
+    aiRequestId: string,
+    res: ExecResult,
+  ): Promise<void> {
+    switch (item.action) {
+      case 'create': {
+        // event_ref resolution arrives in Phase 4; for now every create lands
+        // in the request event.
+        const eventId = defaultEventId;
+        let task: { task_id: string; task_name: string };
+        try {
+          task = await this.tasksService.create(
+            {
+              event_id: eventId,
+              task_name: item.task_name,
+              priority_label: item.priority,
+              priority_score: AiService.priorityScore(item.priority),
+              priority_source: 'ai',
+              deadline: AiService.parseDeadline(item.deadline),
+            },
+            actor,
+          );
+        } catch (e) {
+          // A disallowed create (deadline outside the event window or in the
+          // past) is skipped with a reason rather than failing the whole
+          // command, so the other tasks in the same prompt still go through.
+          res.rejected.push({
+            ref: item.task_name,
+            reason:
+              e instanceof HttpException
+                ? (e.getResponse() as { message?: string }).message || e.message
+                : 'Could not be created',
+          });
+          return;
+        }
+        // Assign if the AI named a matchable user. The assignment obeys the
+        // same rules as a manual one (actor manages the event and, for a plain
+        // manager, the assignee is their own staff), so an out-of-team
+        // suggestion is skipped rather than failing the whole command.
+        await this.tryAssign(task.task_id, item.assigned_to, actor);
+        await this.aiTaskMapRepo.save({
+          request_id: aiRequestId,
+          task_id: task.task_id,
+        });
+        // Let later update/reassign actions reference this new task by name.
+        currentTasks.push({
+          task_id: task.task_id,
+          task_name: task.task_name,
+        });
+        res.tasks_created.push({ ...task });
+        return;
+      }
+
+      case 'update': {
+        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!target) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        const patch: Record<string, unknown> = {};
+        if (item.task_name) patch.task_name = item.task_name;
+        if (item.priority) {
+          patch.priority_label = item.priority;
+          patch.priority_score = AiService.priorityScore(item.priority);
+        }
+        if (item.deadline !== undefined) {
+          const d = AiService.parseDeadline(item.deadline);
+          if (d) patch.deadline = d;
+        }
+        if (item.status) patch.status = item.status;
+        if (Object.keys(patch).length === 0) return;
+        try {
+          const task = await this.tasksService.update(
+            target.task_id,
+            patch,
+            actor,
+          );
+          await this.aiTaskMapRepo.save({
+            request_id: aiRequestId,
+            task_id: target.task_id,
+          });
+          res.tasks_updated.push({ ...task });
+        } catch {
+          // A disallowed edit (e.g. moving a deadline into the past) is skipped
+          // rather than failing the whole command.
+          res.unresolved.push(item.task_ref);
+        }
+        return;
+      }
+
+      case 'reassign': {
+        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!target) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        // reassign — replace the task's assignee set with the matched user.
+        const assignee = await this.resolveAssignee(item.assigned_to);
+        if (!assignee) {
+          res.unresolved.push(item.assigned_to);
+          return;
+        }
+        try {
+          await this.tasksService.setAssignees(
+            target.task_id,
+            [assignee.user_id],
+            actor,
+          );
+          await this.aiTaskMapRepo.save({
+            request_id: aiRequestId,
+            task_id: target.task_id,
+          });
+          res.tasks_reassigned.push({
+            task_id: target.task_id,
+            task_name: target.task_name,
+            assigned_to: assignee.user_id,
+          });
+        } catch {
+          res.unresolved.push(item.task_ref);
+        }
+        return;
+      }
+    }
+  }
+
   async processCommand(actor: Actor, opts: CommandOptions): Promise<object> {
     const { message: userMessage } = opts;
     // eventId is optional on the DTO (cross-event commands arrive in later
@@ -383,140 +572,22 @@ If the command is too vague to act on, return instead:
         };
       }
 
-      const createdTasks: object[] = [];
-      const updatedTasks: object[] = [];
-      const reassignedTasks: object[] = [];
-      // task_ref values the model named but we couldn't match to a real task.
-      const unresolved: string[] = [];
-      // Tasks the server refused (e.g. a deadline outside the event window or in
-      // the past). Recorded per-task so one bad task doesn't abort the command.
-      const rejected: { task_name: string; reason: string }[] = [];
-
-      for (const item of actions) {
-        if (item.action === 'create') {
-          let task: { task_id: string; task_name: string };
-          try {
-            task = await this.tasksService.create(
-              {
-                event_id: eventId,
-                task_name: item.task_name,
-                priority_label: item.priority,
-                priority_score: AiService.priorityScore(item.priority),
-                priority_source: 'ai',
-                deadline: AiService.parseDeadline(item.deadline),
-              },
-              actor,
-            );
-          } catch (e) {
-            // A disallowed create (deadline outside the event window or in the
-            // past) is skipped with a reason rather than failing the whole
-            // command, so the other tasks in the same prompt still go through.
-            rejected.push({
-              task_name: item.task_name,
-              reason:
-                e instanceof HttpException
-                  ? (e.getResponse() as { message?: string }).message ||
-                    e.message
-                  : 'Could not be created',
-            });
-            continue;
-          }
-          // Assign if the AI named a matchable user. The assignment obeys the
-          // same rules as a manual one (actor manages the event and, for a plain
-          // manager, the assignee is their own staff), so an out-of-team
-          // suggestion is skipped rather than failing the whole command.
-          await this.tryAssign(task.task_id, item.assigned_to, actor);
-          await this.aiTaskMapRepo.save({
-            request_id: aiRequest.request_id,
-            task_id: task.task_id,
-          });
-          // Let later update/reassign actions reference this new task by name.
-          currentTasks.push({
-            task_id: task.task_id,
-            task_name: task.task_name,
-          });
-          createdTasks.push({ ...task });
-          continue;
-        }
-
-        // update / reassign both target an existing task.
-        const target = this.resolveTaskRef(item.task_ref, currentTasks);
-        if (!target) {
-          unresolved.push(item.task_ref);
-          continue;
-        }
-
-        if (item.action === 'update') {
-          const patch: Record<string, unknown> = {};
-          if (item.task_name) patch.task_name = item.task_name;
-          if (item.priority) {
-            patch.priority_label = item.priority;
-            patch.priority_score = AiService.priorityScore(item.priority);
-          }
-          if (item.deadline !== undefined) {
-            const d = AiService.parseDeadline(item.deadline);
-            if (d) patch.deadline = d;
-          }
-          if (item.status) patch.status = item.status;
-          if (Object.keys(patch).length === 0) continue;
-          try {
-            const task = await this.tasksService.update(
-              target.task_id,
-              patch,
-              actor,
-            );
-            await this.aiTaskMapRepo.save({
-              request_id: aiRequest.request_id,
-              task_id: target.task_id,
-            });
-            updatedTasks.push({ ...task });
-          } catch {
-            // A disallowed edit (e.g. moving a deadline into the past) is skipped
-            // rather than failing the whole command.
-            unresolved.push(item.task_ref);
-          }
-        } else {
-          // reassign — replace the task's assignee set with the matched user.
-          const assignee = await this.resolveAssignee(item.assigned_to);
-          if (!assignee) {
-            unresolved.push(item.assigned_to);
-            continue;
-          }
-          try {
-            await this.tasksService.setAssignees(
-              target.task_id,
-              [assignee.user_id],
-              actor,
-            );
-            await this.aiTaskMapRepo.save({
-              request_id: aiRequest.request_id,
-              task_id: target.task_id,
-            });
-            reassignedTasks.push({
-              task_id: target.task_id,
-              task_name: target.task_name,
-              assigned_to: assignee.user_id,
-            });
-          } catch {
-            unresolved.push(item.task_ref);
-          }
-        }
-      }
-
+      const result = await this.executeActions(
+        actions,
+        currentTasks,
+        eventId,
+        actor,
+        aiRequest.request_id,
+      );
+      // Malformed items dropped during validation are surfaced alongside the
+      // executed buckets.
+      result.skipped = skipped;
       await this.aiRequestRepo.update(aiRequest.request_id, {
         response: parsed,
         status: 'success',
       });
 
-      return {
-        status: 'success',
-        tasks_created: createdTasks,
-        tasks_updated: updatedTasks,
-        tasks_reassigned: reassignedTasks,
-        unresolved,
-        rejected,
-        skipped,
-      };
+      return { status: 'success', ...result };
     } catch (err) {
       await this.aiRequestRepo.update(aiRequest.request_id, {
         status: 'rejected',
