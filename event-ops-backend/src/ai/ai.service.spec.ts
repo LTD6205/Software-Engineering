@@ -27,6 +27,11 @@ function build() {
     assignUser: jest.fn(),
     update: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
     setAssignees: jest.fn().mockResolvedValue(undefined),
+    remove: jest.fn().mockResolvedValue(undefined),
+    merge: jest.fn().mockResolvedValue({ group_id: 'g1' }),
+    addToGroup: jest.fn().mockResolvedValue(undefined),
+    ungroup: jest.fn().mockResolvedValue(undefined),
+    renameGroup: jest.fn().mockResolvedValue(undefined),
     // The current task list fed to the model (empty unless a test overrides it).
     findAllByEvent: jest.fn().mockResolvedValue([]),
   };
@@ -343,6 +348,29 @@ describe('AiService.processCommand', () => {
     ]) {
       expect(r).toHaveProperty(key);
     }
+  });
+
+  it('rename_group resolves a group by title and calls renameGroup', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A', group_id: 'g1', group_title: 'Catering' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'rename_group', group_ref: 'Catering', title: 'Food' },
+        ]),
+      ),
+    );
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'rename catering to food',
+    });
+    expect(tasksService.renameGroup).toHaveBeenCalledWith(
+      'g1',
+      'Food',
+      expect.objectContaining({ sub: 'u1' }),
+    );
   });
 
   it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {

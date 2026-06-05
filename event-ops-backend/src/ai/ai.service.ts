@@ -12,7 +12,18 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
-import { Actor, CommandOptions, ExecResult, AiActionKind } from './ai.types';
+import {
+  Actor,
+  CommandOptions,
+  ExecResult,
+  AiActionKind,
+  UnassignAction,
+  DeleteAction,
+  MergeAction,
+  AddToGroupAction,
+  RenameGroupAction,
+  UngroupAction,
+} from './ai.types';
 import { isActionAllowedForRole } from './ai.authz';
 import axios from 'axios';
 
@@ -34,6 +45,9 @@ interface CreateAction {
   priority: Priority;
   assigned_to: string;
   deadline: string;
+  // Optional group title: new tasks sharing the same group are linked into one
+  // task group after the action loop (see executeActions).
+  group?: string;
 }
 interface UpdateAction {
   action: 'update';
@@ -48,7 +62,16 @@ interface ReassignAction {
   task_ref: string;
   assigned_to: string;
 }
-type AiAction = CreateAction | UpdateAction | ReassignAction;
+type AiAction =
+  | CreateAction
+  | UpdateAction
+  | ReassignAction
+  | UnassignAction
+  | DeleteAction
+  | MergeAction
+  | AddToGroupAction
+  | RenameGroupAction
+  | UngroupAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 interface TaskRef {
@@ -135,6 +158,11 @@ export class AiService {
         typeof item.task_name === 'string' ? item.task_name.trim() : '';
       const assignedTo =
         typeof item.assigned_to === 'string' ? item.assigned_to : '';
+      const targetRef =
+        typeof item.target_ref === 'string' ? item.target_ref.trim() : '';
+      const groupRef =
+        typeof item.group_ref === 'string' ? item.group_ref.trim() : '';
+      const title = typeof item.title === 'string' ? item.title.trim() : '';
 
       if (action === 'update') {
         if (!ref) {
@@ -179,18 +207,63 @@ export class AiService {
           task_ref: ref,
           assigned_to: assignedTo,
         });
+      } else if (action === 'unassign') {
+        if (!ref) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'unassign', task_ref: ref });
+      } else if (action === 'delete') {
+        if (!ref) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'delete', task_ref: ref });
+      } else if (action === 'merge') {
+        if (!ref || !targetRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'merge', task_ref: ref, target_ref: targetRef });
+      } else if (action === 'add_to_group') {
+        if (!groupRef || !ref) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'add_to_group',
+          group_ref: groupRef,
+          task_ref: ref,
+        });
+      } else if (action === 'rename_group') {
+        if (!groupRef || !title) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'rename_group', group_ref: groupRef, title });
+      } else if (action === 'ungroup') {
+        if (!ref) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'ungroup', task_ref: ref });
       } else {
         // create (default)
         if (!name) {
           skipped++;
           continue;
         }
+        const group =
+          typeof item.group === 'string' && item.group.trim()
+            ? item.group.trim()
+            : undefined;
         actions.push({
           action: 'create',
           task_name: name,
           priority: AiService.normalisePriority(item.priority),
           assigned_to: assignedTo,
           deadline: typeof item.deadline === 'string' ? item.deadline : '',
+          ...(group ? { group } : {}),
         });
       }
     }
@@ -206,6 +279,26 @@ export class AiService {
       tasks.find((t) => t.task_name.trim().toLowerCase() === needle) ??
       null
     );
+  }
+
+  // Resolve a model-supplied group_ref to a real group id in this event: an
+  // exact id match first, else a case-insensitive group-title match. Null when
+  // no match.
+  private resolveGroupRef(
+    ref: string,
+    groupIds: Set<string>,
+    groupByTitle: Map<string, string>,
+  ): string | null {
+    const needle = ref.trim().toLowerCase();
+    if (groupIds.has(ref)) return ref;
+    return groupByTitle.get(needle) ?? null;
+  }
+
+  // Turn a thrown service error into a short, client-safe reason string.
+  private reason(e: unknown): string {
+    return e instanceof HttpException
+      ? (e.getResponse() as { message?: string }).message || e.message
+      : 'Action failed';
   }
 
   // Resolve an AI-provided "assigned_to" string (name or email) to a real,
@@ -262,8 +355,13 @@ export class AiService {
     defaultEventId: string | undefined,
     actor: Actor,
     aiRequestId: string,
+    groupIds: Set<string>,
+    groupByTitle: Map<string, string>,
   ): Promise<ExecResult> {
     const res = this.emptyResult();
+    // New tasks tagged with a `group` title, collected as creates land and
+    // linked into one task group after the loop.
+    const createdGroups: { taskId: string; title: string }[] = [];
     for (const item of actions) {
       if (
         !isActionAllowedForRole(
@@ -287,7 +385,45 @@ export class AiService {
         actor,
         aiRequestId,
         res,
+        groupIds,
+        groupByTitle,
+        createdGroups,
       );
+    }
+    // Link newly-created tasks that share a group title. Reuse an existing event
+    // group with that title if present, else chain members via merge (the first
+    // pair creates the group; subsequent members add to it).
+    const byTitle = new Map<string, string[]>();
+    for (const g of createdGroups) {
+      const arr = byTitle.get(g.title.toLowerCase()) ?? [];
+      arr.push(g.taskId);
+      byTitle.set(g.title.toLowerCase(), arr);
+    }
+    for (const [title, taskIds] of byTitle) {
+      const existing = groupByTitle.get(title);
+      try {
+        if (existing) {
+          for (const id of taskIds)
+            await this.tasksService.addToGroup(existing, id, actor);
+          res.groups_changed.push({
+            action: 'add_to_group',
+            group_id: existing,
+            title,
+          });
+        } else if (taskIds.length >= 2) {
+          const g = await this.tasksService.merge(
+            taskIds[0],
+            taskIds[1],
+            actor,
+          );
+          const gid = (g as { group_id?: string }).group_id;
+          for (const id of taskIds.slice(2))
+            if (gid) await this.tasksService.addToGroup(gid, id, actor);
+          res.groups_changed.push({ action: 'merge', group_id: gid, title });
+        }
+      } catch (e) {
+        res.rejected.push({ ref: title, reason: this.reason(e) });
+      }
     }
     return res;
   }
@@ -300,6 +436,9 @@ export class AiService {
     actor: Actor,
     aiRequestId: string,
     res: ExecResult,
+    groupIds: Set<string>,
+    groupByTitle: Map<string, string>,
+    createdGroups: { taskId: string; title: string }[],
   ): Promise<void> {
     switch (item.action) {
       case 'create': {
@@ -346,6 +485,14 @@ export class AiService {
           task_id: task.task_id,
           task_name: task.task_name,
         });
+        // Record group membership so same-titled creates are linked after the
+        // loop.
+        if (item.group && item.group.trim()) {
+          createdGroups.push({
+            taskId: task.task_id,
+            title: item.group.trim(),
+          });
+        }
         res.tasks_created.push({ ...task });
         return;
       }
@@ -419,6 +566,108 @@ export class AiService {
         }
         return;
       }
+
+      case 'unassign': {
+        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!t) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        try {
+          await this.tasksService.setAssignees(t.task_id, [], actor);
+          res.unassigned.push({ task_id: t.task_id, task_name: t.task_name });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'delete': {
+        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!t) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        try {
+          await this.tasksService.remove(t.task_id, actor);
+          res.tasks_deleted.push({
+            task_id: t.task_id,
+            task_name: t.task_name,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'merge': {
+        const s = this.resolveTaskRef(item.task_ref, currentTasks);
+        const tg = this.resolveTaskRef(item.target_ref, currentTasks);
+        if (!s || !tg) {
+          res.unresolved.push(!s ? item.task_ref : item.target_ref);
+          return;
+        }
+        try {
+          const g = await this.tasksService.merge(s.task_id, tg.task_id, actor);
+          res.groups_changed.push({
+            action: 'merge',
+            group_id: (g as { group_id?: string }).group_id,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'add_to_group': {
+        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!gid || !t) {
+          res.unresolved.push(!gid ? item.group_ref : item.task_ref);
+          return;
+        }
+        try {
+          await this.tasksService.addToGroup(gid, t.task_id, actor);
+          res.groups_changed.push({ action: 'add_to_group', group_id: gid });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'rename_group': {
+        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        if (!gid) {
+          res.unresolved.push(item.group_ref);
+          return;
+        }
+        try {
+          await this.tasksService.renameGroup(gid, item.title, actor);
+          res.groups_changed.push({
+            action: 'rename_group',
+            group_id: gid,
+            title: item.title,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.group_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'ungroup': {
+        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        if (!t) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        try {
+          await this.tasksService.ungroup(t.task_id, actor);
+          res.groups_changed.push({ action: 'ungroup' });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
     }
   }
 
@@ -459,9 +708,30 @@ export class AiService {
     // Give the model the event's current tasks so it can target existing ones
     // for update/reassign (not just create new ones). Viewer-scoped read; the
     // actor already passed the manage check above.
-    const currentTasks: TaskRef[] = (
-      (await this.tasksService.findAllByEvent(eventId, actor)) as TaskRef[]
-    ).map((t) => ({ task_id: t.task_id, task_name: t.task_name }));
+    const rows = (await this.tasksService.findAllByEvent(
+      eventId,
+      actor,
+    )) as Array<{
+      task_id: string;
+      task_name: string;
+      group_id?: string;
+      group_title?: string;
+    }>;
+    const currentTasks: TaskRef[] = rows.map((t) => ({
+      task_id: t.task_id,
+      task_name: t.task_name,
+    }));
+    // Build the event's task-group context so group_ref/title can be resolved
+    // (and so same-titled new tasks can reuse an existing group).
+    const groupByTitle = new Map<string, string>(); // lower(title) -> group_id
+    const groupIds = new Set<string>();
+    for (const t of rows) {
+      if (t.group_id) {
+        groupIds.add(t.group_id);
+        if (t.group_title)
+          groupByTitle.set(t.group_title.trim().toLowerCase(), t.group_id);
+      }
+    }
     const taskList = currentTasks.length
       ? currentTasks
           .map((t) => `- "${t.task_name}" (id ${t.task_id})`)
@@ -578,6 +848,8 @@ If the command is too vague to act on, return instead:
         eventId,
         actor,
         aiRequest.request_id,
+        groupIds,
+        groupByTitle,
       );
       // Malformed items dropped during validation are surfaced alongside the
       // executed buckets.

@@ -24,6 +24,37 @@ export type AiActionKind =
   | 'reject_reassign'
   | 'cancel_reassign';
 
+// Task action shapes the model may emit beyond create/update/reassign. Each
+// routes to an existing TasksService method; the AiAction union (in
+// ai.service.ts) includes these.
+export interface UnassignAction {
+  action: 'unassign';
+  task_ref: string;
+}
+export interface DeleteAction {
+  action: 'delete';
+  task_ref: string;
+}
+export interface MergeAction {
+  action: 'merge';
+  task_ref: string;
+  target_ref: string;
+}
+export interface AddToGroupAction {
+  action: 'add_to_group';
+  group_ref: string;
+  task_ref: string;
+}
+export interface RenameGroupAction {
+  action: 'rename_group';
+  group_ref: string;
+  title: string;
+}
+export interface UngroupAction {
+  action: 'ungroup';
+  task_ref: string;
+}
+
 export interface Actor {
   sub: string;
   role: string;
