@@ -24,7 +24,14 @@ Turn the AI Assistant into a **role-aware operations partner** usable by **Admin
 
 ## Safety model (load-bearing principle)
 
-Every AI action is executed by calling the **existing service method** (`TasksService`, `EventsService`, `UsersService`), passing the **actor's verified JWT identity** — never a privileged/system actor. Authorization is therefore identical to the actor performing the action manually: role guards' intent is mirrored, `EventsService` membership policy gates which event, "assignee must be own staff", admin-only account changes, event-window/no-past-date rules, etc. **The AI layer adds no new authorization path.** Role-gating in the prompt is a UX/clarity measure; the **services are the hard gate**, and any action the actor isn't allowed to take is skipped into `rejected[]` rather than performed.
+Every AI action is executed by calling the **existing service method** (`TasksService`, `EventsService`, `UsersService`), passing the **actor's verified JWT identity** — never a privileged/system actor.
+
+**Two enforcement layers, because authorization in this codebase is split between controllers and services:**
+
+1. **AI-side role gate (required).** Some authorization lives only in the controllers, not the services — e.g. `EventsService.create/update/remove/addManager/removeManager` take no actor and do no role/ownership check (the `@Roles('organizer')` guard is the only gate); `UsersController` enforces `assertCanAssignRole` and the admin-only `is_active` rule before calling the service; and `TasksService` enforces event *membership* but not *role* (an organizer member would pass its `assertCanManageEvent`). Therefore `AiService` MUST enforce, per action, a **role allow-list** (task→manager/admin; event→organizer/admin; account→manager-staff/admin) **and** replicate the controller-level checks (`assertCanAssignRole`, admin-only `is_active`, and `assertCanManageEvent` for an existing event/membership target) before calling the no-actor services. A disallowed action is skipped into `rejected[]`.
+2. **Service-side gate (defense in depth).** Services still enforce what they own: event-membership policy, "assignee must be own staff", event-window/no-past-date rules, active-manager-only membership, etc.
+
+The AI layer therefore adds exactly one new authorization surface — the per-action role gate that mirrors the controllers — and otherwise delegates to existing service checks. Prompt role-gating (advertising only allowed actions) is a UX measure on top; it is **not** relied on for safety.
 
 ## 1. Role-aware action catalog
 
