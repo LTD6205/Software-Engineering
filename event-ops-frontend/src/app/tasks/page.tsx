@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { Plus, CheckSquare } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
@@ -40,6 +40,8 @@ const nowMs = () => Date.now()
 
 function TasksContent() {
   const searchParams = useSearchParams()
+  const router       = useRouter()
+  const pathname     = usePathname()
   const eventId      = searchParams.get('eventId') || ''
   const { user, isManager, isAdmin } = useAuth()
   const { t, tError } = useLang()
@@ -76,6 +78,17 @@ function TasksContent() {
   const toggle = (list: string[], id: string) =>
     list.includes(id) ? list.filter(x => x !== id) : [...list, id]
 
+  // Select an event AND mirror it into the URL (?eventId=) so the AI drawer
+  // (which reads the search param) sees the current event, and deep-links /
+  // refreshes restore the same selection. replace() (not push) keeps this out of
+  // history; { scroll: false } avoids jumping to the top on each pick. We only
+  // WRITE the URL here on selection changes — the line-43 initializer seeds the
+  // initial state from the URL, so there's no effect reading it back (no loop).
+  const chooseEvent = useCallback((id: string) => {
+    setSelectedEvent(id)
+    router.replace(`${pathname}?eventId=${id}`, { scroll: false })
+  }, [router, pathname])
+
   const refreshEvents = useCallback(() => {
     eventsApi.getAll().then(setEvents).catch(() => {})
   }, [])
@@ -94,9 +107,9 @@ function TasksContent() {
   useEffect(() => {
     if (!selectedEvent && events.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSelectedEvent(events[0].event_id)
+      chooseEvent(events[0].event_id)
     }
-  }, [events, selectedEvent])
+  }, [events, selectedEvent, chooseEvent])
 
   // Live updates: when anyone changes a task/event, refresh the board + milestone
   // without a manual reload (e.g. a staff completing the last task).
@@ -348,7 +361,7 @@ function TasksContent() {
       <div style={{ padding: '28px' }}>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
-          <EventPicker events={events} value={selectedEvent} onChange={setSelectedEvent} />
+          <EventPicker events={events} value={selectedEvent} onChange={chooseEvent} />
           {selectedEvent && isManager && (
             <button
               onClick={() => openNewTask()}
