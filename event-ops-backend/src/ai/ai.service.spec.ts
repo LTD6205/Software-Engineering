@@ -1097,4 +1097,20 @@ describe('AiService.processCommand', () => {
     expect(r.tasks_created.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('caps execution at 40 actions and counts the overflow as skipped', async () => {
+    const { service, userRepo } = build('manager');
+    userRepo.findOne.mockResolvedValue(null);
+    const items = Array.from({ length: 45 }, (_, i) => ({
+      task_name: `Task ${i}`,
+      priority: 'low',
+    }));
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify(items)));
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'make 45 tasks',
+    })) as { status: string; tasks_created: unknown[]; skipped: number };
+    expect(r.status).toBe('success');
+    expect(r.tasks_created).toHaveLength(40);
+    expect(r.skipped).toBeGreaterThanOrEqual(5);
+  });
 });

@@ -431,6 +431,13 @@ export class AiService {
         });
       }
     }
+    // Cap a single command at 40 actions so a runaway generative reply can't fan
+    // out into an unbounded batch of writes; the overflow is counted as skipped.
+    const MAX_ACTIONS = 40;
+    if (actions.length > MAX_ACTIONS) {
+      skipped += actions.length - MAX_ACTIONS;
+      actions.length = MAX_ACTIONS;
+    }
     return { actions, skipped };
   }
 
