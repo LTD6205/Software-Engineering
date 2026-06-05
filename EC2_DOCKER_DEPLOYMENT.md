@@ -32,7 +32,7 @@ Install and start Docker:
 
 ```bash
 sudo dnf update -y
-sudo dnf install -y docker git
+sudo dnf install -y docker git curl
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
 exit
@@ -44,6 +44,24 @@ SSH back in so the Docker group change applies:
 ssh -i path/to/key.pem ec2-user@YOUR_EC2_PUBLIC_IP
 docker --version
 docker compose version
+```
+
+If `docker compose up -d --build` later says `compose build requires buildx 0.17.0 or later`, install a newer Buildx plugin:
+
+```bash
+rm -f ~/.docker/cli-plugins/docker-buildx
+mkdir -p ~/.docker/cli-plugins
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64) BUILDX_ARCH=amd64 ;;
+  aarch64) BUILDX_ARCH=arm64 ;;
+  *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
+esac
+BUILDX_VERSION=v0.31.1
+curl -fL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDX_ARCH}" \
+  -o ~/.docker/cli-plugins/docker-buildx
+chmod +x ~/.docker/cli-plugins/docker-buildx
+docker buildx version
 ```
 
 ## 3. Get The Project Onto EC2
@@ -80,7 +98,9 @@ DB_USERNAME=postgres
 DB_PASSWORD=use_a_strong_database_password
 DB_NAME=event_ops
 JWT_SECRET=replace_with_output_from_openssl_rand
-DEEPSEEK_API_KEY=
+AI_API_KEY=
+AI_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL=deepseek-chat
 ```
 
 Generate a JWT secret:

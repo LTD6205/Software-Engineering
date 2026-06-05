@@ -196,7 +196,9 @@ Access is by **exact role match** with Admin as the superuser. In the table belo
 ```
 DB_HOST=localhost  DB_PORT=5432  DB_USERNAME=postgres  DB_PASSWORD=postgres  DB_NAME=event_ops
 JWT_SECRET=dev_local_secret_change_me
-DEEPSEEK_API_KEY=        # optional — leave blank to disable the AI Assistant
+AI_API_KEY=              # optional — leave blank to disable the AI Assistant
+AI_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL=deepseek-chat
 PORT=3000
 ```
 
