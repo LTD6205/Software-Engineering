@@ -492,6 +492,36 @@ describe('AiService.processCommand', () => {
     expect(r.groups_changed[0]).toMatchObject({ action: 'ungroup' });
   });
 
+  it('links two same-group creates into one group', async () => {
+    const { service, tasksService } = build();
+    let n = 0;
+    tasksService.create.mockImplementation(async () => ({
+      task_id: 'tk' + ++n,
+      task_name: 'T' + n,
+    }));
+    tasksService.merge.mockResolvedValue({ group_id: 'g1' });
+    tasksService.findAllByEvent.mockResolvedValue([]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { task_name: 'Buy cake', priority: 'low', group: 'Food' },
+          { task_name: 'Order pizza', priority: 'low', group: 'Food' },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'plan food',
+    })) as { tasks_created: unknown[] };
+    expect(tasksService.create).toHaveBeenCalledTimes(2);
+    expect(tasksService.merge).toHaveBeenCalledWith(
+      'tk1',
+      'tk2',
+      expect.anything(),
+    );
+    expect(r.tasks_created).toHaveLength(2);
+  });
+
   it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([
