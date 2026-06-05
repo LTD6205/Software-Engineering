@@ -90,9 +90,13 @@ export const notificationsApi = {
 }
 
 export const aiApi = {
-  // The acting user is derived from the JWT on the backend — no userId in the body.
-  command: (eventId: string, message: string) =>
-    api.post('/ai/command', { eventId, message }).then(r => r.data),
+  // The acting user (and its role) is derived from the JWT on the backend — no
+  // userId in the body. `eventId` is optional: present on event-scoped views
+  // (e.g. the tasks page), absent for cross-event commands ("create an event").
+  command: (body: { eventId?: string; message: string; mode: 'auto' | 'ask'; history: { role: 'user' | 'assistant'; content: string }[] }) =>
+    api.post('/ai/command', body).then((r) => r.data),
+  confirm: (requestId: string) => api.post(`/ai/command/${requestId}/confirm`).then((r) => r.data),
+  cancel: (requestId: string) => api.post(`/ai/command/${requestId}/cancel`).then((r) => r.data),
 }
 
 // Pull a human-readable message out of an unknown thrown error (usually an

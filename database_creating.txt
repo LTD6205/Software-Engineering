@@ -38,8 +38,13 @@ CREATE TABLE AI_Requests (
     user_id     UUID                NOT NULL REFERENCES Users(user_id),
     prompt      TEXT                NOT NULL,
     response    JSONB,                          -- structured JSON output from AI
-    status      VARCHAR(20)         NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'success', 'rejected')),
+    status      VARCHAR(30)         NOT NULL DEFAULT 'pending'
+                    -- AI confirm/clarification flow adds awaiting_confirmation, cancelled, needs_clarification
+                    -- (VARCHAR(30): 'awaiting_confirmation' is 21 chars, too long for the old VARCHAR(20))
+                    CHECK (status IN (
+                        'pending', 'success', 'rejected',
+                        'awaiting_confirmation', 'cancelled', 'needs_clarification'
+                    )),
     created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
 );
 
