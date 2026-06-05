@@ -6,5 +6,6 @@
 // The `event_ops_test` database is created + seeded out-of-band (schema cloned
 // from `event_ops`, accounts loaded via seed.js with DB_NAME=event_ops_test).
 process.env.DB_NAME = 'event_ops_test';
-// Keep the AI feature inert during tests (no outbound DeepSeek calls).
+// Keep the AI feature inert during tests (no outbound provider calls).
+process.env.AI_API_KEY = '';
 process.env.DEEPSEEK_API_KEY = '';
