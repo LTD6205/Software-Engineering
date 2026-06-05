@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from './users.service';
+import { Not } from 'typeorm';
 
 // bcrypt is a native binding — spying on it doesn't work, so mock the module.
 jest.mock('bcrypt');
@@ -354,16 +355,12 @@ describe('UsersService — profile / CRUD', () => {
       expect(args.where).toBeUndefined(); // admin sees everyone
     });
 
-    it('scopes a manager to peer managers + their own staff (no is_active)', async () => {
+    it('scopes a non-admin (manager) to everyone except admins (no is_active)', async () => {
       const { service, userRepo } = build();
       await service.findAll({ sub: 'mgr-me', role: 'manager' });
       const args = userRepo.find.mock.calls[0][0];
       expect(args.select).not.toContain('is_active');
-      // OR-where: every manager, plus staff that report to me.
-      expect(args.where).toEqual([
-        { role: 'manager' },
-        { role: 'staff', manager_id: 'mgr-me' },
-      ]);
+      expect(args.where).toEqual({ role: Not('admin') });
     });
 
     it("omits 'is_active' when no actor is given", async () => {
@@ -373,28 +370,6 @@ describe('UsersService — profile / CRUD', () => {
       expect(select).not.toContain('is_active');
     });
 
-    it('also includes the organizer who added the manager to an event', async () => {
-      const { service, userRepo } = build();
-      // 1st find() = base roster; manager.query returns the manager's event
-      // creator id; 2nd find() = that creator (their organizer).
-      userRepo.find
-        .mockResolvedValueOnce([{ user_id: 'mgr-me', role: 'manager' }])
-        .mockResolvedValueOnce([{ user_id: 'org-1', role: 'organizer' }]);
-      userRepo.manager.query.mockResolvedValueOnce([{ created_by: 'org-1' }]);
-
-      const result = await service.findAll({ sub: 'mgr-me', role: 'manager' });
-
-      // The creator lookup is scoped to this manager's events…
-      expect(userRepo.manager.query).toHaveBeenCalledWith(
-        expect.stringContaining('event_managers'),
-        ['mgr-me'],
-      );
-      // …and the creator is fetched by id, then appended to the roster.
-      expect(userRepo.find.mock.calls[1][0].where.user_id).toBeDefined();
-      expect(
-        (result as Array<{ user_id: string }>).map((u) => u.user_id),
-      ).toEqual(['mgr-me', 'org-1']);
-    });
   });
 
   describe('findOneForViewer', () => {
@@ -433,7 +408,7 @@ describe('UsersService — profile / CRUD', () => {
   describe('directory', () => {
     it('queries only active users with the limited select (no phone)', async () => {
       const { service, userRepo } = build();
-      await service.directory();
+      await service.directory({ sub: 'admin-1', role: 'admin' });
       const args = userRepo.find.mock.calls[0][0];
       expect(args.where).toEqual({ is_active: true });
       expect(args.select).toEqual([

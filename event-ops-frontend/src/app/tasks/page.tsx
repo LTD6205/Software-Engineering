@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
-import { Plus, CheckSquare } from 'lucide-react'
+import { Plus, CheckSquare, RotateCcw } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
 import TimePicker from '@/components/TimePicker'
@@ -111,14 +111,26 @@ function TasksContent() {
     }
   }, [events, selectedEvent, chooseEvent])
 
+  // The event's 3 most-recent task changes, powering the Undo button (managers/
+  // admins only). Refreshed on event switch and after any live change.
+  const [changes, setChanges] = useState<{ id: string; change_type: string; label: string }[]>([])
+  const loadChanges = useCallback(() => {
+    if (selectedEvent && isManager) {
+      tasksApi.changes(selectedEvent).then(setChanges).catch(() => setChanges([]))
+    } else {
+      setChanges([])
+    }
+  }, [selectedEvent, isManager])
+
   // Live updates: when anyone changes a task/event, refresh the board + milestone
   // without a manual reload (e.g. a staff completing the last task).
   const onLiveChange = useCallback((c: DataChange) => {
     refreshEvents()
     if (selectedEvent && (!c.event_id || c.event_id === selectedEvent)) {
       tasksApi.getByEvent(selectedEvent).then(setTasks).catch(() => {})
+      loadChanges()
     }
-  }, [selectedEvent, refreshEvents])
+  }, [selectedEvent, refreshEvents, loadChanges])
   useLiveData(onLiveChange)
 
   // Reload tasks whenever the selected event changes. setLoading(true) up front
@@ -131,7 +143,8 @@ function TasksContent() {
       .then(setTasks)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [selectedEvent])
+    loadChanges()
+  }, [selectedEvent, loadChanges])
 
   // The task's dates must stay within the parent event's time range.
   const selEvent = events.find(e => e.event_id === selectedEvent)
@@ -342,6 +355,18 @@ function TasksContent() {
     if (selectedEvent) setTasks(await tasksApi.getByEvent(selectedEvent))
     refreshEvents()
   }
+  // Undo the event's most recent task change (edit or deletion). Same backend
+  // path the AI's "undo" uses. Click again to step back through the kept history.
+  const handleUndo = async () => {
+    if (!selectedEvent || changes.length === 0) return
+    try {
+      await tasksApi.undoLast(selectedEvent)
+      await reloadTasks()
+      loadChanges()
+    } catch (e) {
+      showToast(tError(getErrorMessage(e, 'Could not undo / Không thể hoàn tác')))
+    }
+  }
   const handleMerge = async (sourceId: string, targetId: string) => {
     try { await tasksApi.merge(sourceId, targetId); await reloadTasks() }
     catch (e) { showToast(tError(getErrorMessage(e, 'Could not merge the tasks / Không thể gộp công việc'))) }
@@ -409,6 +434,24 @@ function TasksContent() {
                 padding: '10px 18px', fontSize: '13px', fontWeight: 600,
               }}>
               <Plus size={15} /> {t('New Task', 'Tạo công việc')}
+            </button>
+          )}
+          {selectedEvent && isManager && (
+            <button
+              onClick={handleUndo}
+              disabled={changes.length === 0}
+              title={changes[0]
+                ? `${t('Undo', 'Hoàn tác')}: ${changes[0].label}`
+                : t('Nothing to undo', 'Không có gì để hoàn tác')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '7px',
+                background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: '9px',
+                padding: '10px 16px', fontSize: '13px', fontWeight: 600,
+                cursor: changes.length === 0 ? 'default' : 'pointer',
+                opacity: changes.length === 0 ? 0.5 : 1,
+              }}>
+              <RotateCcw size={15} /> {t('Undo', 'Hoàn tác')}{changes.length ? ` (${changes.length})` : ''}
             </button>
           )}
         </div>

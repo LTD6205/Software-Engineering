@@ -22,6 +22,7 @@ import {
   AiActionKind,
   UnassignAction,
   DeleteAction,
+  UndoAction,
   MergeAction,
   AddToGroupAction,
   RenameGroupAction,
@@ -90,6 +91,7 @@ type AiAction =
   | ReassignAction
   | UnassignAction
   | DeleteAction
+  | UndoAction
   | MergeAction
   | AddToGroupAction
   | RenameGroupAction
@@ -312,6 +314,8 @@ export class AiService {
           continue;
         }
         actions.push({ action: 'delete', task_ref: ref });
+      } else if (action === 'undo') {
+        actions.push({ action: 'undo' });
       } else if (action === 'merge') {
         if (!ref || !targetRef) {
           skipped++;
@@ -682,6 +686,11 @@ export class AiService {
             kind: 'delete',
             description: `Delete task "${taskName(item.task_ref)}"`,
           };
+        case 'undo':
+          return {
+            kind: 'undo',
+            description: 'Undo the most recent change in this event',
+          };
         case 'merge':
           return {
             kind: 'merge',
@@ -809,6 +818,7 @@ export class AiService {
       '{ "action": "reassign", "task_ref": "task name or id", "assigned_to": "name or email" }',
     unassign: '{ "action": "unassign", "task_ref": "task name or id" }',
     delete: '{ "action": "delete", "task_ref": "task name or id" }',
+    undo: '{ "action": "undo" }',
     merge:
       '{ "action": "merge", "task_ref": "source task", "target_ref": "target task" }',
     add_to_group:
@@ -1144,6 +1154,26 @@ export class AiService {
           });
         } catch (e) {
           res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'undo': {
+        if (!defaultEventId) {
+          res.rejected.push({
+            ref: 'undo',
+            reason: 'No event in context to undo',
+          });
+          return;
+        }
+        try {
+          const r = (await this.tasksService.undoLastChange(
+            defaultEventId,
+            actor,
+          )) as { undone?: unknown };
+          res.tasks_updated.push({ undone: r.undone });
+        } catch (e) {
+          res.rejected.push({ ref: 'undo', reason: this.reason(e) });
         }
         return;
       }
@@ -1633,6 +1663,7 @@ ${actionCatalog}
 RULES:
 - Reference existing tasks/events/groups/people by their exact name (or id) from the context.
 - For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
+- To undo the most recent change in the current event (an edit or a deletion), emit { "action": "undo" }. Use this for "undo", "revert that", "undo the last change", "put it back".
 - SCOPED BULK CHANGES: When a command targets "all of <person>'s tasks" (reassign, reschedule, etc.), act ONLY on tasks whose "assigned to:" in the context lists that person. Emit one action per such task by its exact name, and DO NOT touch tasks assigned to anyone else. If no task is assigned to that person, make no changes and say so (an answer) instead of guessing.
 - ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
 - GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions, each with a "start_time" and a "deadline" (start before deadline, a sensible duration) INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.

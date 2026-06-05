@@ -9,6 +9,7 @@ import { User } from './entities/user.entity';
 import { Event } from './entities/event.entity';
 import { Task } from './entities/task.entity';
 import { TaskLog } from './entities/task-log.entity';
+import { TaskChangeLog } from './entities/task-change-log.entity';
 import { TaskAssignment } from './entities/task-assignment.entity';
 import { TaskDependency } from './entities/task-dependency.entity';
 import { TaskGroup } from './entities/task-group.entity';
@@ -42,6 +43,7 @@ import { WebsocketModule } from './websocket/websocket.module';
           Event,
           Task,
           TaskLog,
+          TaskChangeLog,
           TaskAssignment,
           TaskDependency,
           TaskGroup,

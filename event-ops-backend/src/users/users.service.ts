@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -26,6 +26,14 @@ export class UsersService {
   //              organizers who added them to an event (so they can see who
   //              brought them on); NOT other managers' staff or admins.
   //   (no actor / other) — full roster without is_active (internal/tests).
+  // The one place who-can-see-whom is decided, shared by the full roster
+  // (findAll) and the lightweight directory: admins see everyone; every other
+  // role sees all non-admins. Returns undefined (no filter) for an admin, else a
+  // `role <> 'admin'` condition to fold into a query's where.
+  private visibilityWhere(role?: string) {
+    return role === 'admin' ? undefined : { role: Not('admin') };
+  }
+
   async findAll(actor?: { sub: string; role: string }) {
     const select: (keyof User)[] = [
       'user_id',
@@ -38,40 +46,12 @@ export class UsersService {
       'pending_manager_id',
       'created_at',
     ];
-    if (actor?.role === 'admin') {
-      select.push('is_active');
-      return this.userRepo.find({ select, order: { created_at: 'ASC' } });
-    }
-    if (actor?.role === 'manager') {
-      const base = await this.userRepo.find({
-        where: [{ role: 'manager' }, { role: 'staff', manager_id: actor.sub }],
-        select,
-        order: { created_at: 'ASC' },
-      });
-      // The people who created events this manager belongs to (their
-      // organizer(s) — or an admin who set the event up). Whatever their role,
-      // the manager should see who brought them onto the event.
-      const orgRows: Array<{ created_by: string }> =
-        await this.userRepo.manager.query(
-          `SELECT DISTINCT e.created_by FROM events e
-             JOIN event_managers em ON em.event_id = e.event_id
-             WHERE em.manager_id = $1 AND e.created_by IS NOT NULL`,
-          [actor.sub],
-        );
-      // Drop any ids already in the base roster (e.g. a manager-created edge case).
-      const haveIds = new Set(base.map((u) => u.user_id));
-      const creatorIds = orgRows
-        .map((r) => r.created_by)
-        .filter((id) => !haveIds.has(id));
-      if (creatorIds.length === 0) return base;
-      const creators = await this.userRepo.find({
-        where: { user_id: In(creatorIds) },
-        select,
-        order: { created_at: 'ASC' },
-      });
-      return [...base, ...creators];
-    }
-    return this.userRepo.find({ select, order: { created_at: 'ASC' } });
+    if (actor?.role === 'admin') select.push('is_active');
+    return this.userRepo.find({
+      where: this.visibilityWhere(actor?.role),
+      select,
+      order: { created_at: 'ASC' },
+    });
   }
 
   // Actor-scoped single-user read (GET /users/:id). Admins see anyone; a manager
@@ -94,14 +74,21 @@ export class UsersService {
     return data;
   }
 
-  // Roster any signed-in user may see. Staff use this and may only see emails
-  // (not phone numbers) of others — so phone is intentionally excluded here.
-  directory() {
+  // Lightweight roster a signed-in user may see (phone excluded — the directory
+  // only ever exposes emails). Same visibility rule as findAll (visibilityWhere):
+  // admins see everyone, every other role sees all non-admins.
+  directory(actor: { sub: string; role: string }) {
+    const select = [
+      'user_id',
+      'name',
+      'role',
+      'email',
+      'avatar',
+      'manager_id',
+    ] as (keyof User)[];
     return this.userRepo.find({
-      // manager_id is included so a staff member can see their own team
-      // (everyone who reports to the same manager).
-      select: ['user_id', 'name', 'role', 'email', 'avatar', 'manager_id'],
-      where: { is_active: true },
+      where: { is_active: true, ...this.visibilityWhere(actor.role) },
+      select,
       order: { role: 'ASC', name: 'ASC' },
     });
   }

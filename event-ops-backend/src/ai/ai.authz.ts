@@ -9,6 +9,7 @@ export const AI_ACTION_ROLES: Record<AiActionKind, string[]> = {
   reassign: ['manager', 'admin'],
   unassign: ['manager', 'admin'],
   delete: ['manager', 'admin'],
+  undo: ['manager', 'admin'],
   merge: ['manager', 'admin'],
   add_to_group: ['manager', 'admin'],
   rename_group: ['manager', 'admin'],

@@ -41,6 +41,31 @@ export class TasksController {
     });
   }
 
+  // ── Per-event undo history (the 3 most recent task changes) ──
+  @Get('event/:eventId/changes')
+  @Roles('manager')
+  eventChanges(
+    @Request() req: { user: JwtPayload },
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+  ) {
+    return this.tasksService.getEventChanges(eventId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
+  }
+
+  @Post('event/:eventId/undo')
+  @Roles('manager')
+  undoLast(
+    @Request() req: { user: JwtPayload },
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+  ) {
+    return this.tasksService.undoLastChange(eventId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
+  }
+
   // ── Task groups (merged tasks). Declared before :id routes so the literal
   // "groups" segment is never swallowed by a param route. ──
   @Post('groups/merge')

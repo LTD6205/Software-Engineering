@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
+import { Not } from 'typeorm';
 
 // A staff member and the two managers involved in a reassignment.
 const OLD_MGR = { user_id: 'mgr-old', name: 'Olivia', role: 'manager' };
@@ -32,6 +33,7 @@ function build(seed: Record<string, unknown> = {}) {
     findOne: jest.fn(({ where }: { where: { user_id?: string } }) =>
       Promise.resolve(where?.user_id ? (store[where.user_id] ?? null) : null),
     ),
+    find: jest.fn().mockResolvedValue([]),
     update: jest.fn(),
     manager,
   };
@@ -275,5 +277,24 @@ describe('UsersService — staff→manager reassignment', () => {
         service.cancelReassign('ghost', { sub: 'mgr-old', role: 'manager' }),
       ).rejects.toThrow(NotFoundException);
     });
+  });
+});
+
+describe('UsersService.directory — role-scoped visibility', () => {
+  it.each(['staff', 'manager', 'organizer'])(
+    '%s sees every active user except admins',
+    async (role) => {
+      const { service, userRepo } = build();
+      await service.directory({ sub: 'x', role });
+      const where = userRepo.find.mock.calls[0][0].where;
+      expect(where).toEqual({ is_active: true, role: Not('admin') });
+    },
+  );
+
+  it('admins see everyone', async () => {
+    const { service, userRepo } = build();
+    await service.directory({ sub: 'a-1', role: 'admin' });
+    const where = userRepo.find.mock.calls[0][0].where;
+    expect(where).toEqual({ is_active: true });
   });
 });

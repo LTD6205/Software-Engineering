@@ -98,6 +98,23 @@ CREATE TABLE Task_Logs (
 );
 
 
+--  5b. TASK_CHANGE_LOG
+--  Bounded (3 newest per event), delete-surviving undo history for task changes.
+--  Powers the Undo button and the AI "undo" action. NO FK to Tasks so a delete's
+--  snapshot outlives the task it can re-create. See migrations/2026-06-05_task_change_log.sql.
+CREATE TABLE task_change_log (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id      UUID                NOT NULL REFERENCES Events(event_id) ON DELETE CASCADE,
+    task_id       UUID,                           -- may outlive the task (delete)
+    change_type   VARCHAR(10)         NOT NULL CHECK (change_type IN ('edit', 'delete')),
+    label         TEXT,                           -- human summary for the undo button
+    snapshot      JSONB               NOT NULL,   -- edit: {fields:{...old}}  delete: {task:{...}, assignees:[...]}
+    actor_user_id UUID,
+    created_at    TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_task_change_log_event ON task_change_log(event_id, created_at DESC);
+
+
 --  6. TASK_ASSIGNMENTS
 --  Links one or more users to a task
 CREATE TABLE Task_Assignments (
