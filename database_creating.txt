@@ -39,7 +39,11 @@ CREATE TABLE AI_Requests (
     prompt      TEXT                NOT NULL,
     response    JSONB,                          -- structured JSON output from AI
     status      VARCHAR(20)         NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'success', 'rejected')),
+                    -- AI confirm/clarification flow adds awaiting_confirmation, cancelled, needs_clarification
+                    CHECK (status IN (
+                        'pending', 'success', 'rejected',
+                        'awaiting_confirmation', 'cancelled', 'needs_clarification'
+                    )),
     created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
 );
 
