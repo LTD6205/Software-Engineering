@@ -110,6 +110,26 @@ export interface ResetPasswordAction {
   new_password: string;
 }
 
+// Staff reassignment workflow shapes (manager/admin). Each routes to the
+// matching UsersService reassignment method.
+export interface RequestReassignAction {
+  action: 'request_reassign';
+  staff_ref: string;
+  target_manager_ref: string;
+}
+export interface AcceptReassignAction {
+  action: 'accept_reassign';
+  staff_ref: string;
+}
+export interface RejectReassignAction {
+  action: 'reject_reassign';
+  staff_ref: string;
+}
+export interface CancelReassignAction {
+  action: 'cancel_reassign';
+  staff_ref: string;
+}
+
 export interface Actor {
   sub: string;
   role: string;

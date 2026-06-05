@@ -60,6 +60,10 @@ function build(role = 'manager') {
   const usersService = {
     create: jest.fn().mockResolvedValue({ user_id: 'n1', name: 'New' }),
     update: jest.fn().mockResolvedValue({ user_id: 'n1', name: 'New' }),
+    requestReassign: jest.fn().mockResolvedValue(undefined),
+    acceptReassign: jest.fn().mockResolvedValue(undefined),
+    rejectReassign: jest.fn().mockResolvedValue(undefined),
+    cancelReassign: jest.fn().mockResolvedValue(undefined),
   };
   const service = new AiService(
     config as never,
@@ -986,4 +990,60 @@ describe('AiService.processCommand', () => {
     expect(r.rejected[0].reason).toMatch(/role/i);
   });
 
+  it('request_reassign resolves both refs and calls requestReassign', async () => {
+    const { service, usersService, userRepo } = build('manager');
+    userRepo.findOne
+      .mockResolvedValueOnce({ user_id: 's5', name: 'Sam', role: 'staff' })
+      .mockResolvedValueOnce({ user_id: 'm9', name: 'Mona', role: 'manager' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'request_reassign',
+            staff_ref: 'Sam',
+            target_manager_ref: 'Mona',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { message: 'move Sam to Mona' },
+    )) as { users_changed: Array<Record<string, unknown>> };
+    expect(usersService.requestReassign).toHaveBeenCalledWith(
+      's5',
+      'm9',
+      expect.objectContaining({ sub: 'm1' }),
+    );
+    expect(r.users_changed[0]).toMatchObject({
+      action: 'request_reassign',
+      user_id: 's5',
+    });
+  });
+
+  it('accept_reassign resolves staff_ref and calls acceptReassign', async () => {
+    const { service, usersService, userRepo } = build('manager');
+    userRepo.findOne.mockResolvedValue({
+      user_id: 's5',
+      name: 'Sam',
+      role: 'staff',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([{ action: 'accept_reassign', staff_ref: 'Sam' }]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { message: 'accept Sam' },
+    )) as { users_changed: Array<Record<string, unknown>> };
+    expect(usersService.acceptReassign).toHaveBeenCalledWith(
+      's5',
+      expect.objectContaining({ sub: 'm1' }),
+    );
+    expect(r.users_changed[0]).toMatchObject({
+      action: 'accept_reassign',
+      user_id: 's5',
+    });
+  });
 });

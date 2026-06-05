@@ -33,6 +33,10 @@ import {
   CreateUserAction,
   UpdateUserAction,
   ResetPasswordAction,
+  RequestReassignAction,
+  AcceptReassignAction,
+  RejectReassignAction,
+  CancelReassignAction,
 } from './ai.types';
 import { isActionAllowedForRole } from './ai.authz';
 import { UsersService } from '../users/users.service';
@@ -90,7 +94,11 @@ type AiAction =
   | RemoveEventManagerAction
   | CreateUserAction
   | UpdateUserAction
-  | ResetPasswordAction;
+  | ResetPasswordAction
+  | RequestReassignAction
+  | AcceptReassignAction
+  | RejectReassignAction
+  | CancelReassignAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 interface TaskRef {
@@ -205,6 +213,12 @@ export class AiService {
         typeof item.user_ref === 'string' ? item.user_ref.trim() : '';
       const newPassword =
         typeof item.new_password === 'string' ? item.new_password : '';
+      const staffRef =
+        typeof item.staff_ref === 'string' ? item.staff_ref.trim() : '';
+      const targetManagerRef =
+        typeof item.target_manager_ref === 'string'
+          ? item.target_manager_ref.trim()
+          : '';
       const isActive =
         typeof item.is_active === 'boolean' ? item.is_active : undefined;
 
@@ -376,6 +390,26 @@ export class AiService {
           user_ref: userRef,
           new_password: newPassword,
         });
+      } else if (action === 'request_reassign') {
+        if (!staffRef || !targetManagerRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'request_reassign',
+          staff_ref: staffRef,
+          target_manager_ref: targetManagerRef,
+        });
+      } else if (
+        action === 'accept_reassign' ||
+        action === 'reject_reassign' ||
+        action === 'cancel_reassign'
+      ) {
+        if (!staffRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action, staff_ref: staffRef });
       } else {
         // create (default)
         if (!name) {
@@ -1153,6 +1187,54 @@ export class AiService {
         return;
       }
 
+      case 'request_reassign': {
+        const staff = await this.resolveAssignee(item.staff_ref);
+        const mgr = await this.resolveAssignee(item.target_manager_ref);
+        if (!staff || !mgr) {
+          res.unresolved.push(
+            !staff ? item.staff_ref : item.target_manager_ref,
+          );
+          return;
+        }
+        try {
+          await this.users.requestReassign(staff.user_id, mgr.user_id, actor);
+          res.users_changed.push({
+            action: 'request_reassign',
+            user_id: staff.user_id,
+            summary: `Requested move of ${staff.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.staff_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'accept_reassign':
+      case 'reject_reassign':
+      case 'cancel_reassign': {
+        const staff = await this.resolveAssignee(item.staff_ref);
+        if (!staff) {
+          res.unresolved.push(item.staff_ref);
+          return;
+        }
+        try {
+          const fn =
+            item.action === 'accept_reassign'
+              ? this.users.acceptReassign
+              : item.action === 'reject_reassign'
+                ? this.users.rejectReassign
+                : this.users.cancelReassign;
+          await fn.call(this.users, staff.user_id, actor);
+          res.users_changed.push({
+            action: item.action,
+            user_id: staff.user_id,
+            summary: `${item.action} for ${staff.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.staff_ref, reason: this.reason(e) });
+        }
+        return;
+      }
     }
   }
 
