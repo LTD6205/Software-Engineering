@@ -373,6 +373,125 @@ describe('AiService.processCommand', () => {
     );
   });
 
+  it('delete resolves a task and calls remove; unmatched ref → unresolved', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'delete', task_ref: 'A' },
+          { action: 'delete', task_ref: 'ghost' },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'delete A and ghost',
+    })) as { tasks_deleted: unknown[]; unresolved: string[] };
+    expect(tasksService.remove).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ sub: 'u1' }),
+    );
+    expect(r.tasks_deleted).toEqual([{ task_id: 't1', task_name: 'A' }]);
+    expect(r.unresolved).toContain('ghost');
+  });
+
+  it('unassign clears assignees via setAssignees([])', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify([{ action: 'unassign', task_ref: 'A' }])),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'unassign A',
+    })) as { unassigned: unknown[] };
+    expect(tasksService.setAssignees).toHaveBeenCalledWith(
+      't1',
+      [],
+      expect.anything(),
+    );
+    expect(r.unassigned).toEqual([{ task_id: 't1', task_name: 'A' }]);
+  });
+
+  it('merge resolves source+target and calls merge', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A' },
+      { task_id: 't2', task_name: 'B' },
+    ]);
+    tasksService.merge.mockResolvedValue({ group_id: 'g1' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([{ action: 'merge', task_ref: 'A', target_ref: 'B' }]),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'merge A into B',
+    })) as { groups_changed: Array<Record<string, unknown>> };
+    expect(tasksService.merge).toHaveBeenCalledWith(
+      't1',
+      't2',
+      expect.anything(),
+    );
+    expect(r.groups_changed[0]).toMatchObject({
+      action: 'merge',
+      group_id: 'g1',
+    });
+  });
+
+  it('add_to_group resolves a group by title and adds the task', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A', group_id: 'g1', group_title: 'Setup' },
+      { task_id: 't2', task_name: 'B' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'add_to_group', group_ref: 'Setup', task_ref: 'B' },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add B to setup',
+    })) as { groups_changed: Array<Record<string, unknown>> };
+    expect(tasksService.addToGroup).toHaveBeenCalledWith(
+      'g1',
+      't2',
+      expect.anything(),
+    );
+    expect(r.groups_changed[0]).toMatchObject({
+      action: 'add_to_group',
+      group_id: 'g1',
+    });
+  });
+
+  it('ungroup resolves a task and calls ungroup', async () => {
+    const { service, tasksService } = build();
+    tasksService.findAllByEvent.mockResolvedValue([
+      { task_id: 't1', task_name: 'A', group_id: 'g1', group_title: 'Setup' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify([{ action: 'ungroup', task_ref: 'A' }])),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'ungroup A',
+    })) as { groups_changed: Array<Record<string, unknown>> };
+    expect(tasksService.ungroup).toHaveBeenCalledWith(
+      't1',
+      expect.anything(),
+    );
+    expect(r.groups_changed[0]).toMatchObject({ action: 'ungroup' });
+  });
+
   it('reports an update whose task_ref matches nothing as unresolved (no write)', async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([
