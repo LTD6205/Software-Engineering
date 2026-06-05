@@ -283,6 +283,24 @@ export class AiService {
     );
   }
 
+  // Resolve a model-supplied event_ref to a real event id the actor can see: an
+  // exact id match first, else a case-insensitive event-name match. When no ref
+  // is given, fall back to the request's default event. Null when no match.
+  private resolveEventRef(
+    ref: string | undefined,
+    events: { event_id: string; event_name: string }[],
+    defaultEventId?: string,
+  ): string | null {
+    if (!ref) return defaultEventId ?? null;
+    const needle = ref.trim().toLowerCase();
+    return (
+      events.find((e) => e.event_id.toLowerCase() === needle)?.event_id ??
+      events.find((e) => e.event_name.trim().toLowerCase() === needle)
+        ?.event_id ??
+      null
+    );
+  }
+
   // Resolve a model-supplied group_ref to a real group id in this event: an
   // exact id match first, else a case-insensitive group-title match. Null when
   // no match.
@@ -470,6 +488,7 @@ export class AiService {
     aiRequestId: string,
     groupIds: Set<string>,
     groupByTitle: Map<string, string>,
+    viewableEvents: { event_id: string; event_name: string }[],
   ): Promise<ExecResult> {
     const res = this.emptyResult();
     // New tasks tagged with a `group` title, collected as creates land and
@@ -501,6 +520,7 @@ export class AiService {
         groupIds,
         groupByTitle,
         createdGroups,
+        viewableEvents,
       );
     }
     // Link newly-created tasks that share a group title. Reuse an existing event
@@ -552,6 +572,7 @@ export class AiService {
     groupIds: Set<string>,
     groupByTitle: Map<string, string>,
     createdGroups: { taskId: string; title: string }[],
+    viewableEvents: { event_id: string; event_name: string }[],
   ): Promise<void> {
     switch (item.action) {
       case 'create': {
@@ -824,6 +845,14 @@ export class AiService {
     // already passed the manage check above.
     const { currentTasks, groupIds, groupByTitle } =
       await this.loadEventContext(eventId, actor);
+    // The events the actor can see, used to resolve event_ref for event actions
+    // (create/update/delete event, add/remove manager) — and, later, reads.
+    const viewableEvents = (await this.events.findForViewer(actor)) as Array<{
+      event_id: string;
+      event_name: string;
+      start_time: string;
+      end_time: string;
+    }>;
     const taskList = currentTasks.length
       ? currentTasks
           .map((t) => `- "${t.task_name}" (id ${t.task_id})`)
@@ -1005,6 +1034,7 @@ If the command is too vague to act on, return instead:
         aiRequest.request_id,
         groupIds,
         groupByTitle,
+        viewableEvents,
       );
       // Malformed items dropped during validation are surfaced alongside the
       // executed buckets.
@@ -1035,6 +1065,10 @@ If the command is too vague to act on, return instead:
     const stored = row.response as { plan: AiAction[]; eventId?: string };
     const { currentTasks, groupIds, groupByTitle } =
       await this.loadEventContext(stored.eventId, actor);
+    const viewableEvents = (await this.events.findForViewer(actor)) as Array<{
+      event_id: string;
+      event_name: string;
+    }>;
     const result = await this.executeActions(
       stored.plan ?? [],
       currentTasks,
@@ -1043,6 +1077,7 @@ If the command is too vague to act on, return instead:
       requestId,
       groupIds,
       groupByTitle,
+      viewableEvents,
     );
     await this.aiRequestRepo.update(requestId, { status: 'success' });
     return { status: 'success', ...result };

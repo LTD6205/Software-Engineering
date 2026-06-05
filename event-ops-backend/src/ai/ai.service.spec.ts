@@ -14,7 +14,7 @@ function deepSeekReply(content: string) {
   return { data: { choices: [{ message: { content } }] } };
 }
 
-function build() {
+function build(role = 'manager') {
   const config = { get: jest.fn().mockReturnValue('fake-key') };
   const aiRequestRepo = {
     save: jest.fn().mockResolvedValue({ request_id: 'req1' }),
@@ -46,6 +46,14 @@ function build() {
       start_time: '2026-01-01T00:00:00Z',
       end_time: '2030-01-01T00:00:00Z',
     }),
+    // The set of events the actor can see (used to resolve event_ref).
+    findForViewer: jest.fn().mockResolvedValue([]),
+    // Event write methods (organizer/admin only).
+    create: jest.fn().mockResolvedValue({ event_id: 'e9', event_name: 'Gala' }),
+    update: jest.fn().mockResolvedValue({ event_id: 'e1', event_name: 'X' }),
+    remove: jest.fn().mockResolvedValue(undefined),
+    addManager: jest.fn().mockResolvedValue(undefined),
+    removeManager: jest.fn().mockResolvedValue(undefined),
   };
   const service = new AiService(
     config as never,
@@ -687,5 +695,27 @@ describe('AiService.processCommand', () => {
     expect(aiRequestRepo.update).toHaveBeenCalledWith('req1', {
       status: 'cancelled',
     });
+  });
+
+  it('resolveEventRef resolves by id and by case-insensitive name', () => {
+    const { service } = build();
+    const resolve = (
+      service as unknown as {
+        resolveEventRef: (
+          ref: string | undefined,
+          events: { event_id: string; event_name: string }[],
+          defaultEventId?: string,
+        ) => string | null;
+      }
+    ).resolveEventRef.bind(service);
+    const events = [
+      { event_id: 'e1', event_name: 'Spring Gala' },
+      { event_id: 'e2', event_name: 'Summer Fest' },
+    ];
+    expect(resolve('e2', events)).toBe('e2');
+    expect(resolve('spring gala', events)).toBe('e1');
+    expect(resolve('unknown', events)).toBeNull();
+    expect(resolve(undefined, events, 'e1')).toBe('e1');
+    expect(resolve(undefined, events)).toBeNull();
   });
 });
