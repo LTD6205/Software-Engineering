@@ -649,6 +649,90 @@ export class AiService {
     });
   }
 
+  // Build the role-scoped context block fed into the system prompt: the actor's
+  // role + current date-time, up to 20 viewable events (nearest deadline first,
+  // with an overflow note), the current event's tasks (when eventId is set), and
+  // the assignable roster (a manager's own active staff). This powers both reads
+  // (answer) and reference resolution / assignment for writes.
+  private async buildContextBlock(
+    actor: Actor,
+    eventId: string | undefined,
+    currentTasks: TaskRef[],
+    viewableEvents: Array<{
+      event_id: string;
+      event_name: string;
+      start_time?: string | Date | null;
+      end_time?: string | Date | null;
+      task_count?: number;
+      completed_count?: number;
+    }>,
+  ): Promise<string> {
+    const fmt = (d: Date | string | null | undefined) =>
+      d ? new Date(d).toISOString() : 'unspecified';
+    const lines: string[] = [];
+    lines.push(`Actor role: ${actor.role}. Current date-time: ${new Date().toISOString()}.`);
+
+    // Up to 20 viewable events, nearest end_time first; note any overflow.
+    const sortedEvents = [...viewableEvents].sort((a, b) => {
+      const ax = a.end_time ? new Date(a.end_time).getTime() : Infinity;
+      const bx = b.end_time ? new Date(b.end_time).getTime() : Infinity;
+      return ax - bx;
+    });
+    const shownEvents = sortedEvents.slice(0, 20);
+    if (shownEvents.length) {
+      lines.push('Events you can see (nearest deadline first):');
+      for (const e of shownEvents) {
+        const counts =
+          e.task_count !== undefined
+            ? ` — ${e.completed_count ?? 0}/${e.task_count} tasks done`
+            : '';
+        lines.push(
+          `- "${e.event_name}" (id ${e.event_id}), ${fmt(e.start_time)} to ${fmt(e.end_time)}${counts}`,
+        );
+      }
+      if (sortedEvents.length > 20) {
+        lines.push(
+          `…and ${sortedEvents.length - 20} more events not listed (showing the 20 nearest).`,
+        );
+      }
+    } else {
+      lines.push('Events you can see: (none)');
+    }
+
+    // The current event's tasks (resolvable refs for update/reassign/etc.).
+    if (eventId) {
+      if (currentTasks.length) {
+        lines.push("Current event's tasks (reference these by exact name or id):");
+        for (const t of currentTasks) {
+          lines.push(`- "${t.task_name}" (id ${t.task_id})`);
+        }
+      } else {
+        lines.push("Current event's tasks: (none yet)");
+      }
+    }
+
+    // The assignable roster. For a manager this is their own active staff; for
+    // organizer/admin we keep it simple (best-effort empty list — see spec
+    // Limitations) since their assignable set spans whole teams.
+    let roster: Array<{ name?: string; email?: string }> = [];
+    if (actor.role === 'manager') {
+      roster = (await this.userRepo.find({
+        where: { manager_id: actor.sub, is_active: true },
+      })) as Array<{ name?: string; email?: string }>;
+    }
+    const shownRoster = roster.slice(0, 50);
+    if (shownRoster.length) {
+      lines.push('People you can assign tasks to:');
+      for (const u of shownRoster) {
+        lines.push(`- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}`);
+      }
+    } else {
+      lines.push('People you can assign tasks to: (none on record)');
+    }
+
+    return lines.join('\n');
+  }
+
   // Single execution path for the validated action list. `currentTasks` is the
   // resolvable task list (mutated as creates land); `defaultEventId` is the
   // request event used when an action omits an explicit event. The actor's role
@@ -1301,20 +1385,29 @@ export class AiService {
       start_time: string;
       end_time: string;
     }>;
-    const taskList = currentTasks.length
-      ? currentTasks
-          .map((t) => `- "${t.task_name}" (id ${t.task_id})`)
-          .join('\n')
-      : '(no tasks yet)';
+    // Role-scoped context block: actor role + now, viewable events, the current
+    // event's tasks, and the assignable roster. Powers reads (answer) and
+    // reference resolution / assignment for writes.
+    const contextBlock = await this.buildContextBlock(
+      actor,
+      eventId || undefined,
+      currentTasks,
+      viewableEvents,
+    );
 
     // Tell the model the event's date window (and "now") so it picks deadlines
     // that pass the server-side rule that every task must sit inside the event
     // window and not in the past — otherwise dates like "next Friday" get
-    // rejected. The actor already passed the manage check above.
-    const event = await this.events.findOneForViewer(eventId, actor);
+    // rejected. Only meaningful when a specific event is in scope. The actor
+    // already passed the view/manage check above.
     const fmt = (d: Date | string | null | undefined) =>
       d ? new Date(d).toISOString() : 'unspecified';
-    const windowInfo = `HARD DATE CONSTRAINT — read carefully:
+    let windowInfo = `DATE GUIDANCE:
+- Today (now, ISO 8601) is ${new Date().toISOString()}.
+- Never output a deadline in the past.`;
+    if (eventId) {
+      const event = await this.events.findOneForViewer(eventId, actor);
+      windowInfo = `HARD DATE CONSTRAINT — read carefully:
 - Today (now, ISO 8601) is ${new Date().toISOString()}.
 - This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (ISO 8601).
 - EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
@@ -1324,11 +1417,17 @@ export class AiService {
   ${fmt(event.end_time)} instead. If they ask for an earlier/past date, use the
   later of now and the event start.
 - Spread multiple tasks across times INSIDE this window; do not exceed it.`;
+    }
 
     const systemPrompt = `You are an event operations assistant. The user issues a
 natural-language command about an event's task list. You may CREATE new tasks,
 UPDATE existing ones (reschedule, rename, re-prioritise, change status), or
 REASSIGN an existing task to a different person.
+
+CONTEXT (everything you can see right now):
+${contextBlock}
+
+${windowInfo}
 
 Return ONLY a valid JSON array of action objects — no explanation, no markdown,
 no preamble. Each object uses one of these shapes:
@@ -1337,10 +1436,7 @@ no preamble. Each object uses one of these shapes:
   { "action": "update",   "task_ref": "existing task name or id", "task_name"?: "string", "priority"?: "low|medium|high", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }
   { "action": "reassign", "task_ref": "existing task name or id", "assigned_to": "name or email" }
 
-Reference existing tasks by their exact name (or id) from this list:
-${taskList}
-
-${windowInfo}
+Reference existing tasks by their exact name (or id) from the context above.
 
 For an update, include ONLY the fields that change. To push deadlines back/forward,
 emit one update per affected task with the new deadline.

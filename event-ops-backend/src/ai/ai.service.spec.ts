@@ -22,7 +22,7 @@ function build(role = 'manager') {
     findOne: jest.fn(),
   };
   const aiTaskMapRepo = { save: jest.fn() };
-  const userRepo = { findOne: jest.fn() };
+  const userRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
   const tasksService = {
     create: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
     assignUser: jest.fn(),
@@ -1046,4 +1046,35 @@ describe('AiService.processCommand', () => {
       user_id: 's5',
     });
   });
+
+  it('includes viewable events and the assignable roster in the system prompt', async () => {
+    const { service, events, userRepo } = build('manager');
+    events.findForViewer.mockResolvedValue([
+      {
+        event_id: 'e1',
+        event_name: 'Gala',
+        start_time: '2026-07-01T09:00:00Z',
+        end_time: '2026-07-02T18:00:00Z',
+      },
+    ]);
+    userRepo.find.mockResolvedValue([
+      { user_id: 's1', name: 'Bob', email: 'bob@x.com', is_active: true },
+    ]);
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'what is going on?',
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as {
+      messages: { role: string; content: string }[];
+    };
+    const systemContent = body.messages[0].content;
+    expect(systemContent).toContain('Gala');
+    expect(systemContent).toContain('Bob');
+    // The manager's own active staff is the assignable roster.
+    expect(userRepo.find).toHaveBeenCalledWith({
+      where: { manager_id: 'u1', is_active: true },
+    });
+  });
+
 });
