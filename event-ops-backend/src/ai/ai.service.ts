@@ -28,6 +28,8 @@ import {
   CreateEventAction,
   UpdateEventAction,
   DeleteEventAction,
+  AddEventManagerAction,
+  RemoveEventManagerAction,
 } from './ai.types';
 import { isActionAllowedForRole } from './ai.authz';
 import axios from 'axios';
@@ -79,7 +81,9 @@ type AiAction =
   | UngroupAction
   | CreateEventAction
   | UpdateEventAction
-  | DeleteEventAction;
+  | DeleteEventAction
+  | AddEventManagerAction
+  | RemoveEventManagerAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 interface TaskRef {
@@ -181,6 +185,8 @@ export class AiService {
         typeof item.end_time === 'string' ? item.end_time.trim() : '';
       const description =
         typeof item.description === 'string' ? item.description.trim() : '';
+      const managerRef =
+        typeof item.manager_ref === 'string' ? item.manager_ref.trim() : '';
 
       if (action === 'update') {
         if (!ref) {
@@ -294,6 +300,26 @@ export class AiService {
           continue;
         }
         actions.push({ action: 'delete_event', event_ref: eventRef });
+      } else if (action === 'add_event_manager') {
+        if (!eventRef || !managerRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'add_event_manager',
+          event_ref: eventRef,
+          manager_ref: managerRef,
+        });
+      } else if (action === 'remove_event_manager') {
+        if (!eventRef || !managerRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'remove_event_manager',
+          event_ref: eventRef,
+          manager_ref: managerRef,
+        });
       } else {
         // create (default)
         if (!name) {
@@ -915,6 +941,56 @@ export class AiService {
           res.events_changed.push({ action: 'delete_event', event_id: id });
         } catch (e) {
           res.rejected.push({ ref: item.event_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'add_event_manager': {
+        const id = this.resolveEventRef(
+          item.event_ref,
+          viewableEvents,
+          defaultEventId,
+        );
+        // The reference must resolve to an active user who is actually a manager
+        // (only managers can be added to an event's manager roster).
+        const mgr = await this.resolveAssignee(item.manager_ref);
+        if (!id || !mgr || mgr.role !== 'manager') {
+          res.unresolved.push(!id ? item.event_ref : item.manager_ref);
+          return;
+        }
+        try {
+          await this.events.assertCanManageEvent(actor, id);
+          await this.events.addManager(id, mgr.user_id, true);
+          res.events_changed.push({
+            action: 'add_event_manager',
+            event_id: id,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.manager_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'remove_event_manager': {
+        const id = this.resolveEventRef(
+          item.event_ref,
+          viewableEvents,
+          defaultEventId,
+        );
+        const mgr = await this.resolveAssignee(item.manager_ref);
+        if (!id || !mgr || mgr.role !== 'manager') {
+          res.unresolved.push(!id ? item.event_ref : item.manager_ref);
+          return;
+        }
+        try {
+          await this.events.assertCanManageEvent(actor, id);
+          await this.events.removeManager(id, mgr.user_id);
+          res.events_changed.push({
+            action: 'remove_event_manager',
+            event_id: id,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.manager_ref, reason: this.reason(e) });
         }
         return;
       }

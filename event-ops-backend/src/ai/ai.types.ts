@@ -74,6 +74,16 @@ export interface DeleteEventAction {
   action: 'delete_event';
   event_ref: string;
 }
+export interface AddEventManagerAction {
+  action: 'add_event_manager';
+  event_ref: string;
+  manager_ref: string;
+}
+export interface RemoveEventManagerAction {
+  action: 'remove_event_manager';
+  event_ref: string;
+  manager_ref: string;
+}
 
 export interface Actor {
   sub: string;

@@ -832,4 +832,105 @@ describe('AiService.processCommand', () => {
     });
     expect(r.unresolved).toContain('ghost');
   });
+
+  it('add_event_manager resolves refs and calls addManager after the manage check', async () => {
+    const { service, events, userRepo } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    userRepo.findOne.mockResolvedValue({
+      user_id: 'm5',
+      name: 'Mona',
+      role: 'manager',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'add_event_manager',
+            event_ref: 'Spring Gala',
+            manager_ref: 'Mona',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'add Mona to spring gala' },
+    )) as { events_changed: Array<Record<string, unknown>> };
+    expect(events.assertCanManageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'o1' }),
+      'e1',
+    );
+    expect(events.addManager).toHaveBeenCalledWith('e1', 'm5', true);
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'add_event_manager',
+      event_id: 'e1',
+    });
+  });
+
+  it('remove_event_manager resolves refs and calls removeManager', async () => {
+    const { service, events, userRepo } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    userRepo.findOne.mockResolvedValue({
+      user_id: 'm5',
+      name: 'Mona',
+      role: 'manager',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'remove_event_manager',
+            event_ref: 'Spring Gala',
+            manager_ref: 'Mona',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'remove Mona from spring gala' },
+    )) as { events_changed: Array<Record<string, unknown>> };
+    expect(events.assertCanManageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'o1' }),
+      'e1',
+    );
+    expect(events.removeManager).toHaveBeenCalledWith('e1', 'm5');
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'remove_event_manager',
+      event_id: 'e1',
+    });
+  });
+
+  it('add_event_manager → unresolved when the ref is not a manager', async () => {
+    const { service, events, userRepo } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    userRepo.findOne.mockResolvedValue({
+      user_id: 's5',
+      name: 'Sam',
+      role: 'staff',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'add_event_manager',
+            event_ref: 'Spring Gala',
+            manager_ref: 'Sam',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'add Sam to spring gala' },
+    )) as { unresolved: string[] };
+    expect(events.addManager).not.toHaveBeenCalled();
+    expect(r.unresolved).toContain('Sam');
+  });
 });
