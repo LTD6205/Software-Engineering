@@ -102,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    localStorage.removeItem('ai_chat_history') // don't carry one user's AI chat into the next session
     delete axios.defaults.headers.common['Authorization']
     router.push('/login')
   }

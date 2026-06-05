@@ -21,6 +21,25 @@ interface Turn {
 
 type Mode = 'auto' | 'ask'
 
+// localStorage key for the saved conversation (cleared on logout — see AuthContext).
+const AI_CHAT_KEY = 'ai_chat_history'
+
+// Prepare the transcript for storage: drop in-flight 'loading' turns, and fold an
+// awaiting-confirmation plan into plain text — it can't be confirmed after a
+// reopen (the server expires the pending plan), so we strip the now-dead
+// Confirm/Cancel buttons while keeping the message readable.
+function persistableTranscript(turns: Turn[]): Turn[] {
+  return turns
+    .filter(m => m.status !== 'loading')
+    .map(m => {
+      if (m.status === 'pending' && m.plan?.length) {
+        const list = m.plan.map(p => `• ${p.description}`).join('\n')
+        return { ...m, content: `${m.content}\n${list}`, plan: undefined, requestId: undefined }
+      }
+      return m
+    })
+}
+
 // ── eventId derivation ──────────────────────────────────────────────────────
 // The tasks page stores the "current event" in the URL as `?eventId=` (see
 // src/app/tasks/page.tsx — it reads searchParams.get('eventId')). The drawer
@@ -52,6 +71,30 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved === 'auto' || saved === 'ask') setMode(saved)
   }, [])
+
+  // Persist the conversation so it survives closing/reopening the drawer (and a
+  // page reload). The drawer unmounts when closed, so the transcript lives in
+  // localStorage, keyed per provider key 'ai_chat_history'. Restored on mount.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(AI_CHAT_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as Turn[]
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (Array.isArray(parsed) && parsed.length) setTranscript(parsed)
+      }
+    } catch { /* ignore corrupt history */ }
+  }, [])
+
+  // Save on every change — but skip the initial mount run so it can't clobber the
+  // saved history before the restore effect above has populated it.
+  const firstPersist = useRef(true)
+  useEffect(() => {
+    if (firstPersist.current) { firstPersist.current = false; return }
+    try {
+      localStorage.setItem(AI_CHAT_KEY, JSON.stringify(persistableTranscript(transcript)))
+    } catch { /* storage full / unavailable — non-fatal */ }
+  }, [transcript])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [transcript])
 
