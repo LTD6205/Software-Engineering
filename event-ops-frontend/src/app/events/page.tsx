@@ -111,6 +111,11 @@ export default function EventsPage() {
       setError(t('End time must be after start time', 'Thời gian kết thúc phải sau thời gian bắt đầu'))
       return
     }
+    // The start may be in the past, but the event must end at least a day from now.
+    if (new Date(end_time).getTime() < Date.now() + 24 * 60 * 60 * 1000) {
+      setError(t('Event end time must be at least one day from now', 'Thời gian kết thúc phải cách hiện tại ít nhất một ngày'))
+      return
+    }
     setSaving(true); setError('')
     try {
       await eventsApi.create({

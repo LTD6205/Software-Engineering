@@ -77,6 +77,31 @@ describe('EventsService', () => {
       ).rejects.toThrow(/End time must be after/);
     });
 
+    it('rejects an event whose end is in the past (already finished)', async () => {
+      const { service } = build();
+      const DAY = 24 * 60 * 60 * 1000;
+      await expect(
+        service.create({
+          event_name: 'X',
+          start_time: new Date(Date.now() - 5 * DAY),
+          end_time: new Date(Date.now() - DAY),
+        }),
+      ).rejects.toThrow(/at least one day from now/);
+    });
+
+    it('allows a start in the past as long as the end is at least a day out', async () => {
+      const { service, eventRepo } = build();
+      const DAY = 24 * 60 * 60 * 1000;
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e-new', event_name: 'X' });
+      eventRepo.manager.query.mockResolvedValue([]);
+      await service.create({
+        event_name: 'X',
+        start_time: new Date(Date.now() - 5 * DAY), // past start — allowed
+        end_time: new Date(Date.now() + 2 * DAY), // end 2 days out
+      });
+      expect(eventRepo.save).toHaveBeenCalled();
+    });
+
     it('creates the event and notifies the initial members', async () => {
       const { service, eventRepo, notifications } = build();
       eventRepo.findOne.mockResolvedValue({
