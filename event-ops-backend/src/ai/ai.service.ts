@@ -14,6 +14,7 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
+import { randomBytes } from 'crypto';
 import {
   Actor,
   CommandOptions,
@@ -481,7 +482,10 @@ export class AiService {
   // still satisfying the policy (mixed case, digit, symbol, length). The new
   // account is expected to have its password reset on first use.
   private tempPassword(): string {
-    return `Temp#${Date.now().toString(36)}A1`;
+    // Cryptographically random so the initial password is unguessable
+    // regardless of creation time; base64url + a fixed suffix satisfies any
+    // complexity policy. The account is expected to reset it on first use.
+    return `Tmp_${randomBytes(16).toString('base64url')}A1`;
   }
 
   // Turn a thrown service error into a short, client-safe reason string.
@@ -1165,6 +1169,17 @@ export class AiService {
       }
 
       case 'reset_password': {
+        // Defense-in-depth: reset_password is already admin-only via the central
+        // role gate in executeActions, but re-assert here so the case is safe in
+        // isolation (mirrors the inline guards on create_user/update_user).
+        if (actor.role !== 'admin') {
+          res.rejected.push({
+            ref: item.user_ref,
+            reason:
+              'Only an admin can reset a password / Chỉ quản trị viên mới có thể đặt lại mật khẩu',
+          });
+          return;
+        }
         const target = await this.resolveAssignee(item.user_ref);
         if (!target) {
           res.unresolved.push(item.user_ref);
