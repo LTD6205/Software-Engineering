@@ -55,6 +55,26 @@ export interface UngroupAction {
   task_ref: string;
 }
 
+// Event action shapes (organizer/admin only). Each routes to an EventsService
+// method; the AiService gates the role and calls assertCanManageEvent itself.
+export interface CreateEventAction {
+  action: 'create_event';
+  event_name: string;
+  start_time: string;
+  end_time: string;
+  description?: string;
+}
+export interface UpdateEventAction {
+  action: 'update_event';
+  event_ref: string;
+  event_name?: string;
+  description?: string;
+}
+export interface DeleteEventAction {
+  action: 'delete_event';
+  event_ref: string;
+}
+
 export interface Actor {
   sub: string;
   role: string;

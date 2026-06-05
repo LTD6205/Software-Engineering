@@ -25,6 +25,9 @@ import {
   AddToGroupAction,
   RenameGroupAction,
   UngroupAction,
+  CreateEventAction,
+  UpdateEventAction,
+  DeleteEventAction,
 } from './ai.types';
 import { isActionAllowedForRole } from './ai.authz';
 import axios from 'axios';
@@ -73,7 +76,10 @@ type AiAction =
   | MergeAction
   | AddToGroupAction
   | RenameGroupAction
-  | UngroupAction;
+  | UngroupAction
+  | CreateEventAction
+  | UpdateEventAction
+  | DeleteEventAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 interface TaskRef {
@@ -165,6 +171,16 @@ export class AiService {
       const groupRef =
         typeof item.group_ref === 'string' ? item.group_ref.trim() : '';
       const title = typeof item.title === 'string' ? item.title.trim() : '';
+      const eventRef =
+        typeof item.event_ref === 'string' ? item.event_ref.trim() : '';
+      const eventName =
+        typeof item.event_name === 'string' ? item.event_name.trim() : '';
+      const startTime =
+        typeof item.start_time === 'string' ? item.start_time.trim() : '';
+      const endTime =
+        typeof item.end_time === 'string' ? item.end_time.trim() : '';
+      const description =
+        typeof item.description === 'string' ? item.description.trim() : '';
 
       if (action === 'update') {
         if (!ref) {
@@ -249,6 +265,35 @@ export class AiService {
           continue;
         }
         actions.push({ action: 'ungroup', task_ref: ref });
+      } else if (action === 'create_event') {
+        if (!eventName || !startTime || !endTime) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'create_event',
+          event_name: eventName,
+          start_time: startTime,
+          end_time: endTime,
+          ...(description ? { description } : {}),
+        });
+      } else if (action === 'update_event') {
+        if (!eventRef || (!eventName && !description)) {
+          skipped++;
+          continue;
+        }
+        actions.push({
+          action: 'update_event',
+          event_ref: eventRef,
+          ...(eventName ? { event_name: eventName } : {}),
+          ...(description ? { description } : {}),
+        });
+      } else if (action === 'delete_event') {
+        if (!eventRef) {
+          skipped++;
+          continue;
+        }
+        actions.push({ action: 'delete_event', event_ref: eventRef });
       } else {
         // create (default)
         if (!name) {
@@ -799,6 +844,77 @@ export class AiService {
           res.groups_changed.push({ action: 'ungroup' });
         } catch (e) {
           res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'create_event': {
+        // created_by always comes from the verified JWT, never the model output.
+        try {
+          const ev = await this.events.create(
+            {
+              event_name: item.event_name,
+              description: item.description,
+              start_time: new Date(item.start_time),
+              end_time: new Date(item.end_time),
+              created_by: actor.sub,
+            },
+            [],
+          );
+          res.events_changed.push({
+            action: 'create_event',
+            event_id: (ev as { event_id: string }).event_id,
+            event_name: (ev as { event_name: string }).event_name,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.event_name, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'update_event': {
+        const id = this.resolveEventRef(
+          item.event_ref,
+          viewableEvents,
+          defaultEventId,
+        );
+        if (!id) {
+          res.unresolved.push(item.event_ref);
+          return;
+        }
+        try {
+          await this.events.assertCanManageEvent(actor, id);
+          const ev = await this.events.update(id, {
+            event_name: item.event_name,
+            description: item.description,
+          });
+          res.events_changed.push({
+            action: 'update_event',
+            event_id: id,
+            event_name: (ev as { event_name?: string }).event_name,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.event_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'delete_event': {
+        const id = this.resolveEventRef(
+          item.event_ref,
+          viewableEvents,
+          defaultEventId,
+        );
+        if (!id) {
+          res.unresolved.push(item.event_ref);
+          return;
+        }
+        try {
+          await this.events.assertCanManageEvent(actor, id);
+          await this.events.remove(id);
+          res.events_changed.push({ action: 'delete_event', event_id: id });
+        } catch (e) {
+          res.rejected.push({ ref: item.event_ref, reason: this.reason(e) });
         }
         return;
       }

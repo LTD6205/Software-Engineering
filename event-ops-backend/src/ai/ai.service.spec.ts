@@ -718,4 +718,118 @@ describe('AiService.processCommand', () => {
     expect(resolve(undefined, events, 'e1')).toBe('e1');
     expect(resolve(undefined, events)).toBeNull();
   });
+
+  it('create_event (organizer) calls events.create with created_by from JWT', async () => {
+    const { service, events } = build('organizer');
+    events.create.mockResolvedValue({ event_id: 'e9', event_name: 'Gala' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'create_event',
+            event_name: 'Gala',
+            start_time: '2026-07-01T09:00:00',
+            end_time: '2026-07-02T18:00:00',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'make a gala next month' },
+    )) as { events_changed: Array<Record<string, unknown>> };
+    expect(events.create).toHaveBeenCalledWith(
+      expect.objectContaining({ event_name: 'Gala', created_by: 'o1' }),
+      [],
+    );
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'create_event',
+      event_id: 'e9',
+    });
+  });
+
+  it('create_event is rejected for a manager (role gate)', async () => {
+    const { service, events } = build('manager');
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'create_event',
+            event_name: 'X',
+            start_time: '2026-07-01T09:00:00',
+            end_time: '2026-07-02T18:00:00',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'u1', role: 'manager' },
+      { message: 'make event' },
+    )) as { rejected: Array<{ reason: string }> };
+    expect(events.create).not.toHaveBeenCalled();
+    expect(r.rejected[0].reason).toMatch(/role/i);
+  });
+
+  it('update_event resolves event_ref then updates after the manage check', async () => {
+    const { service, events } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    events.update.mockResolvedValue({ event_id: 'e1', event_name: 'Autumn Gala' });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'update_event',
+            event_ref: 'Spring Gala',
+            event_name: 'Autumn Gala',
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'rename spring gala' },
+    )) as { events_changed: Array<Record<string, unknown>> };
+    expect(events.assertCanManageEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'o1' }),
+      'e1',
+    );
+    expect(events.update).toHaveBeenCalledWith('e1', {
+      event_name: 'Autumn Gala',
+      description: undefined,
+    });
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'update_event',
+      event_id: 'e1',
+    });
+  });
+
+  it('delete_event resolves event_ref then removes; unmatched ref → unresolved', async () => {
+    const { service, events } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          { action: 'delete_event', event_ref: 'Spring Gala' },
+          { action: 'delete_event', event_ref: 'ghost' },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'delete spring gala and ghost' },
+    )) as {
+      events_changed: Array<Record<string, unknown>>;
+      unresolved: string[];
+    };
+    expect(events.remove).toHaveBeenCalledWith('e1');
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'delete_event',
+      event_id: 'e1',
+    });
+    expect(r.unresolved).toContain('ghost');
+  });
 });
