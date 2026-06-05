@@ -136,6 +136,32 @@ describe('AiService.processCommand', () => {
     expect(tasksService.create).not.toHaveBeenCalled();
   });
 
+  it('parses a JSON array wrapped in a ```json markdown fence', async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        '```json\n[{"task_name":"Fenced task","priority":"low","assigned_to":"","deadline":""}]\n```',
+      ),
+    );
+    const result = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add a task',
+    })) as { status: string; tasks_created: unknown[] };
+    expect(result.status).toBe('success');
+    expect(result.tasks_created).toHaveLength(1);
+    expect(tasksService.create).toHaveBeenCalled();
+  });
+
+  it('does not run an event-scoped manage check when no eventId is given', async () => {
+    const { service, events } = build();
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    await service.processCommand(ACTOR, { message: 'a cross-event command' });
+    // No eventId → no assertCanManageEvent (which would otherwise query with an
+    // empty-string UUID and 500 in production).
+    expect(events.assertCanManageEvent).not.toHaveBeenCalled();
+  });
+
   it('rate-limits a user after too many requests', async () => {
     const { service } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));

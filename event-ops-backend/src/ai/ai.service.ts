@@ -152,6 +152,23 @@ export class AiService {
     this.recentCalls.set(userId, calls);
   }
 
+  // Pull the JSON payload out of a model reply. Models sometimes wrap the JSON
+  // in a ```json fence or add a sentence of prose despite the "JSON only"
+  // instruction; strip a surrounding code fence and, failing that, slice from
+  // the first opening bracket to the last closing one so JSON.parse succeeds.
+  private static extractJson(raw: string): string {
+    let s = raw.trim();
+    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (fence) s = fence[1].trim();
+    if (s[0] !== '{' && s[0] !== '[') {
+      const starts = [s.indexOf('{'), s.indexOf('[')].filter((i) => i >= 0);
+      const start = starts.length ? Math.min(...starts) : -1;
+      const end = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+      if (start >= 0 && end > start) s = s.slice(start, end + 1);
+    }
+    return s;
+  }
+
   private static priorityScore(p: Priority): number {
     return p === 'high' ? 90 : p === 'medium' ? 50 : 10;
   }
@@ -1412,9 +1429,14 @@ export class AiService {
         'A command message is required / Vui lòng nhập nội dung lệnh',
       );
     }
-    // The actor may only drive AI changes on an event they manage — checked
-    // before we spend an external AI call.
-    await this.events.assertCanManageEvent(actor, eventId);
+    // When a specific event is in scope, the actor must be able to manage it
+    // (checked before we spend an external AI call). Cross-event commands
+    // (e.g. creating an event, or a general question) carry no eventId; their
+    // authorization is enforced per-action by the role gate + services, so we
+    // must NOT run an event-scoped check with an empty id here.
+    if (eventId) {
+      await this.events.assertCanManageEvent(actor, eventId);
+    }
     // Throttle this expensive endpoint per user.
     this.assertWithinRateLimit(userId);
     // Don't attempt an external call with a missing key (would send
@@ -1556,7 +1578,7 @@ RULES:
       let parsed: unknown;
 
       try {
-        parsed = JSON.parse(raw);
+        parsed = JSON.parse(AiService.extractJson(raw));
       } catch {
         // Don't echo the raw model output back to the client.
         throw new BadRequestException(
@@ -1631,7 +1653,16 @@ RULES:
           groupByTitle,
         );
         await this.aiRequestRepo.update(aiRequest.request_id, {
-          response: { plan: actions, eventId, descriptions: plan } as object,
+          // Stamp creation time as epoch-ms in the JSONB we control, so the TTL
+          // check at confirm time is immune to the timezone skew of the
+          // `timestamp without time zone` created_at column (node-pg parses it
+          // in the process's local zone, which need not match the DB's).
+          response: {
+            plan: actions,
+            eventId,
+            descriptions: plan,
+            createdAtMs: Date.now(),
+          } as object,
           status: 'awaiting_confirmation',
         });
         return {
@@ -1728,7 +1759,12 @@ RULES:
         'This request is no longer awaiting confirmation / Yêu cầu này không còn chờ xác nhận',
       );
     }
-    if (Date.now() - new Date(row.created_at).getTime() > AiService.CONFIRM_TTL_MS) {
+    // Prefer the epoch-ms stamp written into the plan JSON (timezone-safe);
+    // fall back to the DB created_at only if it's somehow absent.
+    const createdMs =
+      (row.response as { createdAtMs?: number } | null)?.createdAtMs ??
+      new Date(row.created_at).getTime();
+    if (Date.now() - createdMs > AiService.CONFIRM_TTL_MS) {
       await this.aiRequestRepo.update(requestId, { status: 'cancelled' });
       throw new BadRequestException(
         'This AI plan has expired — please re-issue the command / Kế hoạch AI đã hết hạn — vui lòng yêu cầu lại',

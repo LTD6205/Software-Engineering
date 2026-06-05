@@ -7,8 +7,13 @@
 -- so those rows could not be written. This widens the CHECK. ('answered' reuses
 -- 'success'.)
 --
+-- The column was VARCHAR(20); 'awaiting_confirmation' is 21 chars, so the
+-- column is widened to VARCHAR(30) first (otherwise inserts fail with 22001).
+--
 -- Apply with:  npm run db:migrate   (or paste into pgAdmin)
--- Safe to run repeatedly: drops the existing status CHECK then recreates it.
+-- Safe to run repeatedly: widening the type and recreating the CHECK are both idempotent.
+
+ALTER TABLE ai_requests ALTER COLUMN status TYPE VARCHAR(30);
 
 ALTER TABLE ai_requests DROP CONSTRAINT IF EXISTS ai_requests_status_check;
 
