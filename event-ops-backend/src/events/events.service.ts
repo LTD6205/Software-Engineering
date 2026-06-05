@@ -210,6 +210,9 @@ export class EventsService {
       );
     }
     this.assertValidDateRange(data.start_time, data.end_time);
+    // The start may be in the past, but the event must still end in the future
+    // (>= 1 day out) — no creating an already-finished event.
+    this.assertEndInFuture(data.end_time);
     // Save the event and attach its initial managers atomically — a failure
     // partway through the manager list can't leave a half-populated event.
     // Each manager id is validated (active 'manager') inside the transaction.
@@ -434,6 +437,21 @@ export class EventsService {
     if (start && end && new Date(end) <= new Date(start)) {
       throw new BadRequestException(
         'End time must be after start time / Thời gian kết thúc phải sau thời gian bắt đầu',
+      );
+    }
+  }
+
+  // An event must end at least a day from now. The START may be in the past (you
+  // can record an event that is already under way), but the END can't be — there
+  // is no creating an event that has already finished.
+  private static readonly MIN_END_LEAD_MS = 24 * 60 * 60 * 1000;
+  private assertEndInFuture(end?: Date) {
+    if (
+      end &&
+      new Date(end).getTime() < Date.now() + EventsService.MIN_END_LEAD_MS
+    ) {
+      throw new BadRequestException(
+        'Event end time must be at least one day from now / Thời gian kết thúc phải cách hiện tại ít nhất một ngày',
       );
     }
   }

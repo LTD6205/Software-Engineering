@@ -1581,8 +1581,9 @@ export class AiService {
       d ? new Date(d).toISOString() : 'unspecified';
     let windowInfo = `DATE GUIDANCE:
 - Today (now, ISO 8601) is ${new Date().toISOString()}.
-- Never output a start_time or deadline in the past.
-- Give every "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).`;
+- Never output a task start_time or deadline in the past.
+- Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
+- For "create_event": the "end_time" MUST be at least one day from now; the "start_time" may be earlier (even in the past).`;
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
       windowInfo = `HARD DATE CONSTRAINT — read carefully:
