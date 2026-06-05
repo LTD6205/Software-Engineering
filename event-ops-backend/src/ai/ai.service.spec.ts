@@ -522,6 +522,34 @@ describe('AiService.processCommand', () => {
     expect(r.tasks_created).toHaveLength(2);
   });
 
+  it('returns an answer when the model replies with {answer}', async () => {
+    const { service, tasksService } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(JSON.stringify({ answer: '2 tasks overdue.' })),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'what is overdue?',
+    })) as { status: string; answer: string };
+    expect(r).toEqual({ status: 'answered', answer: '2 tasks overdue.' });
+    expect(tasksService.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a clarification question when the model asks back', async () => {
+    const { service } = build();
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify({ clarification_needed: true, question: 'Which event?' }),
+      ),
+    );
+    const r = (await service.processCommand(ACTOR, {
+      message: 'reschedule it',
+    })) as { status: string; question: string; request_id: string };
+    expect(r.status).toBe('needs_clarification');
+    expect(r.question).toBe('Which event?');
+    expect(r.request_id).toBeDefined();
+  });
+
   it('forwards history into the chat messages in order', async () => {
     const { service } = build();
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));

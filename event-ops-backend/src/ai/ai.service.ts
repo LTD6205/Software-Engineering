@@ -826,8 +826,33 @@ If the command is too vague to act on, return instead:
         );
       }
 
-      // Not an array means AI returned an error object
-      if (!Array.isArray(parsed)) {
+      // A non-array object is one of: a direct answer to a question, a
+      // clarification request the user must respond to, or the legacy
+      // "insufficient info" rejection.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const obj = parsed as Record<string, unknown>;
+        if (typeof obj.answer === 'string') {
+          await this.aiRequestRepo.update(aiRequest.request_id, {
+            response: parsed as object,
+            status: 'success',
+          });
+          return { status: 'answered', answer: obj.answer };
+        }
+        if (
+          obj.clarification_needed === true &&
+          typeof obj.question === 'string'
+        ) {
+          await this.aiRequestRepo.update(aiRequest.request_id, {
+            response: parsed as object,
+            status: 'needs_clarification',
+          });
+          return {
+            status: 'needs_clarification',
+            request_id: aiRequest.request_id,
+            question: obj.question,
+          };
+        }
+        // else: fall through to the "rejected / insufficient info" path below.
         await this.aiRequestRepo.update(aiRequest.request_id, {
           response: parsed as object,
           status: 'rejected',
