@@ -108,11 +108,13 @@ describe('EventsService', () => {
         event_id: 'e-new',
         event_name: 'X',
       });
-      // addManager validates the target is an active manager, then INSERTs;
-      // getMemberIds SELECTs the member ids.
+      // create validates each manager is an active manager WITH active staff
+      // (the staff_count query), then INSERTs; getMemberIds SELECTs the ids.
       eventRepo.manager.query.mockImplementation((sql: string) => {
-        if (sql.includes('SELECT role, is_active'))
-          return Promise.resolve([{ role: 'manager', is_active: true }]);
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'manager', is_active: true, staff_count: 2 },
+          ]);
         if (sql.trim().startsWith('INSERT')) return Promise.resolve(undefined);
         return Promise.resolve([{ id: 'm1' }, { id: 's1' }]);
       });
@@ -146,10 +148,12 @@ describe('EventsService', () => {
   describe('addManager — target validation', () => {
     it('rejects adding a user who is not an active manager', async () => {
       const { service, eventRepo } = build();
-      // The role lookup returns a staff member, not a manager.
+      // The eligibility lookup returns a staff member, not a manager.
       eventRepo.manager.query.mockImplementation((sql: string) => {
-        if (sql.includes('SELECT role, is_active'))
-          return Promise.resolve([{ role: 'staff', is_active: true }]);
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'staff', is_active: true, staff_count: 0 },
+          ]);
         return Promise.resolve([]);
       });
       await expect(service.addManager('e1', 'staff-x')).rejects.toThrow(
@@ -160,13 +164,65 @@ describe('EventsService', () => {
     it('rejects adding an inactive manager', async () => {
       const { service, eventRepo } = build();
       eventRepo.manager.query.mockImplementation((sql: string) => {
-        if (sql.includes('SELECT role, is_active'))
-          return Promise.resolve([{ role: 'manager', is_active: false }]);
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'manager', is_active: false, staff_count: 3 },
+          ]);
         return Promise.resolve([]);
       });
       await expect(service.addManager('e1', 'mgr-off')).rejects.toThrow(
         /active manager/,
       );
+    });
+
+    it('rejects adding a manager who has no active staff', async () => {
+      const { service, eventRepo } = build();
+      eventRepo.manager.query.mockImplementation((sql: string) => {
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'manager', is_active: true, staff_count: 0 },
+          ]);
+        return Promise.resolve([]);
+      });
+      await expect(service.addManager('e1', 'mgr-empty')).rejects.toThrow(
+        /at least one staff member/,
+      );
+    });
+
+    it('adds an eligible manager (active, with staff)', async () => {
+      const { service, eventRepo } = build();
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', event_name: 'X' });
+      eventRepo.manager.query.mockImplementation((sql: string) => {
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'manager', is_active: true, staff_count: 1 },
+          ]);
+        return Promise.resolve([]);
+      });
+      await expect(service.addManager('e1', 'mgr-ok')).resolves.toBeDefined();
+    });
+  });
+
+  describe('create — manager eligibility', () => {
+    it('rejects an initial manager who has no active staff', async () => {
+      const { service, eventRepo } = build();
+      eventRepo.manager.query.mockImplementation((sql: string) => {
+        if (sql.includes('staff_count'))
+          return Promise.resolve([
+            { role: 'manager', is_active: true, staff_count: 0 },
+          ]);
+        return Promise.resolve([]);
+      });
+      await expect(
+        service.create(
+          {
+            event_name: 'X',
+            start_time: new Date('2026-06-10T10:00:00Z'),
+            end_time: new Date('2026-06-11T10:00:00Z'),
+          },
+          ['m-empty'],
+        ),
+      ).rejects.toThrow(/at least one staff member/);
     });
   });
 

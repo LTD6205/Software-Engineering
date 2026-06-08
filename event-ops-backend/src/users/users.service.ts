@@ -85,6 +85,8 @@ export class UsersService {
       'email',
       'avatar',
       'manager_id',
+      // Included so a teamless staff member can see their own pending join request.
+      'pending_manager_id',
     ] as (keyof User)[];
     return this.userRepo.find({
       where: { is_active: true, ...this.visibilityWhere(actor.role) },
@@ -356,10 +358,16 @@ export class UsersService {
         'There is no pending reassignment to cancel / Không có yêu cầu chuyển nào để hủy',
       );
     }
-    // Only the manager who owns the staff (the requester) or an admin may cancel.
-    if (actor.role !== 'admin' && staff.manager_id !== actor.sub) {
+    // The requester may cancel: the owning manager, an admin, or — for a
+    // staff-initiated join request (the staff has no current manager) — the
+    // staff member themselves.
+    if (
+      actor.role !== 'admin' &&
+      staff.manager_id !== actor.sub &&
+      staff.user_id !== actor.sub
+    ) {
       throw new ForbiddenException(
-        'Only the requesting manager can cancel this reassignment / Chỉ quản lý đã gửi yêu cầu mới có thể hủy',
+        'Only the requester can cancel this request / Chỉ người gửi yêu cầu mới có thể hủy',
       );
     }
     const targetId = staff.pending_manager_id;
@@ -385,6 +393,122 @@ export class UsersService {
       `Your pending move to ${targetName} was cancelled; you stay in your current team. / Yêu cầu chuyển bạn sang ${targetName} đã được hủy; bạn vẫn ở đội hiện tại.`,
     );
     return this.findOne(staffId);
+  }
+
+  // A manager removes one of their own staff from the team: the staff becomes
+  // teamless (manager_id null) but keeps their active account, and is dropped
+  // from the team's event tasks. They can later request to join a manager again.
+  async removeFromTeam(staffId: string, actor: { sub: string; role: string }) {
+    const staff = await this.userRepo.findOne({ where: { user_id: staffId } });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (staff.role !== 'staff') {
+      throw new BadRequestException(
+        'Only staff members can be removed from a team / Chỉ có thể gỡ nhân viên khỏi đội',
+      );
+    }
+    // Only the owning manager or an admin may remove the staff.
+    if (actor.role !== 'admin' && staff.manager_id !== actor.sub) {
+      throw new ForbiddenException(
+        'You can only remove your own staff / Bạn chỉ có thể gỡ nhân viên của mình',
+      );
+    }
+    const oldId = staff.manager_id;
+    // Unlink and drop their task assignments atomically (mirrors acceptReassign):
+    // a teamless staffer can't keep access to the team's event tasks. Any pending
+    // reassignment is cleared too.
+    await this.userRepo.manager.transaction(async (em) => {
+      await em.update(User, staffId, {
+        manager_id: null,
+        pending_manager_id: null,
+      });
+      await em.query('DELETE FROM task_assignments WHERE user_id = $1', [
+        staffId,
+      ]);
+    });
+    const oldManager = oldId
+      ? await this.userRepo.findOne({ where: { user_id: oldId } })
+      : null;
+    const oldName = oldManager?.name ?? '—';
+    await this.notifications.notifyUser(
+      oldId ?? '',
+      'reassignment',
+      `You removed ${staff.name} from your team. / Bạn đã gỡ ${staff.name} khỏi đội của mình.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `You were removed from ${oldName}'s team. You can request to join another manager. / Bạn đã bị gỡ khỏi đội của ${oldName}. Bạn có thể yêu cầu tham gia một quản lý khác.`,
+    );
+    return this.findOne(staffId);
+  }
+
+  // A teamless staff member asks to join a manager's team. Like a reassignment
+  // it only sets pending_manager_id; the target manager must accept (via
+  // acceptReassign) before they own the staff. Restricted to staff with no
+  // current manager and no other pending request.
+  async requestJoin(
+    targetManagerId: string,
+    actor: { sub: string; role: string },
+  ) {
+    const staff = await this.userRepo.findOne({ where: { user_id: actor.sub } });
+    if (!staff)
+      throw new NotFoundException('User not found / Không tìm thấy người dùng');
+    if (staff.role !== 'staff') {
+      throw new ForbiddenException(
+        'Only staff can request to join a team / Chỉ nhân viên mới có thể yêu cầu tham gia đội',
+      );
+    }
+    if (staff.manager_id) {
+      throw new BadRequestException(
+        'You are already in a team; ask your manager to reassign you / Bạn đã thuộc một đội; hãy nhờ quản lý chuyển bạn',
+      );
+    }
+    if (staff.pending_manager_id) {
+      throw new BadRequestException(
+        'You already have a pending request / Bạn đã có một yêu cầu đang chờ',
+      );
+    }
+    if (!targetManagerId) {
+      throw new BadRequestException(
+        'A target manager is required / Vui lòng chọn quản lý',
+      );
+    }
+    const target = await this.userRepo.findOne({
+      where: { user_id: targetManagerId },
+    });
+    if (!target || target.role !== 'manager' || !target.is_active) {
+      throw new BadRequestException(
+        'The target must be an active manager / Người nhận phải là quản lý đang hoạt động',
+      );
+    }
+    await this.userRepo.update(staff.user_id, {
+      pending_manager_id: targetManagerId,
+    });
+    await this.notifications.notifyUser(
+      target.user_id,
+      'reassignment',
+      `${staff.name} has asked to join your team. Review the request. / ${staff.name} đã yêu cầu tham gia đội của bạn. Vui lòng xem xét.`,
+    );
+    await this.notifications.notifyUser(
+      staff.user_id,
+      'reassignment',
+      `You asked to join ${target.name}'s team — awaiting their approval. / Bạn đã yêu cầu tham gia đội của ${target.name} — đang chờ phê duyệt.`,
+    );
+    return this.findOne(staff.user_id);
+  }
+
+  // Active managers who own at least one active staff member — the set the AI
+  // adds to a newly-created event so it isn't left without a team.
+  async findManagerIdsWithActiveStaff(): Promise<string[]> {
+    const rows: Array<{ user_id: string }> = await this.userRepo.manager.query(
+      `SELECT DISTINCT m.user_id
+         FROM users m
+         JOIN users s ON s.manager_id = m.user_id
+        WHERE m.role = 'manager' AND m.is_active = true
+          AND s.role = 'staff' AND s.is_active = true`,
+    );
+    return rows.map((r) => r.user_id);
   }
 
   // Manager creates a new staff account

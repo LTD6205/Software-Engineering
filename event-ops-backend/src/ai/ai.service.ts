@@ -1291,6 +1291,10 @@ export class AiService {
           return;
         }
         // created_by always comes from the verified JWT, never the model output.
+        // An organizer doesn't own a manager set, so an AI-created event would
+        // otherwise have no team. Seed it with every active manager who has at
+        // least one active staff member, so the event is usable right away.
+        const managerIds = await this.users.findManagerIdsWithActiveStaff();
         try {
           const ev = await this.events.create(
             {
@@ -1300,12 +1304,15 @@ export class AiService {
               end_time: end,
               created_by: actor.sub,
             },
-            [],
+            managerIds,
           );
           res.events_changed.push({
             action: 'create_event',
             event_id: (ev as { event_id: string }).event_id,
             event_name: (ev as { event_name: string }).event_name,
+            summary: managerIds.length
+              ? `Added ${managerIds.length} manager team(s) to "${item.event_name}"`
+              : `Created "${item.event_name}" — no managers with staff to add yet`,
           });
         } catch (e) {
           res.rejected.push({ ref: item.event_name, reason: this.reason(e) });

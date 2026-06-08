@@ -155,7 +155,12 @@ export interface ExecResult {
   tasks_deleted: { task_id: string; task_name: string }[];
   unassigned: { task_id: string; task_name: string }[];
   groups_changed: { action: string; group_id?: string; title?: string }[];
-  events_changed: { action: string; event_id?: string; event_name?: string }[];
+  events_changed: {
+    action: string;
+    event_id?: string;
+    event_name?: string;
+    summary?: string;
+  }[];
   users_changed: { action: string; user_id?: string; summary: string }[];
   unresolved: string[];
   rejected: { ref: string; reason: string }[];

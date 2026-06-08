@@ -429,20 +429,30 @@ export default function EventsPage() {
                 </span>
               ) : managers.map(mgr => {
                 const checked = pickedManagers.includes(mgr.user_id)
+                // A manager with no active staff can't be added to an event.
+                const noStaff = mgr.team_count === 0
                 return (
                   <label key={mgr.user_id} style={{
                     display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 9px', borderRadius: '7px',
-                    cursor: 'pointer', background: checked ? 'var(--bg-hover)' : 'transparent', fontSize: '13px',
-                  }}>
+                    cursor: noStaff ? 'not-allowed' : 'pointer', background: checked ? 'var(--bg-hover)' : 'transparent', fontSize: '13px',
+                    opacity: noStaff ? 0.55 : 1,
+                  }}
+                  title={noStaff ? t('This manager has no staff to bring into the event', 'Quản lý này chưa có nhân viên để đưa vào sự kiện') : undefined}>
                     <input
                       type="checkbox"
                       checked={checked}
-                      onChange={() => setPickedManagers(prev => toggle(prev, mgr.user_id))}
+                      disabled={noStaff}
+                      onChange={() => { if (!noStaff) setPickedManagers(prev => toggle(prev, mgr.user_id)) }}
                       style={{ width: 'auto', margin: 0 }}
                     />
                     <span style={{ flex: 1, color: 'var(--text-primary)' }}>{mgr.name}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      {mgr.team_count} {t(mgr.team_count === 1 ? 'staff' : 'staff', 'nhân viên')}
+                    <span style={{
+                      fontSize: '11px', fontWeight: noStaff ? 600 : 400,
+                      color: noStaff ? 'var(--accent-amber)' : 'var(--text-muted)',
+                    }}>
+                      {noStaff
+                        ? t('No staff', 'Chưa có nhân viên')
+                        : `${mgr.team_count} ${t('staff', 'nhân viên')}`}
                     </span>
                   </label>
                 )
@@ -495,21 +505,33 @@ export default function EventsPage() {
               </span>
             ) : managers.map(mgr => {
               const inEvent = memberIds.includes(mgr.user_id)
+              // A manager with no (active) staff brings nobody, so they can't be
+              // added. Already-added managers can still be removed (un-checked).
+              const noStaff = mgr.team_count === 0
+              const blocked = noStaff && !inEvent
               return (
                 <label key={mgr.user_id} style={{
                   display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 11px', borderRadius: '8px',
-                  cursor: 'pointer', background: inEvent ? 'var(--bg-hover)' : 'transparent',
+                  cursor: blocked ? 'not-allowed' : 'pointer', background: inEvent ? 'var(--bg-hover)' : 'transparent',
                   border: '1px solid var(--border)', fontSize: '13px',
-                }}>
+                  opacity: blocked ? 0.55 : 1,
+                }}
+                title={blocked ? t('This manager has no staff to bring into the event', 'Quản lý này chưa có nhân viên để đưa vào sự kiện') : undefined}>
                   <input
                     type="checkbox"
                     checked={inEvent}
-                    onChange={() => toggleMember(mgr.user_id)}
+                    disabled={blocked}
+                    onChange={() => { if (!blocked) toggleMember(mgr.user_id) }}
                     style={{ width: 'auto', margin: 0 }}
                   />
                   <span style={{ flex: 1, color: 'var(--text-primary)' }}>{mgr.name}</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    {mgr.team_count} {t('staff', 'nhân viên')}
+                  <span style={{
+                    fontSize: '11px', fontWeight: noStaff ? 600 : 400,
+                    color: noStaff ? 'var(--accent-amber)' : 'var(--text-muted)',
+                  }}>
+                    {noStaff
+                      ? t('No staff', 'Chưa có nhân viên')
+                      : `${mgr.team_count} ${t('staff', 'nhân viên')}`}
                   </span>
                 </label>
               )

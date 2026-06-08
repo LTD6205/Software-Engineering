@@ -180,11 +180,13 @@ export class EventsService {
     return event;
   }
 
-  // Managers an organizer can choose from, with their team sizes.
+  // Managers an organizer can choose from, with their (active) team sizes.
+  // team_count counts only active staff — it's what gates eligibility (a manager
+  // with 0 active staff cannot be added), so the displayed number must match.
   availableManagers(): Promise<unknown[]> {
     return this.eventRepo.manager.query(
       `SELECT u.user_id, u.name, u.email,
-         (SELECT count(*)::int FROM users s WHERE s.role = 'staff' AND s.manager_id = u.user_id) AS team_count
+         (SELECT count(*)::int FROM users s WHERE s.role = 'staff' AND s.manager_id = u.user_id AND s.is_active = true) AS team_count
        FROM users u
        WHERE u.role = 'manager' AND u.is_active = true
        ORDER BY u.name ASC`,
@@ -195,12 +197,42 @@ export class EventsService {
   getEventManagers(eventId: string): Promise<unknown[]> {
     return this.eventRepo.manager.query(
       `SELECT u.user_id, u.name, u.email,
-         (SELECT count(*)::int FROM users s WHERE s.role = 'staff' AND s.manager_id = u.user_id) AS team_count
+         (SELECT count(*)::int FROM users s WHERE s.role = 'staff' AND s.manager_id = u.user_id AND s.is_active = true) AS team_count
        FROM event_managers em JOIN users u ON u.user_id = em.manager_id
        WHERE em.event_id = $1
        ORDER BY u.name ASC`,
       [eventId],
     );
+  }
+
+  // A manager may join an event only if they are active AND own at least one
+  // active staff member — a manager with no staff brings nobody, so an event
+  // built from them would have no one to do the work. Shared by create() (inside
+  // its transaction) and addManager(); `q` is the EntityManager to query through.
+  private async assertEligibleManager(q: EntityManager, managerId: string) {
+    const rows: Array<{
+      role: string;
+      is_active: boolean;
+      staff_count: number;
+    }> = await q.query(
+      `SELECT u.role, u.is_active,
+         (SELECT count(*)::int FROM users s
+            WHERE s.role = 'staff' AND s.manager_id = u.user_id
+              AND s.is_active = true) AS staff_count
+       FROM users u WHERE u.user_id = $1`,
+      [managerId],
+    );
+    const target = rows[0];
+    if (!target || target.role !== 'manager' || !target.is_active) {
+      throw new BadRequestException(
+        'Only an active manager can be added to an event / Chỉ có thể thêm quản lý đang hoạt động vào sự kiện',
+      );
+    }
+    if (!target.staff_count) {
+      throw new BadRequestException(
+        'A manager must have at least one staff member to be added to an event / Quản lý phải có ít nhất một nhân viên mới có thể được thêm vào sự kiện',
+      );
+    }
   }
 
   async create(data: Partial<Event>, managerIds: string[] = []) {
@@ -219,17 +251,7 @@ export class EventsService {
     const event = await this.eventRepo.manager.transaction(async (em) => {
       const saved = await em.save(em.create(Event, data));
       for (const mid of managerIds) {
-        const rows: Array<{ role: string; is_active: boolean }> =
-          await em.query(
-            `SELECT role, is_active FROM users WHERE user_id = $1`,
-            [mid],
-          );
-        const target = rows[0];
-        if (!target || target.role !== 'manager' || !target.is_active) {
-          throw new BadRequestException(
-            'Only an active manager can be added to an event / Chỉ có thể thêm quản lý đang hoạt động vào sự kiện',
-          );
-        }
+        await this.assertEligibleManager(em, mid);
         await em.query(
           `INSERT INTO event_managers (event_id, manager_id) VALUES ($1, $2)
            ON CONFLICT DO NOTHING`,
@@ -255,20 +277,10 @@ export class EventsService {
   // notify=true is used by the membership editor (a manager added after the
   // event exists); create() inserts in bulk and notifies the whole set itself.
   async addManager(eventId: string, managerId: string, notify = false) {
-    // Only an active user with the 'manager' role may be added — membership and
-    // headcount queries assume manager rows + their staff, so staff/admins/event
-    // managers must never land in event_managers.
-    const rows: Array<{ role: string; is_active: boolean }> =
-      await this.eventRepo.manager.query(
-        `SELECT role, is_active FROM users WHERE user_id = $1`,
-        [managerId],
-      );
-    const target = rows[0];
-    if (!target || target.role !== 'manager' || !target.is_active) {
-      throw new BadRequestException(
-        'Only an active manager can be added to an event / Chỉ có thể thêm quản lý đang hoạt động vào sự kiện',
-      );
-    }
+    // Only an active manager who owns at least one active staff member may be
+    // added — membership and headcount queries assume manager rows + their
+    // staff, and a staffless manager would bring nobody into the event.
+    await this.assertEligibleManager(this.eventRepo.manager, managerId);
     await this.eventRepo.manager.query(
       `INSERT INTO event_managers (event_id, manager_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING`,
