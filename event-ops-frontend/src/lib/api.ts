@@ -86,6 +86,12 @@ export const usersApi = {
   acceptReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/accept`).then(r => r.data),
   rejectReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/reject`).then(r => r.data),
   cancelReassign:  (staffId: string)                => api.post(`/users/${staffId}/reassign/cancel`).then(r => r.data),
+  // Manager removes one of their own staff from the team (account stays active).
+  removeFromTeam:  (staffId: string)                => api.post(`/users/${staffId}/remove-from-team`).then(r => r.data),
+  // Teamless staff request to join a manager (manager accepts/rejects); the
+  // staff can withdraw their own pending request.
+  requestJoin:        (mid: string)                 => api.post('/users/join-request', { target_manager_id: mid }).then(r => r.data),
+  cancelJoinRequest:  ()                            => api.post('/users/join-request/cancel').then(r => r.data),
 }
 
 export const notificationsApi = {

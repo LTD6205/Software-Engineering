@@ -418,6 +418,7 @@ describe('UsersService — profile / CRUD', () => {
         'email',
         'avatar',
         'manager_id',
+        'pending_manager_id',
       ]);
       expect(args.select).not.toContain('phone');
     });

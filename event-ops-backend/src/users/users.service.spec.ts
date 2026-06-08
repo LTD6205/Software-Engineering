@@ -298,3 +298,101 @@ describe('UsersService.directory — role-scoped visibility', () => {
     expect(where).toEqual({ is_active: true });
   });
 });
+
+describe('UsersService.removeFromTeam', () => {
+  it('unlinks the staff (manager_id null), drops their task assignments, and notifies the manager + staff', async () => {
+    const { service, userRepo, notifications } = build();
+
+    await service.removeFromTeam('staff-1', { sub: 'mgr-old', role: 'manager' });
+
+    expect(userRepo.update).toHaveBeenCalledWith('staff-1', {
+      manager_id: null,
+      pending_manager_id: null,
+    });
+    expect(userRepo.manager.query).toHaveBeenCalledWith(
+      'DELETE FROM task_assignments WHERE user_id = $1',
+      ['staff-1'],
+    );
+    expect(notifications.notifyUser).toHaveBeenCalledTimes(2);
+    expect(recipients(notifications.notifyUser)).toEqual(
+      expect.arrayContaining(['mgr-old', 'staff-1']),
+    );
+  });
+
+  it('forbids a manager who does not own the staff', async () => {
+    const { service } = build();
+    await expect(
+      service.removeFromTeam('staff-1', { sub: 'mgr-new', role: 'manager' }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects removing a non-staff user', async () => {
+    const { service } = build();
+    await expect(
+      service.removeFromTeam('mgr-new', { sub: 'mgr-old', role: 'admin' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('UsersService.requestJoin (staff-initiated)', () => {
+  // A teamless staff member and an active target manager.
+  const freeSeed = {
+    'staff-free': {
+      user_id: 'staff-free',
+      name: 'Finn',
+      role: 'staff',
+      manager_id: null as string | null,
+      pending_manager_id: null as string | null,
+    },
+    'mgr-new': { ...NEW_MGR, is_active: true },
+  };
+
+  it('sets pending_manager_id and notifies the target manager + staff', async () => {
+    const { service, userRepo, notifications } = build(freeSeed);
+
+    await service.requestJoin('mgr-new', { sub: 'staff-free', role: 'staff' });
+
+    expect(userRepo.update).toHaveBeenCalledWith('staff-free', {
+      pending_manager_id: 'mgr-new',
+    });
+    expect(notifications.notifyUser).toHaveBeenCalledTimes(2);
+    expect(recipients(notifications.notifyUser)).toEqual(
+      expect.arrayContaining(['mgr-new', 'staff-free']),
+    );
+  });
+
+  it('rejects a staff member who already has a manager', async () => {
+    // default STAFF has manager_id = mgr-old.
+    const { service } = build();
+    await expect(
+      service.requestJoin('mgr-new', { sub: 'staff-1', role: 'staff' }),
+    ).rejects.toThrow(/already in a team/);
+  });
+
+  it('rejects joining a target that is not an active manager', async () => {
+    const { service } = build(freeSeed);
+    // mgr-old has no is_active flag in the default seed → not active.
+    await expect(
+      service.requestJoin('mgr-old', { sub: 'staff-free', role: 'staff' }),
+    ).rejects.toThrow(/active manager/);
+  });
+
+  it('lets the staff member cancel their own pending join request', async () => {
+    const { service, userRepo } = build({
+      'staff-free': {
+        user_id: 'staff-free',
+        name: 'Finn',
+        role: 'staff',
+        manager_id: null as string | null,
+        pending_manager_id: 'mgr-new',
+      },
+    });
+    await service.cancelReassign('staff-free', {
+      sub: 'staff-free',
+      role: 'staff',
+    });
+    expect(userRepo.update).toHaveBeenCalledWith('staff-free', {
+      pending_manager_id: null,
+    });
+  });
+});

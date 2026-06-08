@@ -75,6 +75,9 @@ function build(role = 'manager') {
     acceptReassign: jest.fn().mockResolvedValue(undefined),
     rejectReassign: jest.fn().mockResolvedValue(undefined),
     cancelReassign: jest.fn().mockResolvedValue(undefined),
+    // Eligible managers the AI seeds into a newly-created event (empty by
+    // default; a test overrides it to assert they are passed to events.create).
+    findManagerIdsWithActiveStaff: jest.fn().mockResolvedValue([]),
   };
   const service = new AiService(
     config as never,
@@ -1148,6 +1151,33 @@ describe('AiService.processCommand', () => {
       action: 'create_event',
       event_id: 'e9',
     });
+  });
+
+  it('create_event seeds the new event with every manager who has active staff', async () => {
+    const { service, events, usersService } = build('organizer');
+    events.create.mockResolvedValue({ event_id: 'e9', event_name: 'Gala' });
+    usersService.findManagerIdsWithActiveStaff.mockResolvedValue(['m1', 'm2']);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'create_event',
+            event_name: 'Gala',
+            start_time: '2026-07-01T09:00:00',
+            end_time: '2026-07-02T18:00:00',
+          },
+        ]),
+      ),
+    );
+    await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'make a gala next month' },
+    );
+    // The eligible managers are passed through as the event's manager list.
+    expect(events.create).toHaveBeenCalledWith(
+      expect.objectContaining({ event_name: 'Gala', created_by: 'o1' }),
+      ['m1', 'm2'],
+    );
   });
 
   it('create_event is rejected for a manager (role gate)', async () => {

@@ -70,6 +70,26 @@ export class UsersController {
     });
   }
 
+  // POST /api/users/join-request — a teamless staff member asks to join a
+  // manager's team (the manager must then accept). Declared before the :id
+  // routes so "join-request" isn't parsed as an id.
+  @Post('join-request')
+  @Roles('staff')
+  requestJoin(
+    @Request() req: { user: JwtPayload },
+    @Body() body: ReassignDto,
+  ) {
+    return this.usersService.requestJoin(body.target_manager_id, req.user);
+  }
+
+  // POST /api/users/join-request/cancel — the staff member withdraws their own
+  // pending join request.
+  @Post('join-request/cancel')
+  @Roles('staff')
+  cancelJoinRequest(@Request() req: { user: JwtPayload }) {
+    return this.usersService.cancelReassign(req.user.sub, req.user);
+  }
+
   // POST /api/users/:id/reassign — owner manager proposes moving a staff member
   // to another manager (target must then accept).
   @Post(':id/reassign')
@@ -115,6 +135,17 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.usersService.cancelReassign(id, req.user);
+  }
+
+  // POST /api/users/:id/remove-from-team — owner manager (or admin) removes a
+  // staff member from their team: the account stays active but becomes teamless.
+  @Post(':id/remove-from-team')
+  @Roles('manager', 'admin')
+  removeFromTeam(
+    @Request() req: { user: JwtPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.usersService.removeFromTeam(id, req.user);
   }
 
   // POST /api/users — manager creates staff; only admin creates non-staff roles

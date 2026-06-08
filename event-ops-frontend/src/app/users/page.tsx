@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Plus, UserCheck, UserX, Phone, Mail, ArrowRightLeft, Check, X } from 'lucide-react'
+import { Plus, UserCheck, UserX, UserMinus, UserPlus, Phone, Mail, ArrowRightLeft, Check, X } from 'lucide-react'
 import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
@@ -80,6 +80,11 @@ export default function UsersPage() {
   // Show the "My Team" filter to a manager (their staff) or to a staff member
   // who has a manager (their teammates).
   const showMyTeam = isPlainManager || (isStaff && !!myManagerId)
+  // A staff member's own record (from the directory), used to drive the
+  // join-a-team flow: a teamless staffer may request to join a manager.
+  const myRecord = users.find(u => u.user_id === user?.user_id)
+  const myPending = myRecord?.pending_manager_id ?? null
+  const iAmTeamless = isStaff && !myRecord?.manager_id
 
   // Current user first, then Staff > Manager > Admin (then by name), with the
   // optional role filter applied.
@@ -161,6 +166,34 @@ export default function UsersPage() {
     await usersApi.rejectReassign(staffId)
     setRequests(prev => prev.filter(r => r.user_id !== staffId))
     setUsers(prev => prev.map(x => x.user_id === staffId ? { ...x, pending_manager_id: null } : x))
+  }
+
+  // Manager removes one of their own staff from the team (account stays active).
+  const removeFromTeam = async (u: TeamUser) => {
+    if (!confirm(t(`Remove ${u.name} from your team?`, `Gỡ ${u.name} khỏi đội của bạn?`))) return
+    try {
+      const updated = await usersApi.removeFromTeam(u.user_id)
+      setUsers(prev => prev.map(x => x.user_id === u.user_id ? { ...x, ...updated } : x))
+    } catch (e) {
+      alert(tError(getErrorMessage(e, 'Could not remove the member / Không thể gỡ thành viên')))
+    }
+  }
+
+  // Teamless staff: request to join a manager (the manager must accept).
+  const requestJoin = async (mid: string) => {
+    try {
+      const updated = await usersApi.requestJoin(mid)
+      setUsers(prev => prev.map(x => x.user_id === user?.user_id ? { ...x, ...updated } : x))
+    } catch (e) {
+      alert(tError(getErrorMessage(e, 'Could not send the request / Không thể gửi yêu cầu')))
+    }
+  }
+  // Teamless staff: withdraw my own pending join request.
+  const cancelJoin = async () => {
+    try {
+      await usersApi.cancelJoinRequest()
+      setUsers(prev => prev.map(x => x.user_id === user?.user_id ? { ...x, pending_manager_id: null } : x))
+    } catch { /* leave pending state if the call fails */ }
   }
 
   const handleCreate = async () => {
@@ -260,6 +293,42 @@ export default function UsersPage() {
             )
           })}
         </div>
+
+        {/* Teamless staff: pending join request, or a prompt to request one. */}
+        {isStaff && iAmTeamless && (
+          <div style={{
+            background: myPending ? 'rgba(245,158,11,0.07)' : 'rgba(59,130,246,0.06)',
+            border: `1px solid ${myPending ? 'var(--accent-amber)' : 'var(--accent-blue)'}`,
+            borderRadius: '12px', padding: '14px 18px', marginBottom: '20px',
+            display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+          }}>
+            {myPending ? (
+              <>
+                <ArrowRightLeft size={15} style={{ color: 'var(--accent-amber)' }} />
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', flex: 1, minWidth: 0 }}>
+                  {t('You asked to join', 'Bạn đã yêu cầu tham gia')}{' '}
+                  <strong>{managerName[myPending] || t('a manager', 'một quản lý')}</strong>{' '}
+                  — {t('awaiting their approval.', 'đang chờ phê duyệt.')}
+                </p>
+                <button onClick={cancelJoin} style={{
+                  background: 'none', border: '1px solid var(--accent-red)', borderRadius: '7px',
+                  padding: '7px 13px', cursor: 'pointer', color: 'var(--accent-red)',
+                  fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px',
+                }}><X size={13} /> {t('Cancel request', 'Hủy yêu cầu')}</button>
+              </>
+            ) : (
+              <>
+                <UserPlus size={15} style={{ color: 'var(--accent-blue)' }} />
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {t(
+                    "You're not in a team yet. Use “Request to join” on a manager below.",
+                    'Bạn chưa thuộc đội nào. Hãy dùng “Yêu cầu tham gia” ở một quản lý bên dưới.',
+                  )}
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Incoming reassignment requests — I am the proposed new manager. */}
         {requests.length > 0 && (
@@ -394,6 +463,27 @@ export default function UsersPage() {
                     fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
                   }}>
                     <X size={12} /> {t('Cancel request', 'Hủy yêu cầu')}
+                  </button>
+                )}
+                {/* Owner manager can remove this staff member from their team
+                    (the account stays active, just teamless). */}
+                {isManager && u.role === 'staff' && u.manager_id === user?.user_id && (
+                  <button onClick={() => removeFromTeam(u)} title={t('Remove from your team', 'Gỡ khỏi đội của bạn')} style={{
+                    background: 'none', border: '1px solid var(--accent-red)', borderRadius: '6px',
+                    padding: '5px 9px', cursor: 'pointer', color: 'var(--accent-red)',
+                    fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <UserMinus size={12} /> {t('Remove', 'Gỡ')}
+                  </button>
+                )}
+                {/* Teamless staff can ask to join this manager's team. */}
+                {iAmTeamless && !myPending && u.role === 'manager' && u.user_id !== user?.user_id && (
+                  <button onClick={() => requestJoin(u.user_id)} title={t('Request to join this team', 'Yêu cầu tham gia đội này')} style={{
+                    background: 'none', border: '1px solid var(--accent-blue)', borderRadius: '6px',
+                    padding: '5px 9px', cursor: 'pointer', color: 'var(--accent-blue)',
+                    fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <UserPlus size={12} /> {t('Request to join', 'Yêu cầu tham gia')}
                   </button>
                 )}
                 <span style={{
