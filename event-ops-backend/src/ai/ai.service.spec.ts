@@ -197,9 +197,11 @@ describe('AiService.processCommand', () => {
     );
   });
 
-  it('honours a model-supplied start_time for a created task', async () => {
+  it('honours a model-supplied start_time for a created task (in-window)', async () => {
     const { service, tasksService, userRepo } = build();
     userRepo.findOne.mockResolvedValue(null);
+    // Times sit well inside the test event's window (2026-01-01 .. 2030-01-01),
+    // so fitWindow leaves them untouched.
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
         JSON.stringify([
@@ -207,8 +209,8 @@ describe('AiService.processCommand', () => {
             task_name: 'Setup',
             priority: 'low',
             assigned_to: '',
-            start_time: '2030-01-01T08:00:00Z',
-            deadline: '2030-01-01T10:00:00Z',
+            start_time: '2027-01-01T08:00:00Z',
+            deadline: '2027-01-01T10:00:00Z',
           },
         ]),
       ),
@@ -216,8 +218,46 @@ describe('AiService.processCommand', () => {
     await service.processCommand(ACTOR, { eventId: 'e1', message: 'add setup' });
     const arg = tasksService.create.mock.calls[0][0] as { start_time?: Date };
     expect((arg.start_time as Date).toISOString()).toBe(
-      '2030-01-01T08:00:00.000Z',
+      '2027-01-01T08:00:00.000Z',
     );
+  });
+
+  it('fits a task into a SHORT event window instead of letting it overflow and be rejected', async () => {
+    const { service, tasksService, userRepo, events } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    // A 12-hour event window in the future; the model schedules a deadline days
+    // past the end (what it does for short events). fitWindow must pull it inside.
+    const winStart = '2026-06-09T08:00:00.000Z';
+    const winEnd = '2026-06-09T20:00:00.000Z';
+    events.findOneForViewer.mockResolvedValue({
+      event_id: 'e1',
+      start_time: winStart,
+      end_time: winEnd,
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Cater',
+            priority: 'medium',
+            assigned_to: '',
+            start_time: '2026-06-12T08:00:00Z',
+            deadline: '2026-06-15T10:00:00Z',
+          },
+        ]),
+      ),
+    );
+    await service.processCommand(ACTOR, { eventId: 'e1', message: 'cater the party' });
+    const arg = tasksService.create.mock.calls[0][0] as {
+      start_time?: Date;
+      deadline?: Date;
+    };
+    const start = (arg.start_time as Date).getTime();
+    const end = (arg.deadline as Date).getTime();
+    // Both ends sit inside the event window, with start strictly before deadline.
+    expect(start).toBeGreaterThanOrEqual(new Date(winStart).getTime());
+    expect(end).toBeLessThanOrEqual(new Date(winEnd).getTime());
+    expect(start).toBeLessThan(end);
   });
 
   it('slides a past task window forward to start now (keeping its length) so a plan for "today" is not rejected', async () => {

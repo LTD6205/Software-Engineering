@@ -202,6 +202,48 @@ export class AiService {
     return isNaN(d.getTime()) ? undefined : d;
   }
 
+  private static readonly MIN_MS = 60 * 1000;
+  private static readonly HOUR_MS = 60 * 60 * 1000;
+
+  // Fit an AI task's [start, deadline] into [max(now, eventStart) .. eventEnd],
+  // preserving its intended length where the window allows. Guarantees the result
+  // never starts in the past and never overflows the event window — so a plan for
+  // a SHORT event (e.g. one day) is created instead of being rejected by
+  // TasksService (assertNotInPast / assertWithinEventWindow, REQ-19). When the
+  // model gives no deadline the value is returned unchanged. With no window it
+  // degrades to the past-only slide-forward behaviour.
+  private static fitWindow(
+    startTime: Date | undefined,
+    deadline: Date | undefined,
+    now: number,
+    win?: { start: number; end: number },
+  ): { startTime?: Date; deadline?: Date } {
+    if (!deadline) return { startTime, deadline };
+    const { MIN_MS: MIN, HOUR_MS: HOUR } = AiService;
+    // The task's intended length: the model's [start, deadline] span when both
+    // are given and valid, otherwise a one-hour default.
+    const span =
+      startTime && startTime.getTime() < deadline.getTime()
+        ? deadline.getTime() - startTime.getTime()
+        : HOUR;
+    const winStart = win ? Math.max(now, win.start) : now;
+    const winEnd = win ? win.end : Number.POSITIVE_INFINITY;
+    // The longest length that still fits inside the window; keep at least a
+    // minute so start stays strictly before the deadline.
+    let effSpan = span;
+    if (Number.isFinite(winEnd)) {
+      const room = winEnd - winStart;
+      effSpan = room > MIN ? Math.min(span, room) : MIN;
+    }
+    // Anchor on the model's deadline, then pull the window inside [winStart, winEnd].
+    let dl = Math.min(deadline.getTime(), winEnd);
+    if (dl < winStart + effSpan) dl = winStart + effSpan;
+    let st = dl - effSpan;
+    if (st < winStart) st = winStart;
+    if (dl - st < MIN) dl = st + MIN;
+    return { startTime: new Date(st), deadline: new Date(dl) };
+  }
+
   // Runtime validation of the model's JSON array of actions. Unknown/missing
   // `action` defaults to 'create' (backward compatible with the old
   // array-of-tasks format). Malformed items (e.g. a create with no name, or an
@@ -879,6 +921,23 @@ export class AiService {
     viewableEvents: { event_id: string; event_name: string }[],
   ): Promise<ExecResult> {
     const res = this.emptyResult();
+    // The request event's window, so created tasks can be fitted inside it
+    // (REQ-19) instead of being rejected — important for short events. Best
+    // effort: if the lookup fails, creates fall back to past-only clamping.
+    let eventWindow: { start: number; end: number } | undefined;
+    if (defaultEventId) {
+      try {
+        const ev = (await this.events.findOneForViewer(
+          defaultEventId,
+          actor,
+        )) as { start_time?: string | Date; end_time?: string | Date };
+        const start = ev.start_time ? new Date(ev.start_time).getTime() : NaN;
+        const end = ev.end_time ? new Date(ev.end_time).getTime() : NaN;
+        if (!isNaN(start) && !isNaN(end)) eventWindow = { start, end };
+      } catch {
+        // No window — createTask clamping degrades to "not in the past".
+      }
+    }
     // New tasks tagged with a `group` title, collected as creates land and
     // linked into one task group after the loop.
     const createdGroups: { taskId: string; title: string }[] = [];
@@ -914,6 +973,7 @@ export class AiService {
         createdGroups,
         viewableEvents,
         undoOp,
+        eventWindow,
       );
     }
     // Link newly-created tasks that share a group title. Reuse an existing event
@@ -983,6 +1043,7 @@ export class AiService {
     createdGroups: { taskId: string; title: string }[],
     viewableEvents: { event_id: string; event_name: string }[],
     undoOp: UndoOp,
+    eventWindow?: { start: number; end: number },
   ): Promise<void> {
     switch (item.action) {
       case 'create': {
@@ -991,42 +1052,18 @@ export class AiService {
         const eventId = defaultEventId;
         let task: { task_id: string; task_name: string };
         // Every AI task gets a real [start_time, deadline] window so it renders as
-        // a draggable block. A task with only a deadline collapses to zero width on
-        // the timeline, and the first drag (start === deadline) trips the
-        // tasks_time_check (deadline > start_time) DB constraint.
-        //
-        // The window is also slid forward so it never starts in the past. When a
-        // plan is for "today", the model often spreads tasks across the day and
-        // the ones earlier than the current clock time would otherwise be rejected
-        // by assertNotInPast — so only one task survives. Instead, preserve each
-        // task's intended length and shift it to begin at "now".
-        const HOUR = 60 * 60 * 1000;
-        const now = Date.now();
-        let deadline = AiService.parseDeadline(item.deadline);
-        let startTime = AiService.parseDeadline(item.start_time);
-        if (deadline) {
-          // The task's intended length: the model's [start, deadline] span when
-          // both are given and valid, otherwise a one-hour default.
-          const span =
-            startTime && startTime.getTime() < deadline.getTime()
-              ? deadline.getTime() - startTime.getTime()
-              : HOUR;
-          if (deadline.getTime() <= now) {
-            // Whole window is in the past — slide it forward to start now,
-            // keeping its length, so the task is created rather than rejected.
-            startTime = new Date(now);
-            deadline = new Date(now + span);
-          } else if (
-            !startTime ||
-            startTime.getTime() >= deadline.getTime() ||
-            startTime.getTime() < now
-          ) {
-            // Deadline is in the future, but the start is missing, after the
-            // deadline, or in the past — pull it to the later of (deadline - span)
-            // and now, so the lead-in never sits in the past.
-            startTime = new Date(Math.max(deadline.getTime() - span, now));
-          }
-        }
+        // a draggable block. fitWindow keeps the model's intended length but slides
+        // and shrinks it to fit inside [now .. eventEnd] — so a plan never starts
+        // in the past (assertNotInPast) and, crucially for SHORT events, never
+        // overflows the event window (assertWithinEventWindow, REQ-19). Without
+        // this the model's out-of-window tasks would be rejected one by one and
+        // only a couple would survive.
+        const { startTime, deadline } = AiService.fitWindow(
+          AiService.parseDeadline(item.start_time),
+          AiService.parseDeadline(item.deadline),
+          Date.now(),
+          eventWindow,
+        );
         try {
           task = await this.tasksService.create(
             {
@@ -1667,6 +1704,10 @@ export class AiService {
   window, with the start_time strictly BEFORE the deadline (a sensible duration,
   e.g. about an hour), so the task has a real length on the timeline.
 - Spread multiple tasks across times INSIDE this window; do not exceed it.
+- If the window is SHORT (e.g. a single day or a few hours), make the tasks
+  shorter (e.g. 30-60 minutes) and place them back-to-back so the WHOLE plan fits
+  before the event end. Divide the available time by the number of tasks rather
+  than giving each a full hour and running past the end.
 - When the user says "today" (or a time of day that has already passed), start
   from the CURRENT TIME and lay the tasks out one after another AFTER now — do not
   schedule them in the morning of a day that is already partly over.`;
