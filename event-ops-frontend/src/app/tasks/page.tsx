@@ -367,6 +367,17 @@ function TasksContent() {
       showToast(tError(getErrorMessage(e, 'Could not undo / Không thể hoàn tác')))
     }
   }
+  // Batch actions on Ctrl-selected tasks (each is one undoable operation).
+  const handleBatchDelete = async (ids: string[]) => {
+    if (!ids.length) return
+    try { await tasksApi.batchDelete(ids); await reloadTasks(); loadChanges() }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not delete the selected tasks / Không thể xóa các công việc đã chọn'))) }
+  }
+  const handleBatchUngroup = async (ids: string[]) => {
+    if (!ids.length) return
+    try { await tasksApi.batchUngroup(ids); await reloadTasks(); loadChanges() }
+    catch (e) { showToast(tError(getErrorMessage(e, 'Could not ungroup the selected tasks / Không thể tách nhóm các công việc đã chọn'))) }
+  }
   const handleMerge = async (sourceId: string, targetId: string) => {
     try { await tasksApi.merge(sourceId, targetId); await reloadTasks() }
     catch (e) { showToast(tError(getErrorMessage(e, 'Could not merge the tasks / Không thể gộp công việc'))) }
@@ -521,6 +532,8 @@ function TasksContent() {
             onResetFilters={resetTaskFilters}
             onNewTask={openNewTask}
             onReschedule={handleReschedule}
+            onBatchDelete={handleBatchDelete}
+            onBatchUngroup={handleBatchUngroup}
             onNotice={msg => showToast(msg, 'info')}
           />
         )}

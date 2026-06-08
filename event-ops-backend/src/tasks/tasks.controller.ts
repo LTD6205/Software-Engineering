@@ -23,6 +23,7 @@ import {
   AddToGroupDto,
   RenameGroupDto,
   SetAssigneesDto,
+  BatchTaskIdsDto,
 } from './dto/task.dto';
 
 @Controller('tasks')
@@ -61,6 +62,31 @@ export class TasksController {
     @Param('eventId', ParseUUIDPipe) eventId: string,
   ) {
     return this.tasksService.undoLastChange(eventId, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
+  }
+
+  // ── Batch actions on multiple selected tasks (one undoable operation) ──
+  @Post('batch/delete')
+  @Roles('manager')
+  batchDelete(
+    @Request() req: { user: JwtPayload },
+    @Body() body: BatchTaskIdsDto,
+  ) {
+    return this.tasksService.removeMany(body.task_ids, {
+      sub: req.user.sub,
+      role: req.user.role,
+    });
+  }
+
+  @Post('batch/ungroup')
+  @Roles('manager')
+  batchUngroup(
+    @Request() req: { user: JwtPayload },
+    @Body() body: BatchTaskIdsDto,
+  ) {
+    return this.tasksService.ungroupMany(body.task_ids, {
       sub: req.user.sub,
       role: req.user.role,
     });

@@ -84,3 +84,10 @@ export class SetAssigneesDto {
   @IsUUID('all', { each: true })
   user_ids: string[];
 }
+
+// POST /tasks/batch/delete | /tasks/batch/ungroup — act on several tasks at once.
+export class BatchTaskIdsDto {
+  @IsArray()
+  @IsUUID('all', { each: true })
+  task_ids: string[];
+}

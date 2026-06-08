@@ -19,6 +19,16 @@ import { EventsGateway } from '../websocket/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EventsService } from '../events/events.service';
 
+// Everything one undoable operation did, captured so undoLastChange can reverse
+// it. A manual action fills one field with a single item; one AI command or one
+// multi-select batch fills it with many. (See task-change-log.entity.ts.)
+export interface UndoOp {
+  created: string[];
+  deleted: { task: Record<string, unknown>; assignees: string[] }[];
+  edited: { task_id: string; fields: Record<string, unknown> }[];
+  ungrouped: { task_id: string; group_id: string | null; group_title?: string }[];
+}
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -136,7 +146,11 @@ export class TasksService {
     return this.getAssignments(id);
   }
 
-  async create(data: Partial<Task>, actor?: { sub: string; role: string }) {
+  async create(
+    data: Partial<Task>,
+    actor?: { sub: string; role: string },
+    opts?: { undoOp?: UndoOp },
+  ) {
     if (!data.task_name) {
       throw new BadRequestException(
         'Task name is required / Vui lòng nhập tên công việc',
@@ -190,6 +204,21 @@ export class TasksService {
     await this.recomputeEventStatus(task.event_id);
     // Re-bucket auto priorities now the task set changed.
     await this.recomputeAutoPriorities(task.event_id);
+    // Undoable: collect into the caller's batch (one AI command / multi-create) or
+    // record this single create on its own. Only user/AI creates are tracked.
+    if (actor?.sub) {
+      if (opts?.undoOp) opts.undoOp.created.push(task.task_id);
+      else {
+        const op = this.newUndoOp();
+        op.created.push(task.task_id);
+        await this.recordOp(
+          task.event_id,
+          op,
+          `Created "${task.task_name}"`,
+          actor.sub,
+        );
+      }
+    }
     this.broadcastChange(task.event_id);
     return this.findOne(task.task_id);
   }
@@ -387,6 +416,7 @@ export class TasksService {
     id: string,
     data: Partial<Task>,
     actor?: { sub: string; role: string },
+    opts?: { undoOp?: UndoOp },
   ) {
     const old = await this.findOne(id);
 
@@ -513,10 +543,10 @@ export class TasksService {
         actor_type: 'user',
         actor_user_id: actor.sub,
       });
-      // Record an undoable 'edit' in the event's bounded history: snapshot the
-      // OLD values of the editable fields this update set, so undo can restore
-      // them. Only user/AI edits are tracked (system cron changes have no actor),
-      // so the 3-slot history stays focused on changes a person can undo.
+      // Undoable: snapshot the OLD values of the editable fields this update set,
+      // so undo can restore them. Collect into the caller's batch (one AI command)
+      // or record this single edit. Only user/AI edits are tracked (system cron
+      // changes have no actor), keeping the 3-slot history focused on undoable work.
       const changedKeys = Object.keys(data).filter((k) =>
         (TasksService.UPDATABLE_FIELDS as readonly string[]).includes(k),
       );
@@ -524,17 +554,21 @@ export class TasksService {
         const fields: Record<string, unknown> = {};
         const oldRow = old as unknown as Record<string, unknown>;
         for (const k of changedKeys) fields[k] = oldRow[k];
-        const labels = [
-          ...new Set(changedKeys.map((k) => TasksService.FIELD_LABELS[k] ?? k)),
-        ].join(', ');
-        await this.recordChange(
-          old.event_id,
-          id,
-          'edit',
-          { fields },
-          `${old.task_name} · ${labels}`,
-          actor.sub,
-        );
+        if (opts?.undoOp) {
+          opts.undoOp.edited.push({ task_id: id, fields });
+        } else {
+          const labels = [
+            ...new Set(changedKeys.map((k) => TasksService.FIELD_LABELS[k] ?? k)),
+          ].join(', ');
+          const op = this.newUndoOp();
+          op.edited.push({ task_id: id, fields });
+          await this.recordOp(
+            old.event_id,
+            op,
+            `${old.task_name} · ${labels}`,
+            actor.sub,
+          );
+        }
       }
     }
     // Celebrate a task that was just completed.
@@ -562,12 +596,11 @@ export class TasksService {
     return this.findOne(id);
   }
 
-  // ── Undo history (per-event, bounded to the 3 most recent changes) ──────────
-  // A delete-surviving log (task_change_log) records each user/AI task change —
-  // an 'edit' (snapshot of the old values of the fields that changed) or a
-  // 'delete' (full task + assignees so it can be re-created). The Undo button and
-  // the AI "undo" action both call undoLastChange to revert the most recent one;
-  // repeating it walks back up to MAX_EVENT_CHANGES.
+  // ── Undo history (per-event, bounded to the 3 most recent OPERATIONS) ────────
+  // Each row is ONE operation (a manual action, one AI command, or one batch/
+  // multi-select action). The op's snapshot captures everything it did so undo can
+  // reverse all of it. The Undo button and the AI "undo" action both call
+  // undoLastChange; repeating it walks back up to MAX_EVENT_CHANGES.
   private static readonly MAX_EVENT_CHANGES = 3;
 
   private static readonly FIELD_LABELS: Record<string, string> = {
@@ -580,22 +613,75 @@ export class TasksService {
     deadline: 'deadline',
   };
 
-  // Append a change to the event's undo history, then prune to the newest N.
-  private async recordChange(
+  newUndoOp(): UndoOp {
+    return { created: [], deleted: [], edited: [], ungrouped: [] };
+  }
+
+  private static undoOpEmpty(op: UndoOp): boolean {
+    return (
+      !op.created.length &&
+      !op.deleted.length &&
+      !op.edited.length &&
+      !op.ungrouped.length
+    );
+  }
+
+  // A full restorable snapshot of a task (used when a delete must be undoable).
+  private static taskSnapshot(t: Task): Record<string, unknown> {
+    return {
+      task_name: t.task_name,
+      description: t.description,
+      priority_label: t.priority_label,
+      priority_score: t.priority_score,
+      priority_source: t.priority_source,
+      status: t.status,
+      start_time: t.start_time,
+      deadline: t.deadline,
+      created_by: t.created_by,
+      group_id: t.group_id,
+    };
+  }
+
+  // Derive a label/category for the Undo button from what the op contains.
+  private static describeOp(op: UndoOp): { type: string; label: string } {
+    const parts: string[] = [];
+    if (op.created.length) parts.push(`created ${op.created.length}`);
+    if (op.deleted.length) parts.push(`deleted ${op.deleted.length}`);
+    if (op.edited.length) parts.push(`edited ${op.edited.length}`);
+    if (op.ungrouped.length) parts.push(`ungrouped ${op.ungrouped.length}`);
+    const kinds = [
+      op.created.length && 'create',
+      op.deleted.length && 'delete',
+      op.edited.length && 'edit',
+      op.ungrouped.length && 'ungroup',
+    ].filter(Boolean) as string[];
+    return {
+      type: kinds.length === 1 ? kinds[0] : 'batch',
+      label: parts.join(', ') || 'change',
+    };
+  }
+
+  // Write one operation as a history row (+ prune to the newest N). No-op if empty.
+  async recordOp(
     eventId: string,
-    taskId: string,
-    changeType: 'edit' | 'delete',
-    snapshot: Record<string, unknown>,
-    label: string,
+    op: UndoOp,
+    label?: string,
     actorId?: string,
   ) {
+    if (TasksService.undoOpEmpty(op)) return;
+    const d = TasksService.describeOp(op);
+    const refId =
+      op.created[0] ??
+      op.edited[0]?.task_id ??
+      op.ungrouped[0]?.task_id ??
+      null;
     await this.changeLogRepo.save(
       this.changeLogRepo.create({
         event_id: eventId,
-        task_id: taskId,
-        change_type: changeType,
-        snapshot,
-        label,
+        ...(refId ? { task_id: refId } : {}),
+        change_type: d.type,
+        snapshot: op as unknown as Record<string, unknown>,
+        label: label ?? d.label,
         ...(actorId ? { actor_user_id: actorId } : {}),
       }),
     );
@@ -612,7 +698,85 @@ export class TasksService {
     );
   }
 
-  // The event's recent changes (newest first) for the Undo button. Manager/admin.
+  // Hard-delete a task + its child rows, WITHOUT recording undo or dissolving
+  // groups (used by remove() and by undo-of-create). The change-log has no FK to
+  // tasks, so it is left intact.
+  private async rawDeleteTask(id: string) {
+    await this.taskRepo.manager.transaction(async (m) => {
+      await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
+      await m.query(
+        'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
+        [id],
+      );
+      await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
+      await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
+      await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
+      await m.delete(Task, id);
+    });
+  }
+
+  // Re-create a deleted task (new id) from its snapshot + assignees.
+  private async restoreTask(
+    eventId: string,
+    snap: Record<string, unknown>,
+    assignees: string[],
+    fallbackCreator?: string,
+  ) {
+    let groupId: string | null = (snap.group_id as string | null) ?? null;
+    if (groupId) {
+      const g = await this.groupRepo.findOne({ where: { group_id: groupId } });
+      if (!g) groupId = null; // its group was dissolved
+    }
+    const recreated = await this.taskRepo.save(
+      this.taskRepo.create({
+        event_id: eventId,
+        task_name: snap.task_name as string,
+        description: (snap.description as string | null) ?? null,
+        priority_label: (snap.priority_label as string) ?? 'medium',
+        priority_score: (snap.priority_score as number) ?? 50,
+        priority_source: (snap.priority_source as string) ?? 'auto',
+        status: (snap.status as string) ?? 'in_progress',
+        start_time: (snap.start_time as Date | null) ?? null,
+        deadline: (snap.deadline as Date | null) ?? null,
+        created_by: (snap.created_by as string) ?? fallbackCreator,
+        group_id: groupId,
+      } as Partial<Task>),
+    );
+    for (const uid of assignees ?? []) {
+      await this.assignRepo.save(
+        this.assignRepo.create({ task_id: recreated.task_id, user_id: uid }),
+      );
+    }
+  }
+
+  // Put ungrouped tasks back: reuse the original group if it still exists, else
+  // re-create it (with its old title) and re-attach the members.
+  private async restoreGroups(
+    eventId: string,
+    ungrouped: { task_id: string; group_id: string | null; group_title?: string }[],
+  ) {
+    const byGroup = new Map<string, { title?: string; ids: string[] }>();
+    for (const u of ungrouped) {
+      if (!u.group_id) continue;
+      const e = byGroup.get(u.group_id) ?? { title: u.group_title, ids: [] };
+      e.ids.push(u.task_id);
+      byGroup.set(u.group_id, e);
+    }
+    for (const [gid, { title, ids }] of byGroup) {
+      let group = await this.groupRepo.findOne({ where: { group_id: gid } });
+      if (!group) {
+        group = await this.groupRepo.save(
+          this.groupRepo.create({ event_id: eventId, title: title ?? '' }),
+        );
+      }
+      for (const tid of ids) {
+        const t = await this.taskRepo.findOne({ where: { task_id: tid } });
+        if (t) await this.taskRepo.update(tid, { group_id: group.group_id });
+      }
+    }
+  }
+
+  // The event's recent operations (newest first) for the Undo button. Manager/admin.
   async getEventChanges(eventId: string, actor?: { sub: string; role: string }) {
     if (actor) await this.events.assertCanManageEvent(actor, eventId);
     const rows = await this.changeLogRepo.find({
@@ -628,11 +792,10 @@ export class TasksService {
     }));
   }
 
-  // Revert the event's most recent change: restore an edit's old field values, or
-  // re-create a deleted task (with its assignees). Drops that history row so a
-  // repeat undo steps further back. Applied directly so a restored time lands
-  // exactly even if now past (the old pair was valid, so deadline > start holds).
-  // Manager/admin of the event gated — the single path the button and AI share.
+  // Reverse the event's most recent operation in full: re-create deleted tasks,
+  // re-form ungrouped ones, restore edited fields, and delete created ones. Drops
+  // that history row so a repeat undo steps further back. Manager/admin gated —
+  // the single path shared by the Undo button and the AI "undo" action.
   async undoLastChange(eventId: string, actor?: { sub: string; role: string }) {
     if (actor) await this.events.assertCanManageEvent(actor, eventId);
     const last = await this.changeLogRepo.findOne({
@@ -644,49 +807,31 @@ export class TasksService {
         'Nothing to undo / Không có thay đổi nào để hoàn tác',
       );
     }
-    if (last.change_type === 'edit') {
-      const fields = (last.snapshot?.fields ?? {}) as Record<string, unknown>;
+    const s = (last.snapshot ?? {}) as Partial<UndoOp>;
+    // 1. re-create deleted tasks
+    for (const d of s.deleted ?? []) {
+      await this.restoreTask(eventId, d.task, d.assignees, actor?.sub);
+    }
+    // 2. re-form groups that were ungrouped
+    await this.restoreGroups(eventId, s.ungrouped ?? []);
+    // 3. restore edited fields (only if the task still exists)
+    for (const e of s.edited ?? []) {
       const restore: Partial<Task> = {};
-      for (const k of Object.keys(fields)) {
+      for (const k of Object.keys(e.fields)) {
         if ((TasksService.UPDATABLE_FIELDS as readonly string[]).includes(k)) {
-          (restore[k as keyof Task] as unknown) = fields[k];
+          (restore[k as keyof Task] as unknown) = e.fields[k];
         }
       }
       const stillThere = await this.taskRepo.findOne({
-        where: { task_id: last.task_id },
+        where: { task_id: e.task_id },
       });
       if (stillThere && Object.keys(restore).length) {
-        await this.taskRepo.update(last.task_id, restore);
+        await this.taskRepo.update(e.task_id, restore);
       }
-    } else {
-      // delete → re-create the task (new id) and re-attach its assignees.
-      const snap = (last.snapshot?.task ?? {}) as Record<string, unknown>;
-      const assignees = (last.snapshot?.assignees ?? []) as string[];
-      let groupId: string | null = (snap.group_id as string | null) ?? null;
-      if (groupId) {
-        const g = await this.groupRepo.findOne({ where: { group_id: groupId } });
-        if (!g) groupId = null; // its group was dissolved on delete
-      }
-      const recreated = await this.taskRepo.save(
-        this.taskRepo.create({
-          event_id: eventId,
-          task_name: snap.task_name as string,
-          description: (snap.description as string | null) ?? null,
-          priority_label: (snap.priority_label as string) ?? 'medium',
-          priority_score: (snap.priority_score as number) ?? 50,
-          priority_source: (snap.priority_source as string) ?? 'auto',
-          status: (snap.status as string) ?? 'in_progress',
-          start_time: (snap.start_time as Date | null) ?? null,
-          deadline: (snap.deadline as Date | null) ?? null,
-          created_by: (snap.created_by as string) ?? actor?.sub,
-          group_id: groupId,
-        } as Partial<Task>),
-      );
-      for (const uid of assignees) {
-        await this.assignRepo.save(
-          this.assignRepo.create({ task_id: recreated.task_id, user_id: uid }),
-        );
-      }
+    }
+    // 4. delete created tasks
+    for (const id of s.created ?? []) {
+      await this.rawDeleteTask(id);
     }
     await this.changeLogRepo.delete({ id: last.id });
     await this.recomputeEventStatus(eventId);
@@ -695,56 +840,34 @@ export class TasksService {
     return { undone: { type: last.change_type, label: last.label } };
   }
 
-  async remove(id: string, actor?: { sub: string; role: string }) {
+  async remove(
+    id: string,
+    actor?: { sub: string; role: string },
+    opts?: { undoOp?: UndoOp },
+  ) {
     const task = await this.findOne(id);
     if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
-    // Record an undoable 'delete' BEFORE removing the task: snapshot the full task
-    // plus its assignees so undo can re-create it. (task_change_log has no FK to
-    // tasks, so this survives the delete below.) Only user/AI deletes are tracked.
+    // Capture an undoable snapshot (task + assignees) BEFORE deleting — it must
+    // survive the delete so undo can re-create the task. Collect into the caller's
+    // batch (one AI command / multi-select) or record this single delete on its own.
     if (actor?.sub) {
       const assignees = (
         await this.assignRepo.find({ where: { task_id: id } })
       ).map((a) => a.user_id);
-      await this.recordChange(
-        task.event_id,
-        id,
-        'delete',
-        {
-          task: {
-            task_name: task.task_name,
-            description: task.description,
-            priority_label: task.priority_label,
-            priority_score: task.priority_score,
-            priority_source: task.priority_source,
-            status: task.status,
-            start_time: task.start_time,
-            deadline: task.deadline,
-            created_by: task.created_by,
-            group_id: task.group_id,
-          },
-          assignees,
-        },
-        `Deleted "${task.task_name}"`,
-        actor.sub,
-      );
+      const entry = { task: TasksService.taskSnapshot(task), assignees };
+      if (opts?.undoOp) opts.undoOp.deleted.push(entry);
+      else {
+        const op = this.newUndoOp();
+        op.deleted.push(entry);
+        await this.recordOp(
+          task.event_id,
+          op,
+          `Deleted "${task.task_name}"`,
+          actor.sub,
+        );
+      }
     }
-    // Child rows are removed automatically by ON DELETE CASCADE once the FK
-    // migration (npm run db:migrate) has been applied. We still clear them here
-    // as a fallback so deletion also works on databases created before that
-    // migration; on an up-to-date schema these deletes simply find nothing.
-    // The whole delete sequence runs in one transaction so a failure partway
-    // can't leave the task orphaned with some child rows already gone.
-    await this.taskRepo.manager.transaction(async (m) => {
-      await m.query('DELETE FROM ai_task_map WHERE task_id = $1', [id]);
-      await m.query(
-        'DELETE FROM task_dependencies WHERE task_id = $1 OR depends_on_task = $1',
-        [id],
-      );
-      await m.query('DELETE FROM task_logs WHERE task_id = $1', [id]);
-      await m.query('DELETE FROM task_assignments WHERE task_id = $1', [id]);
-      await m.query('DELETE FROM notifications WHERE task_id = $1', [id]);
-      await m.delete(Task, id);
-    });
+    await this.rawDeleteTask(id);
     // If it was in a group, dissolve the group if it now has < 2 members.
     if (task.group_id) {
       await this.dissolveIfTooSmall(task.group_id);
@@ -754,6 +877,63 @@ export class TasksService {
     await this.recomputeAutoPriorities(task.event_id);
     this.broadcastChange(task.event_id);
     return { message: 'Task deleted' };
+  }
+
+  // Delete several tasks (multi-select) as ONE undoable operation. Each task is
+  // removed via remove() (per-task auth + group dissolve), collecting one batched
+  // delete entry that undo re-creates together.
+  async removeMany(ids: string[], actor?: { sub: string; role: string }) {
+    if (!ids.length) return { message: 'No tasks to delete' };
+    const first = await this.findOne(ids[0]);
+    const op = this.newUndoOp();
+    for (const id of ids) await this.remove(id, actor, { undoOp: op });
+    if (actor?.sub) {
+      await this.recordOp(
+        first.event_id,
+        op,
+        `Deleted ${op.deleted.length} task(s)`,
+        actor.sub,
+      );
+    }
+    return { message: `Deleted ${ids.length} task(s)` };
+  }
+
+  // Ungroup several tasks (multi-select) as ONE undoable operation.
+  async ungroupMany(ids: string[], actor?: { sub: string; role: string }) {
+    if (!ids.length) return { message: 'No tasks to ungroup' };
+    const first = await this.findOne(ids[0]);
+    const op = this.newUndoOp();
+    const affectedGroups = new Set<string>();
+    // Capture every membership BEFORE unsetting any — removing one member can
+    // dissolve a small group and null the others' group_id, which would otherwise
+    // be lost from the undo snapshot. Then unset all, then dissolve once.
+    for (const id of ids) {
+      const t = await this.findOne(id);
+      if (actor) await this.events.assertCanManageEvent(actor, t.event_id);
+      if (!t.group_id) continue;
+      const group = await this.groupRepo.findOne({
+        where: { group_id: t.group_id },
+      });
+      op.ungrouped.push({
+        task_id: id,
+        group_id: t.group_id,
+        group_title: group?.title,
+      });
+      affectedGroups.add(t.group_id);
+      await this.taskRepo.update(id, { group_id: null });
+    }
+    for (const gid of affectedGroups) await this.dissolveIfTooSmall(gid);
+    if (actor?.sub && op.ungrouped.length) {
+      await this.recordOp(
+        first.event_id,
+        op,
+        `Ungrouped ${op.ungrouped.length} task(s)`,
+        actor.sub,
+      );
+    }
+    await this.recomputeAutoPriorities(first.event_id);
+    this.broadcastChange(first.event_id);
+    return { message: `Ungrouped ${op.ungrouped.length} task(s)` };
   }
 
   private async assertStatusChangeAllowed(
@@ -988,13 +1168,38 @@ export class TasksService {
   }
 
   // Remove a task from its group; dissolve the group if it drops below 2.
-  async ungroup(taskId: string, actor?: { sub: string; role: string }) {
+  async ungroup(
+    taskId: string,
+    actor?: { sub: string; role: string },
+    opts?: { undoOp?: UndoOp },
+  ) {
     const task = await this.findOne(taskId);
     if (actor) await this.events.assertCanManageEvent(actor, task.event_id);
     const groupId = task.group_id;
     if (!groupId) return { ok: true };
+    // Capture the membership so undo can put the task back (with the group's title
+    // in case removing it dissolves the group).
+    const group = await this.groupRepo.findOne({ where: { group_id: groupId } });
+    const entry = {
+      task_id: taskId,
+      group_id: groupId,
+      group_title: group?.title,
+    };
     await this.taskRepo.update(taskId, { group_id: null });
     await this.dissolveIfTooSmall(groupId);
+    if (actor?.sub) {
+      if (opts?.undoOp) opts.undoOp.ungrouped.push(entry);
+      else {
+        const op = this.newUndoOp();
+        op.ungrouped.push(entry);
+        await this.recordOp(
+          task.event_id,
+          op,
+          `Removed "${task.task_name}" from its group`,
+          actor.sub,
+        );
+      }
+    }
     // Leaving the group, the task re-ranks across the whole event timeline.
     await this.recomputeAutoPriorities(task.event_id);
     this.broadcastChange(task.event_id);

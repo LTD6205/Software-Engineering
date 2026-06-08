@@ -5,10 +5,16 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 
-// One undoable task change within an event (see migrations/2026-06-05_task_change_log.sql).
-// 'edit'   → snapshot = { fields: { <changedKey>: <oldValue> } }
-// 'delete' → snapshot = { task: { ...fields }, assignees: string[] }
-// The app keeps only the 3 newest rows per event.
+// One undoable OPERATION within an event (see migrations/2026-06-05_task_change_log.sql).
+// A single manual action OR one AI command OR one batch (multi-select) action is
+// ONE row; undo reverses everything it captured. The app keeps the 3 newest rows
+// per event. snapshot holds whatever the operation did:
+//   { created?:  string[]                                  // undo → delete these
+//     deleted?:  { task: {...}, assignees: string[] }[]    // undo → re-create these
+//     edited?:   { task_id: string, fields: {...} }[]      // undo → restore old fields
+//     ungrouped?:{ task_id, group_id, group_title }[] }    // undo → put back in the group
+// change_type is a free label/category for the Undo button (e.g. 'create',
+// 'delete', 'edit', 'ungroup', 'batch').
 @Entity('task_change_log')
 export class TaskChangeLog {
   @PrimaryGeneratedColumn('uuid')
@@ -21,7 +27,7 @@ export class TaskChangeLog {
   task_id: string;
 
   @Column({ length: 10 })
-  change_type: 'edit' | 'delete';
+  change_type: string;
 
   @Column({ type: 'text', nullable: true })
   label: string;

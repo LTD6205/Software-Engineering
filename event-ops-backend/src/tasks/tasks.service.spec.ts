@@ -87,9 +87,13 @@ describe('TasksService', () => {
       changeLogRepo.findOne.mockResolvedValue({
         id: 'C1',
         change_type: 'edit',
-        task_id: 't1',
         snapshot: {
-          fields: { task_name: 'Old', deadline: '2026-06-01T09:00:00.000Z' },
+          edited: [
+            {
+              task_id: 't1',
+              fields: { task_name: 'Old', deadline: '2026-06-01T09:00:00.000Z' },
+            },
+          ],
         },
       });
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
@@ -111,18 +115,21 @@ describe('TasksService', () => {
       changeLogRepo.findOne.mockResolvedValue({
         id: 'C2',
         change_type: 'delete',
-        task_id: 'gone',
         snapshot: {
-          task: {
-            task_name: 'Order cake',
-            priority_label: 'low',
-            priority_score: 10,
-            priority_source: 'ai',
-            status: 'in_progress',
-            created_by: 'u1',
-            group_id: null,
-          },
-          assignees: ['s1', 's2'],
+          deleted: [
+            {
+              task: {
+                task_name: 'Order cake',
+                priority_label: 'low',
+                priority_score: 10,
+                priority_source: 'ai',
+                status: 'in_progress',
+                created_by: 'u1',
+                group_id: null,
+              },
+              assignees: ['s1', 's2'],
+            },
+          ],
         },
       });
       eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
@@ -140,12 +147,53 @@ describe('TasksService', () => {
       expect(changeLogRepo.delete).toHaveBeenCalledWith({ id: 'C2' });
     });
 
+    it('reverts a CREATE op (incl. an AI batch) by deleting every created task', async () => {
+      const { service, taskRepo, changeLogRepo, eventRepo } = build();
+      changeLogRepo.findOne.mockResolvedValue({
+        id: 'C3',
+        change_type: 'create',
+        snapshot: { created: ['a', 'b', 'c'] },
+      });
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      taskRepo.find.mockResolvedValue([]);
+
+      await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
+
+      // Each created task is hard-deleted (the txn proxy ends in delete(Task, id)).
+      expect(taskRepo.delete).toHaveBeenCalledTimes(3);
+      expect(changeLogRepo.delete).toHaveBeenCalledWith({ id: 'C3' });
+    });
+
     it('throws when there is nothing to undo', async () => {
       const { service, changeLogRepo } = build();
       changeLogRepo.findOne.mockResolvedValue(null);
       await expect(
         service.undoLastChange('e1', { sub: 'm1', role: 'manager' }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('removeMany (batch delete = one undo op)', () => {
+    it('deletes each task and records a single batched op', async () => {
+      const { service, taskRepo, assignRepo, changeLogRepo, eventRepo } =
+        build();
+      taskRepo.findOne.mockResolvedValue({
+        task_id: 't',
+        event_id: 'e1',
+        task_name: 'X',
+        group_id: null,
+      });
+      assignRepo.find.mockResolvedValue([]);
+      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      taskRepo.find.mockResolvedValue([]);
+
+      await service.removeMany(['t1', 't2'], { sub: 'm1', role: 'manager' });
+
+      expect(taskRepo.delete).toHaveBeenCalledTimes(2); // both tasks removed
+      // One batched change-log row captures both deletions.
+      const batch = changeLogRepo.save.mock.calls.at(-1)?.[0];
+      expect(batch.change_type).toBe('delete');
+      expect((batch.snapshot.deleted as unknown[]).length).toBe(2);
     });
   });
 
