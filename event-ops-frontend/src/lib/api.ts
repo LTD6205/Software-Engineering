@@ -69,6 +69,9 @@ export const tasksApi = {
   // Per-event undo history (3 most recent task changes) + undo the latest.
   changes:      (eventId: string)                      => api.get(`/tasks/event/${eventId}/changes`).then(r => r.data),
   undoLast:     (eventId: string)                      => api.post(`/tasks/event/${eventId}/undo`).then(r => r.data),
+  // Multi-select batch actions (one undoable operation each).
+  batchDelete:  (taskIds: string[])                    => api.post('/tasks/batch/delete', { task_ids: taskIds }).then(r => r.data),
+  batchUngroup: (taskIds: string[])                    => api.post('/tasks/batch/ungroup', { task_ids: taskIds }).then(r => r.data),
 }
 
 export const usersApi = {

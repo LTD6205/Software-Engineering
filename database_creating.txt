@@ -106,9 +106,9 @@ CREATE TABLE task_change_log (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     event_id      UUID                NOT NULL REFERENCES Events(event_id) ON DELETE CASCADE,
     task_id       UUID,                           -- may outlive the task (delete)
-    change_type   VARCHAR(10)         NOT NULL CHECK (change_type IN ('edit', 'delete')),
+    change_type   VARCHAR(10)         NOT NULL,   -- free label: create|edit|delete|ungroup|batch
     label         TEXT,                           -- human summary for the undo button
-    snapshot      JSONB               NOT NULL,   -- edit: {fields:{...old}}  delete: {task:{...}, assignees:[...]}
+    snapshot      JSONB               NOT NULL,   -- {created?,deleted?,edited?,ungrouped?} per operation
     actor_user_id UUID,
     created_at    TIMESTAMP           NOT NULL DEFAULT NOW()
 );

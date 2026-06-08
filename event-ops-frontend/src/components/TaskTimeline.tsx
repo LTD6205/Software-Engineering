@@ -54,6 +54,8 @@ interface Props {
   onResetFilters: () => void
   onNewTask: (startISO?: string) => void
   onReschedule: (taskId: string, startISO: string, deadlineISO: string) => void
+  onBatchDelete: (ids: string[]) => void
+  onBatchUngroup: (ids: string[]) => void
   onNotice?: (message: string) => void
 }
 
@@ -87,6 +89,22 @@ export default function TaskTimeline(props: Props) {
 
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; task: Task | null; time?: number } | null>(null)
+  // Ctrl/Cmd-click multi-select: a set of task ids the manager can act on in
+  // batch (right-click → Delete / Ungroup selected). A plain click clears it.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const onBlockClick = (taskId: string, e: React.MouseEvent) => {
+    if ((e.ctrlKey || e.metaKey) && canManage) {
+      setSelected(prev => {
+        const n = new Set(prev)
+        if (n.has(taskId)) n.delete(taskId); else n.add(taskId)
+        return n
+      })
+    } else {
+      setSelected(new Set())
+      const tk = tasks.find(x2 => x2.task_id === taskId)
+      if (tk) setEditTask(tk)
+    }
+  }
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropKey, setDropKey] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -404,7 +422,7 @@ export default function TaskTimeline(props: Props) {
         draggable={canManage}
         onDragStart={e => { if (canManage) { setDragId(tk.task_id); dragInfo.current = { taskId: tk.task_id, offsetX: e.nativeEvent.offsetX, start: b.start, end: b.end }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', tk.task_id) } }}
         onDragEnd={() => { setDragId(null); setDropKey(null); dragInfo.current = null }}
-        onClick={() => setEditTask(tk)}
+        onClick={e => onBlockClick(tk.task_id, e)}
         title={`${tk.task_name}\n${pLabel} · ${stamp(b.start)} → ${stamp(b.end)}`}
         style={{
           // The coloured bar is proportional to the duration (so it stretches on
@@ -415,7 +433,10 @@ export default function TaskTimeline(props: Props) {
           background: completed ? 'var(--bg-hover)' : `${pColor}26`,
           border: `1.5px solid ${dropKey === tk.task_id ? 'var(--text-primary)' : completed ? 'var(--border)' : pColor}`,
           opacity: completed ? 0.55 : 1,
-          boxShadow: overdue ? '0 0 12px rgba(239,68,68,0.45)' : undefined,
+          boxShadow: [
+            selected.has(tk.task_id) ? '0 0 0 2px var(--accent-purple)' : '',
+            overdue ? '0 0 12px rgba(239,68,68,0.45)' : '',
+          ].filter(Boolean).join(', ') || undefined,
           overflow: 'visible',
         }}>
         <div style={{
@@ -598,11 +619,12 @@ export default function TaskTimeline(props: Props) {
                       draggable={canManage}
                       onDragStart={e => { if (canManage) { setDragId(tk.task_id); e.dataTransfer.setData('text/plain', tk.task_id) } }}
                       onDragEnd={() => setDragId(null)}
-                      onClick={() => setEditTask(tk)}
+                      onClick={e => onBlockClick(tk.task_id, e)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '6px', height: ROW_H, minWidth: '150px', padding: '0 10px',
                         borderRadius: '8px', cursor: canManage ? 'grab' : 'pointer',
                         background: `${color}26`, border: `1.5px solid ${color}`, fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)',
+                        boxShadow: selected.has(tk.task_id) ? '0 0 0 2px var(--accent-purple)' : undefined,
                       }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: color }} />
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tk.task_name}</span>
@@ -624,6 +646,13 @@ export default function TaskTimeline(props: Props) {
             background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: '10px',
             boxShadow: '0 12px 30px rgba(0,0,0,0.4)', padding: '6px', minWidth: '160px',
           }}>
+            {canManage && selected.size > 0 && (
+              <>
+                {menuItem(`${t('Delete selected', 'Xóa mục đã chọn')} (${selected.size})`, <Trash2 size={14} />, () => { props.onBatchDelete([...selected]); setSelected(new Set()); setMenu(null) }, 'var(--accent-red)')}
+                {menuItem(`${t('Ungroup selected', 'Tách nhóm đã chọn')} (${selected.size})`, <Unlink size={14} />, () => { props.onBatchUngroup([...selected]); setSelected(new Set()); setMenu(null) })}
+                <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }} />
+              </>
+            )}
             {menu.task ? (
               <>
                 {menuItem(t('Edit', 'Sửa'), <Pencil size={14} />, () => { setEditTask(menu.task); setMenu(null) })}

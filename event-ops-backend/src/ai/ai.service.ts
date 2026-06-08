@@ -12,7 +12,7 @@ import { Repository } from 'typeorm';
 import { AiRequest } from '../entities/ai-request.entity';
 import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
-import { TasksService } from '../tasks/tasks.service';
+import { TasksService, UndoOp } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
 import { randomBytes } from 'crypto';
 import {
@@ -882,6 +882,10 @@ export class AiService {
     // New tasks tagged with a `group` title, collected as creates land and
     // linked into one task group after the loop.
     const createdGroups: { taskId: string; title: string }[] = [];
+    // Collect every task change this command makes so the WHOLE command is one
+    // undoable operation ("create 10 tasks → undo → empty"; "delete a bunch →
+    // undo → restored"). Recorded once after the loop.
+    const undoOp = this.tasksService.newUndoOp();
     for (const item of actions) {
       if (
         !isActionAllowedForRole(
@@ -909,6 +913,7 @@ export class AiService {
         groupByTitle,
         createdGroups,
         viewableEvents,
+        undoOp,
       );
     }
     // Link newly-created tasks that share a group title. Reuse an existing event
@@ -958,6 +963,10 @@ export class AiService {
         res.rejected.push({ ref: label, reason: this.reason(e) });
       }
     }
+    // Record the whole command as ONE undoable operation (one undo reverses it).
+    if (defaultEventId) {
+      await this.tasksService.recordOp(defaultEventId, undoOp, undefined, actor.sub);
+    }
     return res;
   }
 
@@ -973,6 +982,7 @@ export class AiService {
     groupByTitle: Map<string, string>,
     createdGroups: { taskId: string; title: string }[],
     viewableEvents: { event_id: string; event_name: string }[],
+    undoOp: UndoOp,
   ): Promise<void> {
     switch (item.action) {
       case 'create': {
@@ -983,21 +993,39 @@ export class AiService {
         // Every AI task gets a real [start_time, deadline] window so it renders as
         // a draggable block. A task with only a deadline collapses to zero width on
         // the timeline, and the first drag (start === deadline) trips the
-        // tasks_time_check (deadline > start_time) DB constraint. Honour a
-        // model-supplied start_time; otherwise default to a one-hour lead-in ending
-        // at the deadline, clamped to "now" so it isn't rejected as a past time.
-        const deadline = AiService.parseDeadline(item.deadline);
+        // tasks_time_check (deadline > start_time) DB constraint.
+        //
+        // The window is also slid forward so it never starts in the past. When a
+        // plan is for "today", the model often spreads tasks across the day and
+        // the ones earlier than the current clock time would otherwise be rejected
+        // by assertNotInPast — so only one task survives. Instead, preserve each
+        // task's intended length and shift it to begin at "now".
+        const HOUR = 60 * 60 * 1000;
+        const now = Date.now();
+        let deadline = AiService.parseDeadline(item.deadline);
         let startTime = AiService.parseDeadline(item.start_time);
-        if (
-          deadline &&
-          (!startTime || startTime.getTime() >= deadline.getTime())
-        ) {
-          const HOUR = 60 * 60 * 1000;
-          const lead = Math.max(deadline.getTime() - HOUR, Date.now());
-          startTime =
-            lead < deadline.getTime()
-              ? new Date(lead)
-              : new Date(deadline.getTime() - 60 * 1000);
+        if (deadline) {
+          // The task's intended length: the model's [start, deadline] span when
+          // both are given and valid, otherwise a one-hour default.
+          const span =
+            startTime && startTime.getTime() < deadline.getTime()
+              ? deadline.getTime() - startTime.getTime()
+              : HOUR;
+          if (deadline.getTime() <= now) {
+            // Whole window is in the past — slide it forward to start now,
+            // keeping its length, so the task is created rather than rejected.
+            startTime = new Date(now);
+            deadline = new Date(now + span);
+          } else if (
+            !startTime ||
+            startTime.getTime() >= deadline.getTime() ||
+            startTime.getTime() < now
+          ) {
+            // Deadline is in the future, but the start is missing, after the
+            // deadline, or in the past — pull it to the later of (deadline - span)
+            // and now, so the lead-in never sits in the past.
+            startTime = new Date(Math.max(deadline.getTime() - span, now));
+          }
         }
         try {
           task = await this.tasksService.create(
@@ -1011,6 +1039,7 @@ export class AiService {
               deadline,
             },
             actor,
+            { undoOp },
           );
         } catch (e) {
           // A disallowed create (deadline outside the event window or in the
@@ -1078,6 +1107,7 @@ export class AiService {
             target.task_id,
             patch,
             actor,
+            { undoOp },
           );
           await this.aiTaskMapRepo.save({
             request_id: aiRequestId,
@@ -1147,7 +1177,7 @@ export class AiService {
           return;
         }
         try {
-          await this.tasksService.remove(t.task_id, actor);
+          await this.tasksService.remove(t.task_id, actor, { undoOp });
           res.tasks_deleted.push({
             task_id: t.task_id,
             task_name: t.task_name,
@@ -1612,6 +1642,7 @@ export class AiService {
     let windowInfo = `DATE GUIDANCE:
 - Today (now, ISO 8601) is ${new Date().toISOString()}.
 - Never output a task start_time or deadline in the past.
+- When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
 - Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
 - For "create_event": the "end_time" MUST be at least one day from now; the "start_time" may be earlier (even in the past).`;
     if (eventId) {
@@ -1628,7 +1659,10 @@ export class AiService {
 - Give every task BOTH a "start_time" and a "deadline": both MUST sit inside this
   window, with the start_time strictly BEFORE the deadline (a sensible duration,
   e.g. about an hour), so the task has a real length on the timeline.
-- Spread multiple tasks across times INSIDE this window; do not exceed it.`;
+- Spread multiple tasks across times INSIDE this window; do not exceed it.
+- When the user says "today" (or a time of day that has already passed), start
+  from the CURRENT TIME and lay the tasks out one after another AFTER now — do not
+  schedule them in the morning of a day that is already partly over.`;
     }
 
     // The advertised action catalog is filtered to the actor's role so the model

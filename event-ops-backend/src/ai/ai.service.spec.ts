@@ -32,6 +32,14 @@ function build(role = 'manager') {
     undoLastChange: jest
       .fn()
       .mockResolvedValue({ undone: { type: 'edit', label: 'A · name' } }),
+    // Undo-batch helpers the AI uses to make one command a single undo op.
+    newUndoOp: jest.fn(() => ({
+      created: [],
+      deleted: [],
+      edited: [],
+      ungrouped: [],
+    })),
+    recordOp: jest.fn().mockResolvedValue(undefined),
     merge: jest.fn().mockResolvedValue({ group_id: 'g1' }),
     addToGroup: jest.fn().mockResolvedValue(undefined),
     ungroup: jest.fn().mockResolvedValue(undefined),
@@ -207,6 +215,45 @@ describe('AiService.processCommand', () => {
     expect((arg.start_time as Date).toISOString()).toBe(
       '2030-01-01T08:00:00.000Z',
     );
+  });
+
+  it('slides a past task window forward to start now (keeping its length) so a plan for "today" is not rejected', async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    // Model schedules a 2-hour task entirely in the past — what happens when a
+    // "today" plan lays a morning task out in the afternoon. It must NOT be left
+    // in the past (assertNotInPast would reject it); the window is moved to begin
+    // at "now" with its 2-hour length preserved.
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Buy cake',
+            priority: 'medium',
+            assigned_to: '',
+            start_time: '2020-01-01T08:00:00Z',
+            deadline: '2020-01-01T10:00:00Z',
+          },
+        ]),
+      ),
+    );
+    const before = Date.now();
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'buy a cake today',
+    });
+    const after = Date.now();
+    const arg = tasksService.create.mock.calls[0][0] as {
+      start_time?: Date;
+      deadline?: Date;
+    };
+    const start = (arg.start_time as Date).getTime();
+    const end = (arg.deadline as Date).getTime();
+    // Starts at "now" (within the call window) — never in the past.
+    expect(start).toBeGreaterThanOrEqual(before);
+    expect(start).toBeLessThanOrEqual(after);
+    // The model's 2-hour duration is preserved.
+    expect(end - start).toBe(2 * 60 * 60 * 1000);
   });
 
   it('asks the provider for a strict JSON object (response_format)', async () => {
@@ -455,6 +502,7 @@ describe('AiService.processCommand', () => {
         priority_source: 'ai',
       }),
       ACTOR,
+      expect.objectContaining({ undoOp: expect.anything() }),
     );
     expect(aiRequestRepo.update).toHaveBeenCalledWith(
       'req1',
@@ -577,6 +625,7 @@ describe('AiService.processCommand', () => {
       'tk9',
       expect.objectContaining({ priority_label: 'high', priority_score: 90 }),
       ACTOR,
+      expect.objectContaining({ undoOp: expect.anything() }),
     );
     // The new deadline is a real Date, not an "Invalid Date".
     const patch = tasksService.update.mock.calls[0][1];
@@ -754,6 +803,7 @@ describe('AiService.processCommand', () => {
     expect(tasksService.remove).toHaveBeenCalledWith(
       't1',
       expect.objectContaining({ sub: 'u1' }),
+      expect.objectContaining({ undoOp: expect.anything() }),
     );
     expect(r.tasks_deleted).toEqual([{ task_id: 't1', task_name: 'A' }]);
     expect(r.unresolved).toContain('ghost');
