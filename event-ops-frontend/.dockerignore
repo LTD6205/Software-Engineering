@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.*
+!.env.local.example
+*.log
+e2e
+test-results
+playwright-report
+coverage
+.git
+Dockerfile
+.dockerignore
