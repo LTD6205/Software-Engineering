@@ -43,6 +43,8 @@ import {
 import { isActionAllowedForRole, AI_ACTION_ROLES } from './ai.authz';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
+import { fmtVN, parseDeadline, fitWindow } from './ai.time';
+import { extractJson, normalisePriority, priorityScore } from './ai.parse';
 
 type Priority = 'low' | 'medium' | 'high';
 
@@ -169,107 +171,6 @@ export class AiService {
     this.recentCalls.set(userId, calls);
   }
 
-  // Pull the JSON payload out of a model reply. Models sometimes wrap the JSON
-  // in a ```json fence or add a sentence of prose despite the "JSON only"
-  // instruction; strip a surrounding code fence and, failing that, slice from
-  // the first opening bracket to the last closing one so JSON.parse succeeds.
-  private static extractJson(raw: string): string {
-    let s = raw.trim();
-    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-    if (fence) s = fence[1].trim();
-    if (s[0] !== '{' && s[0] !== '[') {
-      const starts = [s.indexOf('{'), s.indexOf('[')].filter((i) => i >= 0);
-      const start = starts.length ? Math.min(...starts) : -1;
-      const end = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
-      if (start >= 0 && end > start) s = s.slice(start, end + 1);
-    }
-    return s;
-  }
-
-  private static priorityScore(p: Priority): number {
-    return p === 'high' ? 90 : p === 'medium' ? 50 : 10;
-  }
-
-  private static normalisePriority(p: unknown): Priority {
-    return p === 'high' || p === 'low' ? p : 'medium';
-  }
-
-  // This demo runs in Vietnam time (ICT, UTC+7). All AI-facing times are treated
-  // as Vietnam local: the model is shown "now"/windows in +07:00 and emits bare
-  // wall-clock times, which we convert back to a real UTC instant on the way in.
-  private static readonly VN_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-  // Format an instant as Vietnam local time for the prompt, e.g.
-  // "2026-06-10T20:00:00+07:00". Display only — never stored.
-  private static fmtVN(value: Date | string | null | undefined): string {
-    if (!value) return 'unspecified';
-    const t = new Date(value).getTime();
-    if (isNaN(t)) return 'unspecified';
-    return new Date(t + AiService.VN_OFFSET_MS)
-      .toISOString()
-      .replace(/\.\d{3}Z$/, '+07:00');
-  }
-
-  // Parse a model time string into a UTC Date. A bare wall-clock the model emits
-  // (e.g. "2026-06-10T20:00:00", no timezone) is interpreted as Vietnam local
-  // (UTC+7) — matching what the user means and what the browser stores from the
-  // manual UI, so "8h tối" persists as 13:00Z and renders back as 20:00. An
-  // explicit Z/offset is honoured as-is. Anything unparseable returns undefined
-  // so an "Invalid Date" is never persisted.
-  private static parseDeadline(value: unknown): Date | undefined {
-    if (typeof value !== 'string' || !value.trim()) return undefined;
-    let s = value.trim();
-    const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s);
-    if (!hasTz) {
-      if (!s.includes('T')) s += 'T00:00:00'; // date-only → midnight VN
-      s += '+07:00';
-    }
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? undefined : d;
-  }
-
-  private static readonly MIN_MS = 60 * 1000;
-  private static readonly HOUR_MS = 60 * 60 * 1000;
-
-  // Fit an AI task's [start, deadline] into [max(now, eventStart) .. eventEnd],
-  // preserving its intended length where the window allows. Guarantees the result
-  // never starts in the past and never overflows the event window — so a plan for
-  // a SHORT event (e.g. one day) is created instead of being rejected by
-  // TasksService (assertNotInPast / assertWithinEventWindow, REQ-19). When the
-  // model gives no deadline the value is returned unchanged. With no window it
-  // degrades to the past-only slide-forward behaviour.
-  private static fitWindow(
-    startTime: Date | undefined,
-    deadline: Date | undefined,
-    now: number,
-    win?: { start: number; end: number },
-  ): { startTime?: Date; deadline?: Date } {
-    if (!deadline) return { startTime, deadline };
-    const { MIN_MS: MIN, HOUR_MS: HOUR } = AiService;
-    // The task's intended length: the model's [start, deadline] span when both
-    // are given and valid, otherwise a one-hour default.
-    const span =
-      startTime && startTime.getTime() < deadline.getTime()
-        ? deadline.getTime() - startTime.getTime()
-        : HOUR;
-    const winStart = win ? Math.max(now, win.start) : now;
-    const winEnd = win ? win.end : Number.POSITIVE_INFINITY;
-    // The longest length that still fits inside the window; keep at least a
-    // minute so start stays strictly before the deadline.
-    let effSpan = span;
-    if (Number.isFinite(winEnd)) {
-      const room = winEnd - winStart;
-      effSpan = room > MIN ? Math.min(span, room) : MIN;
-    }
-    // Anchor on the model's deadline, then pull the window inside [winStart, winEnd].
-    let dl = Math.min(deadline.getTime(), winEnd);
-    if (dl < winStart + effSpan) dl = winStart + effSpan;
-    let st = dl - effSpan;
-    if (st < winStart) st = winStart;
-    if (dl - st < MIN) dl = st + MIN;
-    return { startTime: new Date(st), deadline: new Date(dl) };
-  }
-
   // Runtime validation of the model's JSON array of actions. Unknown/missing
   // `action` defaults to 'create' (backward compatible with the old
   // array-of-tasks format). Malformed items (e.g. a create with no name, or an
@@ -352,7 +253,7 @@ export class AiService {
           task_ref: ref,
           ...(name ? { task_name: name } : {}),
           ...(item.priority !== undefined
-            ? { priority: AiService.normalisePriority(item.priority) }
+            ? { priority: normalisePriority(item.priority) }
             : {}),
           ...(startTime ? { start_time: startTime } : {}),
           ...(typeof item.deadline === 'string'
@@ -532,7 +433,7 @@ export class AiService {
         actions.push({
           action: 'create',
           task_name: name,
-          priority: AiService.normalisePriority(item.priority),
+          priority: normalisePriority(item.priority),
           assigned_to: assignedTo,
           ...(startTime ? { start_time: startTime } : {}),
           deadline: typeof item.deadline === 'string' ? item.deadline : '',
@@ -805,10 +706,10 @@ export class AiService {
       completed_count?: number;
     }>,
   ): Promise<string> {
-    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
+    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
     const lines: string[] = [];
     lines.push(
-      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${AiService.fmtVN(new Date())}.`,
+      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${fmtVN(new Date())}.`,
     );
 
     // Up to 20 viewable events, nearest end_time first; note any overflow.
@@ -1087,9 +988,9 @@ export class AiService {
         // overflows the event window (assertWithinEventWindow, REQ-19). Without
         // this the model's out-of-window tasks would be rejected one by one and
         // only a couple would survive.
-        const { startTime, deadline } = AiService.fitWindow(
-          AiService.parseDeadline(item.start_time),
-          AiService.parseDeadline(item.deadline),
+        const { startTime, deadline } = fitWindow(
+          parseDeadline(item.start_time),
+          parseDeadline(item.deadline),
           Date.now(),
           eventWindow,
         );
@@ -1099,7 +1000,7 @@ export class AiService {
               event_id: eventId,
               task_name: item.task_name,
               priority_label: item.priority,
-              priority_score: AiService.priorityScore(item.priority),
+              priority_score: priorityScore(item.priority),
               priority_source: 'ai',
               ...(startTime ? { start_time: startTime } : {}),
               deadline,
@@ -1156,14 +1057,14 @@ export class AiService {
         if (item.task_name) patch.task_name = item.task_name;
         if (item.priority) {
           patch.priority_label = item.priority;
-          patch.priority_score = AiService.priorityScore(item.priority);
+          patch.priority_score = priorityScore(item.priority);
         }
         if (item.start_time !== undefined) {
-          const s = AiService.parseDeadline(item.start_time);
+          const s = parseDeadline(item.start_time);
           if (s) patch.start_time = s;
         }
         if (item.deadline !== undefined) {
-          const d = AiService.parseDeadline(item.deadline);
+          const d = parseDeadline(item.deadline);
           if (d) patch.deadline = d;
         }
         if (item.status) patch.status = item.status;
@@ -1347,8 +1248,8 @@ export class AiService {
         // Validate the model's dates are parseable before persisting, mirroring
         // the task path's parseDeadline — an Invalid Date would slip past
         // EventsService.assertValidDateRange (NaN comparisons are false).
-        const start = AiService.parseDeadline(item.start_time);
-        const end = AiService.parseDeadline(item.end_time);
+        const start = parseDeadline(item.start_time);
+        const end = parseDeadline(item.end_time);
         if (!start || !end) {
           res.rejected.push({
             ref: item.event_name,
@@ -1402,8 +1303,8 @@ export class AiService {
           // Date change → updateDates (shifts the event's tasks along). The user
           // may give only one side ("move the start to June 10"); fill the other
           // from the current event. Times are Vietnam-local (parseDeadline → UTC).
-          const newStart = AiService.parseDeadline(item.start_time);
-          const newEnd = AiService.parseDeadline(item.end_time);
+          const newStart = parseDeadline(item.start_time);
+          const newEnd = parseDeadline(item.end_time);
           if (newStart || newEnd) {
             const cur = (await this.events.findOneForViewer(id, actor)) as {
               start_time?: string | Date;
@@ -1735,9 +1636,9 @@ export class AiService {
     // window and not in the past — otherwise dates like "next Friday" get
     // rejected. Only meaningful when a specific event is in scope. The actor
     // already passed the view/manage check above.
-    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
+    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
     let windowInfo = `DATE GUIDANCE:
-- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
+- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
 - Never output a task start_time or deadline in the past.
 - When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
 - Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
@@ -1745,7 +1646,7 @@ export class AiService {
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
       windowInfo = `HARD DATE CONSTRAINT — read carefully:
-- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
+- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
 - This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (Vietnam time, UTC+7).
 - EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
   must not be in the past. A date outside this window will be REJECTED.
@@ -1828,7 +1729,7 @@ RULES:
       let parsed: unknown;
 
       try {
-        parsed = JSON.parse(AiService.extractJson(raw));
+        parsed = JSON.parse(extractJson(raw));
       } catch {
         // Don't echo the raw model output back to the client.
         throw new BadRequestException(
