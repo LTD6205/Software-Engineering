@@ -194,6 +194,15 @@ export type AiAction =
   | RejectReassignAction
   | CancelReassignAction;
 
+// A task as listed for the model (and for resolving a task_ref to a real row).
+// `assignees` lets the model scope commands like "reassign all of Bob's tasks"
+// to the right tasks — without it, it can't tell whose tasks are whose.
+export interface TaskRef {
+  task_id: string;
+  task_name: string;
+  assignees?: { user_id: string; name: string }[];
+}
+
 export interface Actor {
   sub: string;
   role: string;

@@ -14,9 +14,9 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService, UndoOp } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
-import { randomBytes } from 'crypto';
 import {
   Actor,
+  TaskRef,
   CommandOptions,
   ExecResult,
   AiActionKind,
@@ -52,15 +52,12 @@ import { extractJson, priorityScore } from './ai.parse';
 import { validateActions } from './ai.validate';
 import { buildActionCatalog } from './ai.catalog';
 import { buildDateGuidance, buildSystemPrompt } from './ai.prompt';
-
-// A task as listed for the model (and for resolving a task_ref to a real row).
-// `assignees` lets the model scope commands like "reassign all of Bob's tasks"
-// to the right tasks — without it, it can't tell whose tasks are whose.
-interface TaskRef {
-  task_id: string;
-  task_name: string;
-  assignees?: { user_id: string; name: string }[];
-}
+import {
+  resolveTaskRef,
+  resolveEventRef,
+  resolveGroupRef,
+  tempPassword,
+} from './ai.resolve';
 
 // The provider is any OpenAI-compatible chat-completions API — selected via
 // AI_BASE_URL / AI_MODEL / AI_API_KEY in the environment, not hard-coded to one
@@ -111,60 +108,6 @@ export class AiService {
     }
     calls.push(now);
     this.recentCalls.set(userId, calls);
-  }
-
-  // Resolve a model-supplied task_ref to a real task in this event: an exact id
-  // match first, else a case-insensitive name match. Null when no match.
-  private resolveTaskRef(ref: string, tasks: TaskRef[]): TaskRef | null {
-    const needle = ref.trim().toLowerCase();
-    return (
-      tasks.find((t) => t.task_id.toLowerCase() === needle) ??
-      tasks.find((t) => t.task_name.trim().toLowerCase() === needle) ??
-      null
-    );
-  }
-
-  // Resolve a model-supplied event_ref to a real event id the actor can see: an
-  // exact id match first, else a case-insensitive event-name match. When no ref
-  // is given, fall back to the request's default event. Null when no match.
-  private resolveEventRef(
-    ref: string | undefined,
-    events: { event_id: string; event_name: string }[],
-    defaultEventId?: string,
-  ): string | null {
-    if (!ref) return defaultEventId ?? null;
-    const needle = ref.trim().toLowerCase();
-    return (
-      events.find((e) => e.event_id.toLowerCase() === needle)?.event_id ??
-      events.find((e) => e.event_name.trim().toLowerCase() === needle)
-        ?.event_id ??
-      null
-    );
-  }
-
-  // Resolve a model-supplied group_ref to a real group id in this event: an
-  // exact id match first, else a case-insensitive group-title match. Null when
-  // no match.
-  private resolveGroupRef(
-    ref: string,
-    groupIds: Set<string>,
-    groupByTitle: Map<string, string>,
-  ): string | null {
-    const needle = ref.trim().toLowerCase();
-    if (groupIds.has(ref)) return ref;
-    return groupByTitle.get(needle) ?? null;
-  }
-
-  // A non-trivial fallback password for an AI-created user when the command did
-  // not supply one. Deliberately avoids Math.random: a Date.now()-derived suffix
-  // keeps it reproducible-by-time and easy to reason about in tests/logs while
-  // still satisfying the policy (mixed case, digit, symbol, length). The new
-  // account is expected to have its password reset on first use.
-  private tempPassword(): string {
-    // Cryptographically random so the initial password is unguessable
-    // regardless of creation time; base64url + a fixed suffix satisfies any
-    // complexity policy. The account is expected to reset it on first use.
-    return `Tmp_${randomBytes(16).toString('base64url')}A1`;
   }
 
   // Turn a thrown service error into a short, client-safe reason string.
@@ -283,11 +226,11 @@ export class AiService {
     groupByTitle: Map<string, string>,
   ): { kind: string; description: string }[] {
     const taskName = (ref: string): string => {
-      const t = this.resolveTaskRef(ref, currentTasks);
+      const t = resolveTaskRef(ref, currentTasks);
       return t ? t.task_name : ref;
     };
     const groupName = (ref: string): string => {
-      const gid = this.resolveGroupRef(ref, groupIds, groupByTitle);
+      const gid = resolveGroupRef(ref, groupIds, groupByTitle);
       if (!gid) return ref;
       for (const [title, id] of groupByTitle) if (id === gid) return title;
       return ref;
@@ -654,7 +597,7 @@ export class AiService {
       }
 
       case 'update': {
-        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        const target = resolveTaskRef(item.task_ref, currentTasks);
         if (!target) {
           res.unresolved.push(item.task_ref);
           return;
@@ -696,7 +639,7 @@ export class AiService {
       }
 
       case 'reassign': {
-        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        const target = resolveTaskRef(item.task_ref, currentTasks);
         if (!target) {
           res.unresolved.push(item.task_ref);
           return;
@@ -729,7 +672,7 @@ export class AiService {
       }
 
       case 'unassign': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -744,7 +687,7 @@ export class AiService {
       }
 
       case 'delete': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -782,8 +725,8 @@ export class AiService {
       }
 
       case 'merge': {
-        const s = this.resolveTaskRef(item.task_ref, currentTasks);
-        const tg = this.resolveTaskRef(item.target_ref, currentTasks);
+        const s = resolveTaskRef(item.task_ref, currentTasks);
+        const tg = resolveTaskRef(item.target_ref, currentTasks);
         if (!s || !tg) {
           res.unresolved.push(!s ? item.task_ref : item.target_ref);
           return;
@@ -801,8 +744,8 @@ export class AiService {
       }
 
       case 'add_to_group': {
-        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const gid = resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!gid || !t) {
           res.unresolved.push(!gid ? item.group_ref : item.task_ref);
           return;
@@ -817,7 +760,7 @@ export class AiService {
       }
 
       case 'rename_group': {
-        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        const gid = resolveGroupRef(item.group_ref, groupIds, groupByTitle);
         if (!gid) {
           res.unresolved.push(item.group_ref);
           return;
@@ -836,7 +779,7 @@ export class AiService {
       }
 
       case 'ungroup': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -894,7 +837,7 @@ export class AiService {
       }
 
       case 'update_event': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -946,7 +889,7 @@ export class AiService {
       }
 
       case 'delete_event': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -966,7 +909,7 @@ export class AiService {
       }
 
       case 'add_event_manager': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -992,7 +935,7 @@ export class AiService {
       }
 
       case 'remove_event_manager': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -1032,7 +975,7 @@ export class AiService {
               name: item.name,
               email: item.email,
               phone: item.phone ?? '',
-              password: item.password ?? this.tempPassword(),
+              password: item.password ?? tempPassword(),
               role: item.role,
             },
             actor,
