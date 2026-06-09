@@ -25,9 +25,40 @@ export type AiActionKind =
   | 'reject_reassign'
   | 'cancel_reassign';
 
+// Core task action shapes. For backward compatibility an item with no `action`
+// field is treated as a `create` (the original array-of-tasks behaviour).
+export interface CreateAction {
+  action: 'create';
+  task_name: string;
+  priority: Priority;
+  assigned_to: string;
+  // The AI chooses each task's length: a start_time and a deadline (start before
+  // deadline). start_time is optional on the wire — executeActions fills in a
+  // sensible default window when the model omits it.
+  start_time?: string;
+  deadline: string;
+  // Optional group title: new tasks sharing the same group are linked into one
+  // task group after the action loop (see executeActions).
+  group?: string;
+}
+export interface UpdateAction {
+  action: 'update';
+  task_ref: string; // existing task id or (case-insensitive) name
+  task_name?: string; // rename the task
+  priority?: Priority;
+  start_time?: string; // move the task's start time
+  deadline?: string;
+  status?: 'in_progress' | 'completed' | 'overdue';
+}
+export interface ReassignAction {
+  action: 'reassign';
+  task_ref: string;
+  assigned_to: string;
+}
+
 // Task action shapes the model may emit beyond create/update/reassign. Each
-// routes to an existing TasksService method; the AiAction union (in
-// ai.service.ts) includes these.
+// routes to an existing TasksService method; the AiAction union (below) includes
+// these.
 export interface UnassignAction {
   action: 'unassign';
   task_ref: string;
@@ -136,6 +167,32 @@ export interface CancelReassignAction {
   action: 'cancel_reassign';
   staff_ref: string;
 }
+
+// The full set of actions the model may emit. An item with no `action` field is
+// treated as a `create` (see validateActions in ai.validate.ts).
+export type AiAction =
+  | CreateAction
+  | UpdateAction
+  | ReassignAction
+  | UnassignAction
+  | DeleteAction
+  | UndoAction
+  | MergeAction
+  | AddToGroupAction
+  | RenameGroupAction
+  | UngroupAction
+  | CreateEventAction
+  | UpdateEventAction
+  | DeleteEventAction
+  | AddEventManagerAction
+  | RemoveEventManagerAction
+  | CreateUserAction
+  | UpdateUserAction
+  | ResetPasswordAction
+  | RequestReassignAction
+  | AcceptReassignAction
+  | RejectReassignAction
+  | CancelReassignAction;
 
 export interface Actor {
   sub: string;
