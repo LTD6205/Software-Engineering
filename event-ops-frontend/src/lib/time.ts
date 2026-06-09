@@ -27,3 +27,27 @@ export function snapDateTimeLocal(v: string): string {
 export function snapMs(t: number): number {
   return Math.round(t / QUARTER_HOUR) * QUARTER_HOUR
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+// Format a stored timestamp as a local "YYYY-MM-DDTHH:mm" string for a
+// <input type="datetime-local">. Empty/invalid → ''.
+export function toLocalInputValue(value?: string | null): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+// Format a stored timestamp as a localized "day mon year" string. Empty → '—'.
+export function formatDate(
+  value: string | null | undefined,
+  lang: 'en' | 'vi',
+): string {
+  if (!value) return '—'
+  return new Date(value).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
