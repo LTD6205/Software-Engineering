@@ -386,10 +386,19 @@ function TasksContent() {
     try { await tasksApi.renameGroup(groupId, title); await reloadTasks() }
     catch (e) { showToast(tError(getErrorMessage(e, 'Could not rename the group / Không thể đổi tên nhóm'))) }
   }
-  // Manual priority override from a task's Edit panel (pins it to user-set).
+  // Priority change from a task's Edit panel. Picking 'Auto' hands the task back
+  // to the auto-prioritise system (source 'auto'); the backend re-buckets it to
+  // high/medium/low, so we reload to show the computed label. Picking a concrete
+  // level pins it to user-set so auto-recompute won't overwrite it.
   const handleEditPriority = async (taskId: string, label: string) => {
+    if (label === 'auto') {
+      setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_source: 'auto' } : t))
+      try { await tasksApi.update(taskId, { priority_source: 'auto' }); await reloadTasks() }
+      catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
+      return
+    }
     const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10
-    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score } : t))
+    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score, priority_source: 'user' } : t))
     try { await tasksApi.update(taskId, { priority_label: label, priority_score: score }) }
     catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
   }

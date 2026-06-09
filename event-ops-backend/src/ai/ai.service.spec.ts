@@ -555,6 +555,38 @@ describe('AiService.processCommand', () => {
     );
   });
 
+  it("never creates an AI task on 'auto' — a stray priority is coerced to a concrete label", async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Book venue',
+            // The model shouldn't emit 'auto', but if it does it must not slip
+            // through: AI tasks always carry a fixed priority, never the
+            // auto-prioritise source.
+            priority: 'auto',
+            assigned_to: '',
+            deadline: '2026-07-01T10:00:00',
+          },
+        ]),
+      ),
+    );
+
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'book a venue',
+    });
+
+    const created = tasksService.create.mock.calls[0][0] as {
+      priority_label: string;
+      priority_source: string;
+    };
+    expect(created.priority_source).toBe('ai');
+    expect(['low', 'medium', 'high']).toContain(created.priority_label);
+  });
+
   it('assigns the created task when the AI names a matching active user', async () => {
     const { service, tasksService, userRepo } = build();
     userRepo.findOne.mockResolvedValue({ user_id: 's5' });

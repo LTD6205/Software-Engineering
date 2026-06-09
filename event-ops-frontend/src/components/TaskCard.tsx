@@ -137,6 +137,9 @@ export default function TaskCard({ task, onStatusChange, isCreator, canManage, o
                 {canManage && onDeadlineChange && <Pencil size={10} style={{ opacity: 0.7 }} />}
               </span>
             )}
+            {task.priority_source === 'auto' && (
+              <span style={{ fontSize: '11px', color: 'var(--accent-blue)', fontWeight: 600 }}>{t('Auto', 'Tự động')}</span>
+            )}
             <StatusBadge status={task.priority_label} />
           </div>
         </div>

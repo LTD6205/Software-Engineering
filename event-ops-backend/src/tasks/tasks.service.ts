@@ -456,8 +456,14 @@ export class TasksService {
     }
 
     // A manual priority edit pins the task to 'user' so auto-recompute won't
-    // overwrite it (and fill in the matching score if not given).
-    if (data.priority_label !== undefined) {
+    // overwrite it (and fill in the matching score if not given). Setting the
+    // source straight to 'auto' (handing the task back to the auto-prioritise
+    // system) takes precedence — its label is then derived by the recompute
+    // below, so we ignore any label/score sent alongside it.
+    if (data.priority_source === 'auto') {
+      delete data.priority_label;
+      delete data.priority_score;
+    } else if (data.priority_label !== undefined) {
       data.priority_source = 'user';
       if (data.priority_score === undefined) {
         data.priority_score =
@@ -527,11 +533,14 @@ export class TasksService {
     }
     // Adjusting a task's timing — or reopening it — re-buckets the event's auto
     // priorities (a reopened overdue task was just slid to "now" above, and any
-    // status change should leave priorities current).
+    // status change should leave priorities current). Reverting a task to the
+    // 'auto' source also recomputes, so it picks up its timeline-derived label
+    // immediately instead of keeping the now-stale manual one.
     if (
       data.start_time !== undefined ||
       data.deadline !== undefined ||
-      data.status !== undefined
+      data.status !== undefined ||
+      data.priority_source === 'auto'
     ) {
       await this.recomputeAutoPriorities(old.event_id);
     }

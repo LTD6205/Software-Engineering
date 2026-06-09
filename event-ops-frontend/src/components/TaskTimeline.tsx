@@ -417,6 +417,14 @@ export default function TaskTimeline(props: Props) {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
             <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: completed ? 'line-through' : 'none' }}>{tk.task_name}</span>
+            {/* Auto-prioritised tasks show an "Auto" tag next to their resolved
+                High/Med/Low badge — the colour still conveys urgency. */}
+            {tk.priority_source === 'auto' && (
+              <span style={{
+                flexShrink: 0, fontSize: '9px', fontWeight: 800, letterSpacing: '0.03em', textTransform: 'uppercase',
+                padding: '1px 5px', borderRadius: '6px', background: 'rgba(59,130,246,0.16)', color: 'var(--accent-blue)',
+              }}>{t('Auto', 'Tự động')}</span>
+            )}
             <span style={{
               flexShrink: 0, fontSize: '9px', fontWeight: 800, letterSpacing: '0.03em', textTransform: 'uppercase',
               padding: '1px 5px', borderRadius: '6px', background: `${pColor}26`, color: pColor,
@@ -676,10 +684,13 @@ export default function TaskTimeline(props: Props) {
               {canManage && (
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    {t('Priority', 'Ưu tiên')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('auto unless changed', 'tự động trừ khi chỉnh')})</span>
+                    {t('Priority', 'Ưu tiên')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('Auto follows the timeline', 'Tự động theo tiến độ')})</span>
                   </label>
-                  <Dropdown fullWidth value={tk.priority_label} onChange={v => props.onEditPriority(tk.task_id, v)}
+                  {/* Value reflects the source: an 'auto' task shows "Auto" (the
+                      backend keeps re-bucketing it); choosing a level pins it. */}
+                  <Dropdown fullWidth value={tk.priority_source === 'auto' ? 'auto' : tk.priority_label} onChange={v => props.onEditPriority(tk.task_id, v)}
                     options={[
+                      { value: 'auto', label: t('Auto', 'Tự động'), color: 'var(--accent-blue)' },
                       { value: 'high', label: t('High', 'Cao'), color: 'var(--accent-red)' },
                       { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
                       { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },
