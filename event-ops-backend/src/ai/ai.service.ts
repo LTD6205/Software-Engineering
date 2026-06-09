@@ -51,6 +51,7 @@ import { fmtVN, parseDeadline, fitWindow } from './ai.time';
 import { extractJson, priorityScore } from './ai.parse';
 import { validateActions } from './ai.validate';
 import { buildActionCatalog } from './ai.catalog';
+import { buildDateGuidance, buildSystemPrompt } from './ai.prompt';
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 // `assignees` lets the model scope commands like "reassign all of Bob's tasks"
@@ -1241,75 +1242,23 @@ export class AiService {
     // window and not in the past — otherwise dates like "next Friday" get
     // rejected. Only meaningful when a specific event is in scope. The actor
     // already passed the view/manage check above.
-    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
-    let windowInfo = `DATE GUIDANCE:
-- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
-- Never output a task start_time or deadline in the past.
-- When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
-- Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
-- For "create_event": the "end_time" MUST be at least one day from now; the "start_time" may be earlier (even in the past).`;
+    // Tell the model the event's date window (and "now") via the date-guidance
+    // block, plus the role-filtered action catalog (the hard gate still
+    // re-checks each action in executeActions). Only fetch the event when one is
+    // in scope; the actor already passed the view/manage check above.
+    let eventWindow:
+      | { start: Date | string | null; end: Date | string | null }
+      | undefined;
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
-      windowInfo = `HARD DATE CONSTRAINT — read carefully:
-- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
-- This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (Vietnam time, UTC+7).
-- EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
-  must not be in the past. A date outside this window will be REJECTED.
-- NEVER output a deadline later than ${fmt(event.end_time)}. If the user asks for a
-  later date (e.g. "next Friday" that falls after the event end), use exactly
-  ${fmt(event.end_time)} instead. If they ask for an earlier/past date, use the
-  later of now and the event start.
-- Give every task BOTH a "start_time" and a "deadline": both MUST sit inside this
-  window, with the start_time strictly BEFORE the deadline (a sensible duration,
-  e.g. about an hour), so the task has a real length on the timeline.
-- Spread multiple tasks across times INSIDE this window; do not exceed it.
-- If the window is SHORT (e.g. a single day or a few hours), make the tasks
-  shorter (e.g. 30-60 minutes) and place them back-to-back so the WHOLE plan fits
-  before the event end. Divide the available time by the number of tasks rather
-  than giving each a full hour and running past the end.
-- When the user says "today" (or a time of day that has already passed), start
-  from the CURRENT TIME and lay the tasks out one after another AFTER now — do not
-  schedule them in the morning of a day that is already partly over.`;
+      eventWindow = { start: event.start_time, end: event.end_time };
     }
-
-    // The advertised action catalog is filtered to the actor's role so the model
-    // only ever sees shapes it is permitted to use (the hard gate still re-checks
-    // each action in executeActions).
-    const actionCatalog = buildActionCatalog(actor.role);
-
-    const systemPrompt = `You are an event operations partner for the role "${actor.role}".
-The user issues a natural-language command or question about events, tasks,
-groups, people, and (for some roles) accounts. Use the context below to answer
-questions, resolve references, and plan work.
-
-CONTEXT (everything you can see right now):
-${contextBlock}
-
-${windowInfo}
-
-You reply with a SINGLE JSON OBJECT — and NOTHING else (no markdown, no prose,
-no preamble). It MUST be exactly one of these three json shapes:
-
-1) ACTIONS to perform — "kind":"actions" with an "actions" array of action
-   objects: { "kind": "actions", "actions": [ <action>, <action>, ... ] }
-   Allowed action shapes for the "actions" array (for your role):
-${actionCatalog}
-
-2) A direct ANSWER to a question, answered ONLY from the context above:
-  { "kind": "answer", "answer": "..." }
-
-3) A CLARIFICATION request, ONLY when truly blocked and you cannot infer a sane default:
-  { "kind": "clarification", "question": "..." }
-
-RULES:
-- Reference existing tasks/events/groups/people by their exact name (or id) from the context.
-- For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
-- To change an EVENT's date(s), emit "update_event" with "start_time" and/or "end_time" (Vietnam time, YYYY-MM-DDTHH:mm:ss). Give only the side that changes; the event's tasks shift along automatically.
-- To undo the most recent change in the current event (an edit or a deletion), emit { "action": "undo" }. Use this for "undo", "revert that", "undo the last change", "put it back".
-- SCOPED BULK CHANGES: When a command targets "all of <person>'s tasks" (reassign, reschedule, etc.), act ONLY on tasks whose "assigned to:" in the context lists that person. Emit one action per such task by its exact name, and DO NOT touch tasks assigned to anyone else. If no task is assigned to that person, make no changes and say so (an answer) instead of guessing.
-- ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
-- GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions, each with a "start_time" and a "deadline" (start before deadline, a sensible duration) INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.
-- If a command is too vague to act on and a clarification would not help, return: { "error": "insufficient info", "missing": ["field1", "field2"] }.`;
+    const systemPrompt = buildSystemPrompt(
+      actor.role,
+      contextBlock,
+      buildDateGuidance(eventWindow),
+      buildActionCatalog(actor.role),
+    );
 
     const aiRequest = await this.aiRequestRepo.save({
       user_id: userId,
