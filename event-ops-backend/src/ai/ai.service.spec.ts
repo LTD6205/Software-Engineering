@@ -5,6 +5,7 @@
 } from '@nestjs/common';
 import axios from 'axios';
 import { AiService } from './ai.service';
+import { resolveEventRef } from './ai.resolve';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -1144,25 +1145,15 @@ describe('AiService.processCommand', () => {
   });
 
   it('resolveEventRef resolves by id and by case-insensitive name', () => {
-    const { service } = build();
-    const resolve = (
-      service as unknown as {
-        resolveEventRef: (
-          ref: string | undefined,
-          events: { event_id: string; event_name: string }[],
-          defaultEventId?: string,
-        ) => string | null;
-      }
-    ).resolveEventRef.bind(service);
     const events = [
       { event_id: 'e1', event_name: 'Spring Gala' },
       { event_id: 'e2', event_name: 'Summer Fest' },
     ];
-    expect(resolve('e2', events)).toBe('e2');
-    expect(resolve('spring gala', events)).toBe('e1');
-    expect(resolve('unknown', events)).toBeNull();
-    expect(resolve(undefined, events, 'e1')).toBe('e1');
-    expect(resolve(undefined, events)).toBeNull();
+    expect(resolveEventRef('e2', events)).toBe('e2');
+    expect(resolveEventRef('spring gala', events)).toBe('e1');
+    expect(resolveEventRef('unknown', events)).toBeNull();
+    expect(resolveEventRef(undefined, events, 'e1')).toBe('e1');
+    expect(resolveEventRef(undefined, events)).toBeNull();
   });
 
   it('create_event (organizer) calls events.create with created_by from JWT', async () => {
