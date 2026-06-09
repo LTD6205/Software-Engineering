@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Clock, Trash2, Users as UsersIcon, Unlink, Pencil, Check, X, Plus, Minus, Maximize2 } from 'lucide-react'
 import { Task, Event } from '@/lib/types'
-import { snapMs } from '@/lib/time'
+import { snapMs, formatDate } from '@/lib/time'
 import { useLang } from '@/context/LanguageContext'
 import Modal from './Modal'
 import Dropdown from './Dropdown'
@@ -336,8 +336,7 @@ export default function TaskTimeline(props: Props) {
     if (d.getHours() === 0 && d.getMinutes() === 0) return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' })
     return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: lang !== 'vi' })
   }
-  const fmtFull = (iso?: string | null) =>
-    !iso ? '—' : new Date(iso).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmtFull = (iso?: string | null) => formatDate(iso, lang)
   // ── Drag-and-drop, handled entirely at the canvas level by geometry so it's
   // reliable no matter which element the browser reports under the cursor (this
   // is why dragging one block onto ANOTHER always merges, even when they

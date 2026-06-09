@@ -20,6 +20,10 @@ import {
   CommandOptions,
   ExecResult,
   AiActionKind,
+  AiAction,
+  CreateAction,
+  UpdateAction,
+  ReassignAction,
   UnassignAction,
   DeleteAction,
   UndoAction,
@@ -43,71 +47,9 @@ import {
 import { isActionAllowedForRole, AI_ACTION_ROLES } from './ai.authz';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
-
-type Priority = 'low' | 'medium' | 'high';
-
-// The AI may now return a list of *actions*, not just new tasks, so a single
-// natural-language command can also reschedule, re-prioritise, rename, change
-// status, or reassign existing tasks ("push everything back two days", "move
-// Bob's tasks to Carol"). For backward compatibility an item with no `action`
-// field is treated as a `create` (the original array-of-tasks behaviour).
-//   create   — add a new task (task_name + optional priority/assignee/deadline)
-//   update   — change an existing task's name/priority/deadline/status
-//   reassign — replace an existing task's assignee
-// split_task / add_dependency are intentionally not supported yet (the latter
-// needs the currently-unused task_dependencies table).
-interface CreateAction {
-  action: 'create';
-  task_name: string;
-  priority: Priority;
-  assigned_to: string;
-  // The AI chooses each task's length: a start_time and a deadline (start before
-  // deadline). start_time is optional on the wire — executeActions fills in a
-  // sensible default window when the model omits it — but a real duration is what
-  // keeps the task draggable on the timeline.
-  start_time?: string;
-  deadline: string;
-  // Optional group title: new tasks sharing the same group are linked into one
-  // task group after the action loop (see executeActions).
-  group?: string;
-}
-interface UpdateAction {
-  action: 'update';
-  task_ref: string; // existing task id or (case-insensitive) name
-  task_name?: string; // rename the task
-  priority?: Priority;
-  start_time?: string; // move the task's start time
-  deadline?: string;
-  status?: 'in_progress' | 'completed' | 'overdue';
-}
-interface ReassignAction {
-  action: 'reassign';
-  task_ref: string;
-  assigned_to: string;
-}
-type AiAction =
-  | CreateAction
-  | UpdateAction
-  | ReassignAction
-  | UnassignAction
-  | DeleteAction
-  | UndoAction
-  | MergeAction
-  | AddToGroupAction
-  | RenameGroupAction
-  | UngroupAction
-  | CreateEventAction
-  | UpdateEventAction
-  | DeleteEventAction
-  | AddEventManagerAction
-  | RemoveEventManagerAction
-  | CreateUserAction
-  | UpdateUserAction
-  | ResetPasswordAction
-  | RequestReassignAction
-  | AcceptReassignAction
-  | RejectReassignAction
-  | CancelReassignAction;
+import { fmtVN, parseDeadline, fitWindow } from './ai.time';
+import { extractJson, priorityScore } from './ai.parse';
+import { validateActions } from './ai.validate';
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 // `assignees` lets the model scope commands like "reassign all of Bob's tasks"
@@ -167,387 +109,6 @@ export class AiService {
     }
     calls.push(now);
     this.recentCalls.set(userId, calls);
-  }
-
-  // Pull the JSON payload out of a model reply. Models sometimes wrap the JSON
-  // in a ```json fence or add a sentence of prose despite the "JSON only"
-  // instruction; strip a surrounding code fence and, failing that, slice from
-  // the first opening bracket to the last closing one so JSON.parse succeeds.
-  private static extractJson(raw: string): string {
-    let s = raw.trim();
-    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-    if (fence) s = fence[1].trim();
-    if (s[0] !== '{' && s[0] !== '[') {
-      const starts = [s.indexOf('{'), s.indexOf('[')].filter((i) => i >= 0);
-      const start = starts.length ? Math.min(...starts) : -1;
-      const end = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
-      if (start >= 0 && end > start) s = s.slice(start, end + 1);
-    }
-    return s;
-  }
-
-  private static priorityScore(p: Priority): number {
-    return p === 'high' ? 90 : p === 'medium' ? 50 : 10;
-  }
-
-  private static normalisePriority(p: unknown): Priority {
-    return p === 'high' || p === 'low' ? p : 'medium';
-  }
-
-  // This demo runs in Vietnam time (ICT, UTC+7). All AI-facing times are treated
-  // as Vietnam local: the model is shown "now"/windows in +07:00 and emits bare
-  // wall-clock times, which we convert back to a real UTC instant on the way in.
-  private static readonly VN_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-  // Format an instant as Vietnam local time for the prompt, e.g.
-  // "2026-06-10T20:00:00+07:00". Display only — never stored.
-  private static fmtVN(value: Date | string | null | undefined): string {
-    if (!value) return 'unspecified';
-    const t = new Date(value).getTime();
-    if (isNaN(t)) return 'unspecified';
-    return new Date(t + AiService.VN_OFFSET_MS)
-      .toISOString()
-      .replace(/\.\d{3}Z$/, '+07:00');
-  }
-
-  // Parse a model time string into a UTC Date. A bare wall-clock the model emits
-  // (e.g. "2026-06-10T20:00:00", no timezone) is interpreted as Vietnam local
-  // (UTC+7) — matching what the user means and what the browser stores from the
-  // manual UI, so "8h tối" persists as 13:00Z and renders back as 20:00. An
-  // explicit Z/offset is honoured as-is. Anything unparseable returns undefined
-  // so an "Invalid Date" is never persisted.
-  private static parseDeadline(value: unknown): Date | undefined {
-    if (typeof value !== 'string' || !value.trim()) return undefined;
-    let s = value.trim();
-    const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s);
-    if (!hasTz) {
-      if (!s.includes('T')) s += 'T00:00:00'; // date-only → midnight VN
-      s += '+07:00';
-    }
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? undefined : d;
-  }
-
-  private static readonly MIN_MS = 60 * 1000;
-  private static readonly HOUR_MS = 60 * 60 * 1000;
-
-  // Fit an AI task's [start, deadline] into [max(now, eventStart) .. eventEnd],
-  // preserving its intended length where the window allows. Guarantees the result
-  // never starts in the past and never overflows the event window — so a plan for
-  // a SHORT event (e.g. one day) is created instead of being rejected by
-  // TasksService (assertNotInPast / assertWithinEventWindow, REQ-19). When the
-  // model gives no deadline the value is returned unchanged. With no window it
-  // degrades to the past-only slide-forward behaviour.
-  private static fitWindow(
-    startTime: Date | undefined,
-    deadline: Date | undefined,
-    now: number,
-    win?: { start: number; end: number },
-  ): { startTime?: Date; deadline?: Date } {
-    if (!deadline) return { startTime, deadline };
-    const { MIN_MS: MIN, HOUR_MS: HOUR } = AiService;
-    // The task's intended length: the model's [start, deadline] span when both
-    // are given and valid, otherwise a one-hour default.
-    const span =
-      startTime && startTime.getTime() < deadline.getTime()
-        ? deadline.getTime() - startTime.getTime()
-        : HOUR;
-    const winStart = win ? Math.max(now, win.start) : now;
-    const winEnd = win ? win.end : Number.POSITIVE_INFINITY;
-    // The longest length that still fits inside the window; keep at least a
-    // minute so start stays strictly before the deadline.
-    let effSpan = span;
-    if (Number.isFinite(winEnd)) {
-      const room = winEnd - winStart;
-      effSpan = room > MIN ? Math.min(span, room) : MIN;
-    }
-    // Anchor on the model's deadline, then pull the window inside [winStart, winEnd].
-    let dl = Math.min(deadline.getTime(), winEnd);
-    if (dl < winStart + effSpan) dl = winStart + effSpan;
-    let st = dl - effSpan;
-    if (st < winStart) st = winStart;
-    if (dl - st < MIN) dl = st + MIN;
-    return { startTime: new Date(st), deadline: new Date(dl) };
-  }
-
-  // Runtime validation of the model's JSON array of actions. Unknown/missing
-  // `action` defaults to 'create' (backward compatible with the old
-  // array-of-tasks format). Malformed items (e.g. a create with no name, or an
-  // update/reassign with no task_ref) are dropped and counted.
-  private validateActions(parsed: unknown[]): {
-    actions: AiAction[];
-    skipped: number;
-  } {
-    const actions: AiAction[] = [];
-    let skipped = 0;
-    for (const raw of parsed) {
-      const item = (raw ?? {}) as Record<string, unknown>;
-      const action =
-        typeof item.action === 'string' ? item.action.toLowerCase() : 'create';
-      const ref = typeof item.task_ref === 'string' ? item.task_ref.trim() : '';
-      const name =
-        typeof item.task_name === 'string' ? item.task_name.trim() : '';
-      const assignedTo =
-        typeof item.assigned_to === 'string' ? item.assigned_to : '';
-      const targetRef =
-        typeof item.target_ref === 'string' ? item.target_ref.trim() : '';
-      const groupRef =
-        typeof item.group_ref === 'string' ? item.group_ref.trim() : '';
-      const title = typeof item.title === 'string' ? item.title.trim() : '';
-      const eventRef =
-        typeof item.event_ref === 'string' ? item.event_ref.trim() : '';
-      const eventName =
-        typeof item.event_name === 'string' ? item.event_name.trim() : '';
-      const startTime =
-        typeof item.start_time === 'string' ? item.start_time.trim() : '';
-      const endTime =
-        typeof item.end_time === 'string' ? item.end_time.trim() : '';
-      const description =
-        typeof item.description === 'string' ? item.description.trim() : '';
-      const managerRef =
-        typeof item.manager_ref === 'string' ? item.manager_ref.trim() : '';
-      const userName = typeof item.name === 'string' ? item.name.trim() : '';
-      const email = typeof item.email === 'string' ? item.email.trim() : '';
-      const phone = typeof item.phone === 'string' ? item.phone.trim() : '';
-      const password =
-        typeof item.password === 'string' ? item.password : undefined;
-      const role = typeof item.role === 'string' ? item.role.trim() : '';
-      const userRef =
-        typeof item.user_ref === 'string' ? item.user_ref.trim() : '';
-      const newPassword =
-        typeof item.new_password === 'string' ? item.new_password : '';
-      const staffRef =
-        typeof item.staff_ref === 'string' ? item.staff_ref.trim() : '';
-      const targetManagerRef =
-        typeof item.target_manager_ref === 'string'
-          ? item.target_manager_ref.trim()
-          : '';
-      const isActive =
-        typeof item.is_active === 'boolean' ? item.is_active : undefined;
-
-      if (action === 'update') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        const status =
-          item.status === 'in_progress' ||
-          item.status === 'completed' ||
-          item.status === 'overdue'
-            ? item.status
-            : undefined;
-        // An update that changes nothing usable is dropped.
-        if (
-          !name &&
-          item.priority === undefined &&
-          !startTime &&
-          item.deadline === undefined &&
-          !status
-        ) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update',
-          task_ref: ref,
-          ...(name ? { task_name: name } : {}),
-          ...(item.priority !== undefined
-            ? { priority: AiService.normalisePriority(item.priority) }
-            : {}),
-          ...(startTime ? { start_time: startTime } : {}),
-          ...(typeof item.deadline === 'string'
-            ? { deadline: item.deadline }
-            : {}),
-          ...(status ? { status } : {}),
-        });
-      } else if (action === 'reassign') {
-        if (!ref || !assignedTo.trim()) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'reassign',
-          task_ref: ref,
-          assigned_to: assignedTo,
-        });
-      } else if (action === 'unassign') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'unassign', task_ref: ref });
-      } else if (action === 'delete') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'delete', task_ref: ref });
-      } else if (action === 'undo') {
-        actions.push({ action: 'undo' });
-      } else if (action === 'merge') {
-        if (!ref || !targetRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'merge', task_ref: ref, target_ref: targetRef });
-      } else if (action === 'add_to_group') {
-        if (!groupRef || !ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'add_to_group',
-          group_ref: groupRef,
-          task_ref: ref,
-        });
-      } else if (action === 'rename_group') {
-        if (!groupRef || !title) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'rename_group', group_ref: groupRef, title });
-      } else if (action === 'ungroup') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'ungroup', task_ref: ref });
-      } else if (action === 'create_event') {
-        if (!eventName || !startTime || !endTime) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'create_event',
-          event_name: eventName,
-          start_time: startTime,
-          end_time: endTime,
-          ...(description ? { description } : {}),
-        });
-      } else if (action === 'update_event') {
-        if (!eventRef || (!eventName && !description && !startTime && !endTime)) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update_event',
-          event_ref: eventRef,
-          ...(eventName ? { event_name: eventName } : {}),
-          ...(description ? { description } : {}),
-          ...(startTime ? { start_time: startTime } : {}),
-          ...(endTime ? { end_time: endTime } : {}),
-        });
-      } else if (action === 'delete_event') {
-        if (!eventRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'delete_event', event_ref: eventRef });
-      } else if (action === 'add_event_manager') {
-        if (!eventRef || !managerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'add_event_manager',
-          event_ref: eventRef,
-          manager_ref: managerRef,
-        });
-      } else if (action === 'remove_event_manager') {
-        if (!eventRef || !managerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'remove_event_manager',
-          event_ref: eventRef,
-          manager_ref: managerRef,
-        });
-      } else if (action === 'create_user') {
-        if (!userName || !email) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'create_user',
-          name: userName,
-          email,
-          ...(role ? { role } : {}),
-          ...(phone ? { phone } : {}),
-          ...(password !== undefined ? { password } : {}),
-        });
-      } else if (action === 'update_user') {
-        // Need a target plus at least one changeable field.
-        if (!userRef || (!userName && !role && isActive === undefined)) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update_user',
-          user_ref: userRef,
-          ...(userName ? { name: userName } : {}),
-          ...(role ? { role } : {}),
-          ...(isActive !== undefined ? { is_active: isActive } : {}),
-        });
-      } else if (action === 'reset_password') {
-        if (!userRef || !newPassword) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'reset_password',
-          user_ref: userRef,
-          new_password: newPassword,
-        });
-      } else if (action === 'request_reassign') {
-        if (!staffRef || !targetManagerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'request_reassign',
-          staff_ref: staffRef,
-          target_manager_ref: targetManagerRef,
-        });
-      } else if (
-        action === 'accept_reassign' ||
-        action === 'reject_reassign' ||
-        action === 'cancel_reassign'
-      ) {
-        if (!staffRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action, staff_ref: staffRef });
-      } else {
-        // create (default)
-        if (!name) {
-          skipped++;
-          continue;
-        }
-        const group =
-          typeof item.group === 'string' && item.group.trim()
-            ? item.group.trim()
-            : undefined;
-        actions.push({
-          action: 'create',
-          task_name: name,
-          priority: AiService.normalisePriority(item.priority),
-          assigned_to: assignedTo,
-          ...(startTime ? { start_time: startTime } : {}),
-          deadline: typeof item.deadline === 'string' ? item.deadline : '',
-          ...(group ? { group } : {}),
-        });
-      }
-    }
-    // Cap a single command at 40 actions so a runaway generative reply can't fan
-    // out into an unbounded batch of writes; the overflow is counted as skipped.
-    const MAX_ACTIONS = 40;
-    if (actions.length > MAX_ACTIONS) {
-      skipped += actions.length - MAX_ACTIONS;
-      actions.length = MAX_ACTIONS;
-    }
-    return { actions, skipped };
   }
 
   // Resolve a model-supplied task_ref to a real task in this event: an exact id
@@ -805,10 +366,10 @@ export class AiService {
       completed_count?: number;
     }>,
   ): Promise<string> {
-    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
+    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
     const lines: string[] = [];
     lines.push(
-      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${AiService.fmtVN(new Date())}.`,
+      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${fmtVN(new Date())}.`,
     );
 
     // Up to 20 viewable events, nearest end_time first; note any overflow.
@@ -1087,9 +648,9 @@ export class AiService {
         // overflows the event window (assertWithinEventWindow, REQ-19). Without
         // this the model's out-of-window tasks would be rejected one by one and
         // only a couple would survive.
-        const { startTime, deadline } = AiService.fitWindow(
-          AiService.parseDeadline(item.start_time),
-          AiService.parseDeadline(item.deadline),
+        const { startTime, deadline } = fitWindow(
+          parseDeadline(item.start_time),
+          parseDeadline(item.deadline),
           Date.now(),
           eventWindow,
         );
@@ -1099,7 +660,7 @@ export class AiService {
               event_id: eventId,
               task_name: item.task_name,
               priority_label: item.priority,
-              priority_score: AiService.priorityScore(item.priority),
+              priority_score: priorityScore(item.priority),
               priority_source: 'ai',
               ...(startTime ? { start_time: startTime } : {}),
               deadline,
@@ -1156,14 +717,14 @@ export class AiService {
         if (item.task_name) patch.task_name = item.task_name;
         if (item.priority) {
           patch.priority_label = item.priority;
-          patch.priority_score = AiService.priorityScore(item.priority);
+          patch.priority_score = priorityScore(item.priority);
         }
         if (item.start_time !== undefined) {
-          const s = AiService.parseDeadline(item.start_time);
+          const s = parseDeadline(item.start_time);
           if (s) patch.start_time = s;
         }
         if (item.deadline !== undefined) {
-          const d = AiService.parseDeadline(item.deadline);
+          const d = parseDeadline(item.deadline);
           if (d) patch.deadline = d;
         }
         if (item.status) patch.status = item.status;
@@ -1347,8 +908,8 @@ export class AiService {
         // Validate the model's dates are parseable before persisting, mirroring
         // the task path's parseDeadline — an Invalid Date would slip past
         // EventsService.assertValidDateRange (NaN comparisons are false).
-        const start = AiService.parseDeadline(item.start_time);
-        const end = AiService.parseDeadline(item.end_time);
+        const start = parseDeadline(item.start_time);
+        const end = parseDeadline(item.end_time);
         if (!start || !end) {
           res.rejected.push({
             ref: item.event_name,
@@ -1402,8 +963,8 @@ export class AiService {
           // Date change → updateDates (shifts the event's tasks along). The user
           // may give only one side ("move the start to June 10"); fill the other
           // from the current event. Times are Vietnam-local (parseDeadline → UTC).
-          const newStart = AiService.parseDeadline(item.start_time);
-          const newEnd = AiService.parseDeadline(item.end_time);
+          const newStart = parseDeadline(item.start_time);
+          const newEnd = parseDeadline(item.end_time);
           if (newStart || newEnd) {
             const cur = (await this.events.findOneForViewer(id, actor)) as {
               start_time?: string | Date;
@@ -1735,9 +1296,9 @@ export class AiService {
     // window and not in the past — otherwise dates like "next Friday" get
     // rejected. Only meaningful when a specific event is in scope. The actor
     // already passed the view/manage check above.
-    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
+    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
     let windowInfo = `DATE GUIDANCE:
-- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
+- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
 - Never output a task start_time or deadline in the past.
 - When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
 - Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
@@ -1745,7 +1306,7 @@ export class AiService {
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
       windowInfo = `HARD DATE CONSTRAINT — read carefully:
-- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
+- Today (now, Vietnam time UTC+7) is ${fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
 - This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (Vietnam time, UTC+7).
 - EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
   must not be in the past. A date outside this window will be REJECTED.
@@ -1828,7 +1389,7 @@ RULES:
       let parsed: unknown;
 
       try {
-        parsed = JSON.parse(AiService.extractJson(raw));
+        parsed = JSON.parse(extractJson(raw));
       } catch {
         // Don't echo the raw model output back to the client.
         throw new BadRequestException(
@@ -1904,7 +1465,7 @@ RULES:
       }
 
       // Drop malformed items; reject outright if nothing usable came back.
-      const { actions, skipped } = this.validateActions(parsed);
+      const { actions, skipped } = validateActions(parsed);
       if (actions.length === 0) {
         await this.aiRequestRepo.update(aiRequest.request_id, {
           response: parsed as object,

@@ -27,3 +27,40 @@ export function snapDateTimeLocal(v: string): string {
 export function snapMs(t: number): number {
   return Math.round(t / QUARTER_HOUR) * QUARTER_HOUR
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+// Split a stored timestamp into local { date: "YYYY-MM-DD", time: "HH:mm" }
+// fields for separate date + time inputs. Empty/invalid → empty strings.
+export function splitLocalDateTime(value?: string | null): {
+  date: string
+  time: string
+} {
+  if (!value) return { date: '', time: '' }
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return { date: '', time: '' }
+  return {
+    date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+    time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+  }
+}
+
+// Format a stored timestamp as a local "YYYY-MM-DDTHH:mm" string for a
+// <input type="datetime-local">. Empty/invalid → ''.
+export function toLocalInputValue(value?: string | null): string {
+  const { date, time } = splitLocalDateTime(value)
+  return date ? `${date}T${time}` : ''
+}
+
+// Format a stored timestamp as a localized "day mon year" string. Empty → '—'.
+export function formatDate(
+  value: string | null | undefined,
+  lang: 'en' | 'vi',
+): string {
+  if (!value) return '—'
+  return new Date(value).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}

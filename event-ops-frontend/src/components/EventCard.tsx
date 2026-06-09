@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react'
 import { Calendar, Trash2, ChevronRight, Users, Pencil, AlertTriangle } from 'lucide-react'
 import { Event } from '@/lib/types'
+import { formatDate } from '@/lib/time'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 import MilestoneBar from './MilestoneBar'
@@ -46,8 +47,7 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
     if (d && (Math.abs(e.clientX - d.x) > 6 || Math.abs(e.clientY - d.y) > 6)) return
     onClick(event)
   }
-  const fmt = (d: string) =>
-    new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmt = (d: string) => formatDate(d, lang)
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
   // An event with no members needs a manager — warn whoever can manage members
   // (an organizer) so they don't forget to staff it.

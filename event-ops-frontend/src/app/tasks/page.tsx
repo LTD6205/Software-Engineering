@@ -4,6 +4,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { Plus, CheckSquare, RotateCcw } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
+import { toLocalInputValue } from '@/lib/time'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import TaskTimeline from '@/components/TaskTimeline'
@@ -22,15 +23,6 @@ const emptyTask = {
   task_name: '', description: '',
   startDate: '', startTime: '', deadlineDate: '', deadlineTime: '',
   assigned_to: [] as string[],
-}
-
-// Format a stored timestamp to a local "YYYY-MM-DDTHH:mm" string.
-function toLocalDateTime(v?: string) {
-  if (!v) return ''
-  const d = new Date(v)
-  if (isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 // Current epoch ms. Module-level so the "is this in the past?" guards can read
@@ -148,8 +140,8 @@ function TasksContent() {
 
   // The task's dates must stay within the parent event's time range.
   const selEvent = events.find(e => e.event_id === selectedEvent)
-  const evStart = toLocalDateTime(selEvent?.start_time) // "YYYY-MM-DDTHH:mm"
-  const evEnd   = toLocalDateTime(selEvent?.end_time)
+  const evStart = toLocalInputValue(selEvent?.start_time) // "YYYY-MM-DDTHH:mm"
+  const evEnd   = toLocalInputValue(selEvent?.end_time)
 
   const handleCreate = async () => {
     if (!selectedEvent) {

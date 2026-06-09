@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { Clock, Bot, Trash2, Pencil, UserPlus } from 'lucide-react'
 import { Task } from '@/lib/types'
+import { toLocalInputValue, formatDate } from '@/lib/time'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 import Avatar from './Avatar'
@@ -26,21 +27,12 @@ const STATUS: Record<string, { color: string; glow: string }> = {
 }
 const ORDER: Record<string, number> = { pending: 0, in_progress: 1, completed: 2 }
 
-const toLocalInput = (iso?: string) => {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
 export default function TaskCard({ task, onStatusChange, isCreator, canManage, onDelete, onDeadlineChange, onEditAssignees }: Props) {
   const { t, lang } = useLang()
   const [editingDeadline, setEditingDeadline] = useState(false)
   const assignees = task.assignees ?? []
   const canEditAssignees = canManage && !!onEditAssignees
-  const fmt = (d: string) =>
-    !d ? '—' : new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmt = (d: string) => formatDate(d, lang)
 
   const isOverdue = task.status === 'overdue'
   const isCompleted = task.status === 'completed'
@@ -124,7 +116,7 @@ export default function TaskCard({ task, onStatusChange, isCreator, canManage, o
               <input
                 type="datetime-local"
                 autoFocus
-                defaultValue={toLocalInput(task.deadline)}
+                defaultValue={toLocalInputValue(task.deadline)}
                 onBlur={() => setEditingDeadline(false)}
                 onChange={e => {
                   if (e.target.value && onDeadlineChange) onDeadlineChange(task.task_id, new Date(e.target.value).toISOString())

@@ -5,6 +5,7 @@ import { eventsApi, getErrorMessage } from '@/lib/api'
 import { useLiveData } from '@/lib/useLiveData'
 import { isEventNearby, isEventInMonth, isEventOnDate, NEARBY_DAYS } from '@/lib/filters'
 import { Event, ManagerOption } from '@/lib/types'
+import { splitLocalDateTime } from '@/lib/time'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
@@ -64,16 +65,6 @@ export default function EventsPage() {
   const router = useRouter()
   const { canManageEvents } = useAuth()
   const { t, tError } = useLang()
-
-  // Split an ISO timestamp into local date + time inputs.
-  const splitDT = (iso: string) => {
-    const d = new Date(iso)
-    const p = (n: number) => String(n).padStart(2, '0')
-    return {
-      date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
-      time: `${p(d.getHours())}:${p(d.getMinutes())}`,
-    }
-  }
 
   const load = async () => {
     setLoading(true)
@@ -166,8 +157,8 @@ export default function EventsPage() {
 
   // Date editor: open prefilled, then save with a task strategy.
   const openDateEditor = (ev: Event) => {
-    const s = splitDT(ev.start_time)
-    const e = splitDT(ev.end_time)
+    const s = splitLocalDateTime(ev.start_time)
+    const e = splitLocalDateTime(ev.end_time)
     setDForm({ startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time })
     setEditingDates(ev)
     setDErr('')

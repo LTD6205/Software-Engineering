@@ -18,6 +18,13 @@ import { Event } from '../entities/event.entity';
 import { EventsGateway } from '../websocket/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EventsService } from '../events/events.service';
+import {
+  assertNotInPast,
+  assertWithinEventWindow,
+  taskBasis,
+  windowOf,
+  priorityFor,
+} from './tasks.util';
 
 // Everything one undoable operation did, captured so undoLastChange can reverse
 // it. A manual action fills one field with a single item; one AI command or one
@@ -185,9 +192,9 @@ export class TasksService {
       where: { event_id: data.event_id },
     });
     if (event)
-      this.assertWithinEventWindow(event, data.start_time, data.deadline);
+      assertWithinEventWindow(event, data.start_time, data.deadline);
     // A new task can't be scheduled in the past.
-    this.assertNotInPast(data.start_time, data.deadline);
+    assertNotInPast(data.start_time, data.deadline);
     const task = await this.taskRepo.save(this.taskRepo.create(data));
     // Announce the new task to the event's owner (the organizer), unless
     // they created it themselves.
@@ -221,51 +228,6 @@ export class TasksService {
     }
     this.broadcastChange(task.event_id);
     return this.findOne(task.task_id);
-  }
-
-  // Grace window for the past check: the client's "now" line can lag a little
-  // (it ticks every ~30s) and there's request latency, so a time the user meant
-  // as "now" can read as a few seconds past by the time the server checks. Allow
-  // a small slack so only clearly-past times (minutes+ old) are rejected.
-  private static readonly PAST_GRACE_MS = 2 * 60 * 1000;
-
-  // New or edited task times may not land in the past — the API mirror of the
-  // timeline's "now" line. Only the values passed in are checked, so editing an
-  // unrelated field on an already-running (or overdue) task, or reopening it via
-  // a status change, is unaffected; only a start/deadline being set into the
-  // past is rejected.
-  private assertNotInPast(...values: Array<Date | string | null | undefined>) {
-    const cutoff = Date.now() - TasksService.PAST_GRACE_MS;
-    for (const v of values) {
-      if (!v) continue;
-      const t = new Date(v).getTime();
-      if (isNaN(t)) continue;
-      if (t < cutoff) {
-        throw new BadRequestException(
-          'Task times cannot be in the past / Thời gian công việc không thể ở quá khứ',
-        );
-      }
-    }
-  }
-
-  // A task's start/deadline must sit inside its event's [start, end] window.
-  private assertWithinEventWindow(
-    event: Event,
-    start?: Date | string | null,
-    deadline?: Date | string | null,
-  ) {
-    const es = event.start_time ? new Date(event.start_time).getTime() : null;
-    const ee = event.end_time ? new Date(event.end_time).getTime() : null;
-    for (const v of [start, deadline]) {
-      if (!v) continue;
-      const t = new Date(v).getTime();
-      if (isNaN(t)) continue;
-      if ((es !== null && t < es) || (ee !== null && t > ee)) {
-        throw new BadRequestException(
-          'Task times must be within the event window / Thời gian công việc phải nằm trong khoảng thời gian của sự kiện',
-        );
-      }
-    }
   }
 
   // Fields a client may set through create/update. Anything else (event_id,
@@ -308,32 +270,13 @@ export class TasksService {
     if (!eventId) return;
     const tasks = await this.taskRepo.find({ where: { event_id: eventId } });
     const now = Date.now();
-    const basis = (t: Task): number => {
-      const d = t.deadline ? new Date(t.deadline).getTime() : NaN;
-      const s = t.start_time ? new Date(t.start_time).getTime() : NaN;
-      return !isNaN(d) ? d : s;
-    };
-    // The [min, span] of a set of tasks' basis times (undated tasks ignored).
-    const windowOf = (cohort: Task[]): [number, number] | null => {
-      const times = cohort.map(basis).filter((v) => !isNaN(v));
-      if (times.length === 0) return null;
-      const min = Math.min(...times);
-      return [min, Math.max(...times) - min];
-    };
-    // Re-bucket a single 'auto' task against a [min, span] window. Anything past
-    // the "now" line is always High regardless of the window.
+    // Re-bucket a single 'auto' task against a [min, span] window (the pure
+    // basis/window/label math lives in tasks.util).
     const bucket = async (t: Task, min: number, span: number) => {
       if (t.priority_source !== 'auto') return;
-      const b = basis(t);
+      const b = taskBasis(t);
       if (isNaN(b)) return;
-      let label: string;
-      if (b < now) {
-        label = 'high';
-      } else {
-        const frac = span <= 0 ? 0 : (b - min) / span;
-        label = frac < 1 / 3 ? 'high' : frac < 2 / 3 ? 'medium' : 'low';
-      }
-      const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10;
+      const { label, score } = priorityFor(b, min, span, now);
       if (t.priority_label !== label || t.priority_score !== score) {
         await this.taskRepo.update(t.task_id, {
           priority_label: label,
@@ -483,7 +426,7 @@ export class TasksService {
         where: { event_id: old.event_id },
       });
       if (event) {
-        this.assertWithinEventWindow(
+        assertWithinEventWindow(
           event,
           data.start_time ?? old.start_time,
           data.deadline ?? old.deadline,
@@ -492,7 +435,7 @@ export class TasksService {
       // A start/deadline being set can't be moved into the past. Only the
       // values present in this update are checked (not the merged old ones), so
       // editing one field of an already-running task isn't blocked by the other.
-      this.assertNotInPast(data.start_time, data.deadline);
+      assertNotInPast(data.start_time, data.deadline);
 
       // The DB enforces deadline > start_time (tasks_time_check). Check the
       // effective (merged) window here so a zero- or negative-length reschedule —
