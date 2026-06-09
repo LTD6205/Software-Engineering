@@ -5,6 +5,7 @@ import TopBar from '@/components/TopBar'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
 import Dropdown from '@/components/Dropdown'
+import IdChip from '@/components/IdChip'
 import { useAuth } from '@/context/AuthContext'
 import { usersApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
@@ -411,7 +412,7 @@ export default function UsersPage() {
                       }}>{t('You', 'Bạn')}</span>
                     )}
                   </p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: '2px' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 14px', marginTop: '2px' }}>
                     {u.email && (
                       <span className="selectable" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
                         <Mail size={11} /> {u.email}
@@ -422,6 +423,7 @@ export default function UsersPage() {
                         <Phone size={11} /> {u.phone}
                       </span>
                     )}
+                    <IdChip id={u.user_id} />
                   </div>
                   {/* For staff (roster view): which manager they report to, plus
                       any pending reassignment. */}

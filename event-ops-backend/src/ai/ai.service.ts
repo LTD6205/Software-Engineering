@@ -117,29 +117,41 @@ export class AiService {
       : 'Action failed';
   }
 
-  // Resolve an AI-provided "assigned_to" string (name or email) to a real,
-  // active user. Returns null when no confident match is found.
+  // Resolve an AI-provided "assigned_to" string (id, name, or email) to a real,
+  // active user. Returns null when no confident match is found. An exact user_id
+  // (UUID) is matched first so same-name accounts are reachable by id.
   private async resolveAssignee(assignedTo?: string): Promise<User | null> {
     const needle = assignedTo?.trim();
     if (!needle) return null;
-    return this.userRepo.findOne({
-      where: [
-        { email: needle, is_active: true },
-        { name: needle, is_active: true },
-      ],
-    });
+    const where: Record<string, unknown>[] = [];
+    if (AiService.isUuid(needle))
+      where.push({ user_id: needle, is_active: true });
+    where.push({ email: needle, is_active: true });
+    where.push({ name: needle, is_active: true });
+    return this.userRepo.findOne({ where });
   }
 
-  // Resolve a user reference by name or email REGARDLESS of active state. Used
-  // for admin account-management actions (update_user/reset_password) so an
+  // Resolve a user reference by id, name, or email REGARDLESS of active state.
+  // Used for admin account-management actions (update_user/reset_password) so an
   // admin can target a deactivated account — e.g. "reactivate Bob" — which the
   // active-only resolveAssignee above could never match.
   private async resolveUserRef(ref?: string): Promise<User | null> {
     const needle = ref?.trim();
     if (!needle) return null;
-    return this.userRepo.findOne({
-      where: [{ email: needle }, { name: needle }],
-    });
+    const where: Record<string, unknown>[] = [];
+    if (AiService.isUuid(needle)) where.push({ user_id: needle });
+    where.push({ email: needle });
+    where.push({ name: needle });
+    return this.userRepo.findOne({ where });
+  }
+
+  // Only query the uuid `user_id` column when the reference actually looks like
+  // a UUID — Postgres rejects a non-UUID literal against a uuid column, which
+  // would otherwise throw on every name/email lookup.
+  private static readonly UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  private static isUuid(s: string): boolean {
+    return AiService.UUID_RE.test(s);
   }
 
   // Assign a task to an AI-named user if one matches. Permission failures (an
@@ -364,17 +376,19 @@ export class AiService {
     // The assignable roster. For a manager this is their own active staff; for
     // organizer/admin we keep it simple (best-effort empty list — see spec
     // Limitations) since their assignable set spans whole teams.
-    let roster: Array<{ name?: string; email?: string }> = [];
+    let roster: Array<{ user_id?: string; name?: string; email?: string }> = [];
     if (actor.role === 'manager') {
       roster = (await this.userRepo.find({
         where: { manager_id: actor.sub, is_active: true },
-      })) as Array<{ name?: string; email?: string }>;
+      })) as Array<{ user_id?: string; name?: string; email?: string }>;
     }
     const shownRoster = roster.slice(0, 50);
     if (shownRoster.length) {
-      lines.push('People you can assign tasks to:');
+      lines.push('People you can assign tasks to (reference by exact name, email, or id):');
       for (const u of shownRoster) {
-        lines.push(`- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}`);
+        lines.push(
+          `- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}${u.user_id ? ` (id ${u.user_id})` : ''}`,
+        );
       }
     } else {
       lines.push('People you can assign tasks to: (none on record)');

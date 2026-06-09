@@ -75,7 +75,8 @@ ${actionCatalog}
   { "kind": "clarification", "question": "..." }
 
 RULES:
-- Reference existing tasks/events/groups/people by their exact name (or id) from the context.
+- Reference existing tasks/events/groups/people by their exact name OR by the id shown in parentheses in the context (e.g. (id 1a2b3c…)). Prefer the id when the user gives one — it is the most precise way to target a specific object.
+- DISAMBIGUATION: If a name in the command matches MORE THAN ONE task, event, or person in the context (same name, different ids), do NOT guess. Return a "clarification" question that lists each candidate with its id and asks which one is meant.
 - For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
 - To change an EVENT's date(s), emit "update_event" with "start_time" and/or "end_time" (Vietnam time, YYYY-MM-DDTHH:mm:ss). Give only the side that changes; the event's tasks shift along automatically.
 - To undo the most recent change in the current event (an edit or a deletion), emit { "action": "undo" }. Use this for "undo", "revert that", "undo the last change", "put it back".

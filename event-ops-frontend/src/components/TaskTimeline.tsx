@@ -9,6 +9,7 @@ import Modal from './Modal'
 import Dropdown from './Dropdown'
 import TimePicker from './TimePicker'
 import Avatar from './Avatar'
+import IdChip from './IdChip'
 
 // Status -> colour. Blocks are tinted by their current state.
 const STATUS_COLOR: Record<string, string> = {
@@ -81,11 +82,13 @@ export default function TaskTimeline(props: Props) {
         if (n.has(taskId)) n.delete(taskId); else n.add(taskId)
         return n
       })
-    } else {
-      setSelected(new Set())
-      const tk = tasks.find(x2 => x2.task_id === taskId)
-      if (tk) setEditTask(tk)
+      return
     }
+    // A plain click with an active multi-selection just clears it (no edit
+    // panel) — a second click then opens the task as normal.
+    if (selected.size > 0) { setSelected(new Set()); return }
+    const tk = tasks.find(x2 => x2.task_id === taskId)
+    if (tk) setEditTask(tk)
   }
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropKey, setDropKey] = useState<string | null>(null)
@@ -630,6 +633,9 @@ export default function TaskTimeline(props: Props) {
         const color = STATUS_COLOR[tk.status] || 'var(--text-muted)'
         return (
           <Modal title={tk.task_name} onClose={() => setEditTask(null)}>
+            <div style={{ marginBottom: '12px' }}>
+              <IdChip id={tk.task_id} />
+            </div>
             {tk.group_title != null && (
               <p style={{ fontSize: '12px', color: 'var(--accent-purple)', fontWeight: 600, marginBottom: '12px' }}>
                 {t('In group', 'Trong nhóm')}: {tk.group_title || t('Untitled group', 'Nhóm chưa đặt tên')}

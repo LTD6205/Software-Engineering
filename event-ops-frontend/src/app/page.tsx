@@ -95,7 +95,8 @@ export default function DashboardPage() {
                 key={event.event_id}
                 event={event}
                 onDelete={setPendingDelete}
-                onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
+                // No onClick: events can't be opened directly from the Dashboard —
+                // open them from the Events panel ("View all" → Events).
                 canDelete={canManageEvents}
               />
             ))}
