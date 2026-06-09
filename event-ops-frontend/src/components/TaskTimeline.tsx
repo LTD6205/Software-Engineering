@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Clock, Trash2, Users as UsersIcon, Unlink, Pencil, Check, X, Plus, Minus, Maximize2 } from 'lucide-react'
 import { Task, Event } from '@/lib/types'
 import { snapMs, formatDate } from '@/lib/time'
+import { HOUR, DAY, ms, packLanes, computeTicks } from '@/lib/timeline'
 import { useLang } from '@/context/LanguageContext'
 import Modal from './Modal'
 import Dropdown from './Dropdown'
@@ -22,8 +23,6 @@ const PRIORITY_COLOR: Record<string, string> = {
   low: 'var(--accent-green)',
 }
 
-const HOUR = 3600000
-const DAY = 86400000
 const ROW_H = 74       // height of one lane (a block); fits name + stacked start/end
 const LANE_GAP = 6
 const GROUP_TITLE_H = 22
@@ -32,8 +31,6 @@ const MIN_BLOCK_PX = 14  // thin bar floor so blocks stay proportional and stret
 const LABEL_PX = 150     // horizontal room reserved for a block's label (it spills right of a thin bar)
 const MAX_PXPERDAY = 3000 // deepest zoom = hour labels with 15-min gridlines
 const AXIS_H = 26
-// Candidate axis steps (ms), smallest first.
-const TICK_STEPS = [15 * 60000, 30 * 60000, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 90 * DAY]
 
 interface Props {
   event: Event
@@ -59,21 +56,6 @@ interface Props {
   onNotice?: (message: string) => void
 }
 
-const ms = (v?: string | null) => (v ? new Date(v).getTime() : NaN)
-// Greedy lane packing: items keep their own [start,end]; non-overlapping ones
-// share a lane, overlapping ones drop to the next — so blocks never overlap.
-function packLanes<T extends { start: number; end: number }>(items: T[]) {
-  const sorted = [...items].sort((a, b) => a.start - b.start)
-  const laneEnd: number[] = []
-  const placed = new Map<T, number>()
-  for (const it of sorted) {
-    let lane = laneEnd.findIndex(end => end <= it.start)
-    if (lane === -1) { lane = laneEnd.length; laneEnd.push(it.end) }
-    else laneEnd[lane] = it.end
-    placed.set(it, lane)
-  }
-  return { placed, lanes: Math.max(1, laneEnd.length) }
-}
 
 export default function TaskTimeline(props: Props) {
   const { event, tasks, matches, canManage } = props
@@ -302,34 +284,9 @@ export default function TaskTimeline(props: Props) {
   const hasVisible = singles.some(matches) || [...groups.values()].some(arr => arr.some(matches))
   const nothing = !hasVisible
 
-  // Date axis ticks. The major step (labelled) is the finest one that still
-  // leaves ≥66px between labels; minor gridlines subdivide it ×4 (so at hour
-  // zoom you get unlabelled 15-min marks to place tasks precisely).
+  // Date-axis ticks for the current zoom (pure geometry in lib/timeline).
   const loc = lang === 'vi' ? 'vi-VN' : 'en-US'
-  const majorStep = pxPerDay > 0
-    ? (TICK_STEPS.find(s => (s / DAY) * pxPerDay >= 66) ?? TICK_STEPS[TICK_STEPS.length - 1])
-    : DAY
-  const minorStep = majorStep / 4
-  const showMinor = pxPerDay > 0 && minorStep >= 5 * 60000 && (minorStep / DAY) * pxPerDay >= 11
-  // First tick at/after evStart, aligned to a local boundary of the step.
-  const alignedFirst = (step: number) => {
-    const d = new Date(evStart)
-    if (step >= DAY) { d.setHours(0, 0, 0, 0) }
-    else {
-      const stepMin = step / 60000
-      const mod = (d.getHours() * 60 + d.getMinutes()) % stepMin
-      d.setSeconds(0, 0); d.setMinutes(d.getMinutes() - mod)
-    }
-    let tk = d.getTime()
-    while (tk < evStart) tk += step
-    return tk
-  }
-  const majors: number[] = []
-  const minors: number[] = []
-  if (pxPerDay > 0) {
-    for (let tk = alignedFirst(majorStep); tk <= evEnd && majors.length < 600; tk += majorStep) majors.push(tk)
-    if (showMinor) for (let tk = alignedFirst(minorStep); tk <= evEnd && minors.length < 2500; tk += minorStep) minors.push(tk)
-  }
+  const { majorStep, majors, minors } = computeTicks({ pxPerDay, evStart, evEnd })
   const fmtTick = (time: number) => {
     const d = new Date(time)
     if (majorStep >= DAY) return d.toLocaleDateString(loc, majorStep >= 30 * DAY ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' })
