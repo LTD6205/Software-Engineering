@@ -177,6 +177,7 @@ export default function TaskTimeline(props: Props) {
     if ((e.target as HTMLElement).closest('[data-block]')) return // let blocks drag-to-merge
     const el = scrollRef.current
     if (!el) return
+    const downX = e.clientX, downY = e.clientY
     let lastX = e.clientX, lastY = e.clientY
     setPanning(true)
     const move = (ev: MouseEvent) => {
@@ -185,7 +186,16 @@ export default function TaskTimeline(props: Props) {
       el.scrollTop -= ev.clientY - lastY
       lastX = ev.clientX; lastY = ev.clientY
     }
-    const up = () => { setPanning(false); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    const up = (ev: MouseEvent) => {
+      setPanning(false)
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      // A plain click on empty background (not a drag-pan) clears an active
+      // multi-selection — the canvas equivalent of clicking a block to deselect.
+      if (Math.abs(ev.clientX - downX) < 6 && Math.abs(ev.clientY - downY) < 6) {
+        setSelected(prev => (prev.size > 0 ? new Set() : prev))
+      }
+    }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
   }
