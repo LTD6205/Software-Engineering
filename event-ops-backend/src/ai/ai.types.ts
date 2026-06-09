@@ -74,6 +74,8 @@ export interface UpdateEventAction {
   event_ref: string;
   event_name?: string;
   description?: string;
+  start_time?: string;
+  end_time?: string;
 }
 export interface DeleteEventAction {
   action: 'delete_event';

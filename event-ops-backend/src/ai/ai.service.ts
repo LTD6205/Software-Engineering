@@ -194,11 +194,37 @@ export class AiService {
     return p === 'high' || p === 'low' ? p : 'medium';
   }
 
-  // Parse a model deadline string into a Date, dropping anything unparseable so
-  // an "Invalid Date" is never persisted. Returns undefined when absent/invalid.
+  // This demo runs in Vietnam time (ICT, UTC+7). All AI-facing times are treated
+  // as Vietnam local: the model is shown "now"/windows in +07:00 and emits bare
+  // wall-clock times, which we convert back to a real UTC instant on the way in.
+  private static readonly VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+  // Format an instant as Vietnam local time for the prompt, e.g.
+  // "2026-06-10T20:00:00+07:00". Display only — never stored.
+  private static fmtVN(value: Date | string | null | undefined): string {
+    if (!value) return 'unspecified';
+    const t = new Date(value).getTime();
+    if (isNaN(t)) return 'unspecified';
+    return new Date(t + AiService.VN_OFFSET_MS)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, '+07:00');
+  }
+
+  // Parse a model time string into a UTC Date. A bare wall-clock the model emits
+  // (e.g. "2026-06-10T20:00:00", no timezone) is interpreted as Vietnam local
+  // (UTC+7) — matching what the user means and what the browser stores from the
+  // manual UI, so "8h tối" persists as 13:00Z and renders back as 20:00. An
+  // explicit Z/offset is honoured as-is. Anything unparseable returns undefined
+  // so an "Invalid Date" is never persisted.
   private static parseDeadline(value: unknown): Date | undefined {
     if (typeof value !== 'string' || !value.trim()) return undefined;
-    const d = new Date(value);
+    let s = value.trim();
+    const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s);
+    if (!hasTz) {
+      if (!s.includes('T')) s += 'T00:00:00'; // date-only → midnight VN
+      s += '+07:00';
+    }
+    const d = new Date(s);
     return isNaN(d.getTime()) ? undefined : d;
   }
 
@@ -399,7 +425,7 @@ export class AiService {
           ...(description ? { description } : {}),
         });
       } else if (action === 'update_event') {
-        if (!eventRef || (!eventName && !description)) {
+        if (!eventRef || (!eventName && !description && !startTime && !endTime)) {
           skipped++;
           continue;
         }
@@ -408,6 +434,8 @@ export class AiService {
           event_ref: eventRef,
           ...(eventName ? { event_name: eventName } : {}),
           ...(description ? { description } : {}),
+          ...(startTime ? { start_time: startTime } : {}),
+          ...(endTime ? { end_time: endTime } : {}),
         });
       } else if (action === 'delete_event') {
         if (!eventRef) {
@@ -777,10 +805,11 @@ export class AiService {
       completed_count?: number;
     }>,
   ): Promise<string> {
-    const fmt = (d: Date | string | null | undefined) =>
-      d ? new Date(d).toISOString() : 'unspecified';
+    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
     const lines: string[] = [];
-    lines.push(`Actor role: ${actor.role}. Current date-time: ${new Date().toISOString()}.`);
+    lines.push(
+      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${AiService.fmtVN(new Date())}.`,
+    );
 
     // Up to 20 viewable events, nearest end_time first; note any overflow.
     const sortedEvents = [...viewableEvents].sort((a, b) => {
@@ -871,7 +900,7 @@ export class AiService {
     create_event:
       '{ "action": "create_event", "event_name": "string", "start_time": "YYYY-MM-DDTHH:mm:ss", "end_time": "YYYY-MM-DDTHH:mm:ss", "description"?: "string" }',
     update_event:
-      '{ "action": "update_event", "event_ref": "event name or id", "event_name"?: "string", "description"?: "string" }',
+      '{ "action": "update_event", "event_ref": "event name or id", "event_name"?: "string", "description"?: "string", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "end_time"?: "YYYY-MM-DDTHH:mm:ss" }',
     delete_event:
       '{ "action": "delete_event", "event_ref": "event name or id" }',
     add_event_manager:
@@ -1369,14 +1398,39 @@ export class AiService {
         }
         try {
           await this.events.assertCanManageEvent(actor, id);
-          const ev = await this.events.update(id, {
-            event_name: item.event_name,
-            description: item.description,
-          });
+          let eventName: string | undefined;
+          // Date change → updateDates (shifts the event's tasks along). The user
+          // may give only one side ("move the start to June 10"); fill the other
+          // from the current event. Times are Vietnam-local (parseDeadline → UTC).
+          const newStart = AiService.parseDeadline(item.start_time);
+          const newEnd = AiService.parseDeadline(item.end_time);
+          if (newStart || newEnd) {
+            const cur = (await this.events.findOneForViewer(id, actor)) as {
+              start_time?: string | Date;
+              end_time?: string | Date;
+              event_name?: string;
+            };
+            const startIso = (
+              newStart ?? new Date(cur.start_time as string | Date)
+            ).toISOString();
+            const endIso = (
+              newEnd ?? new Date(cur.end_time as string | Date)
+            ).toISOString();
+            await this.events.updateDates(id, startIso, endIso, 'shift');
+            eventName = cur.event_name;
+          }
+          // Name / description change → update (only when provided).
+          if (item.event_name !== undefined || item.description !== undefined) {
+            const ev = await this.events.update(id, {
+              event_name: item.event_name,
+              description: item.description,
+            });
+            eventName = (ev as { event_name?: string }).event_name;
+          }
           res.events_changed.push({
             action: 'update_event',
             event_id: id,
-            event_name: (ev as { event_name?: string }).event_name,
+            event_name: eventName,
           });
         } catch (e) {
           res.rejected.push({ ref: item.event_ref, reason: this.reason(e) });
@@ -1681,10 +1735,9 @@ export class AiService {
     // window and not in the past — otherwise dates like "next Friday" get
     // rejected. Only meaningful when a specific event is in scope. The actor
     // already passed the view/manage check above.
-    const fmt = (d: Date | string | null | undefined) =>
-      d ? new Date(d).toISOString() : 'unspecified';
+    const fmt = (d: Date | string | null | undefined) => AiService.fmtVN(d);
     let windowInfo = `DATE GUIDANCE:
-- Today (now, ISO 8601) is ${new Date().toISOString()}.
+- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
 - Never output a task start_time or deadline in the past.
 - When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
 - Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
@@ -1692,8 +1745,8 @@ export class AiService {
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
       windowInfo = `HARD DATE CONSTRAINT — read carefully:
-- Today (now, ISO 8601) is ${new Date().toISOString()}.
-- This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (ISO 8601).
+- Today (now, Vietnam time UTC+7) is ${AiService.fmtVN(new Date())}. ALL times below and everything you output are Vietnam local time (UTC+7).
+- This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (Vietnam time, UTC+7).
 - EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
   must not be in the past. A date outside this window will be REJECTED.
 - NEVER output a deadline later than ${fmt(event.end_time)}. If the user asks for a
@@ -1745,6 +1798,7 @@ ${actionCatalog}
 RULES:
 - Reference existing tasks/events/groups/people by their exact name (or id) from the context.
 - For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
+- To change an EVENT's date(s), emit "update_event" with "start_time" and/or "end_time" (Vietnam time, YYYY-MM-DDTHH:mm:ss). Give only the side that changes; the event's tasks shift along automatically.
 - To undo the most recent change in the current event (an edit or a deletion), emit { "action": "undo" }. Use this for "undo", "revert that", "undo the last change", "put it back".
 - SCOPED BULK CHANGES: When a command targets "all of <person>'s tasks" (reassign, reschedule, etc.), act ONLY on tasks whose "assigned to:" in the context lists that person. Emit one action per such task by its exact name, and DO NOT touch tasks assigned to anyone else. If no task is assigned to that person, make no changes and say so (an answer) instead of guessing.
 - ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
