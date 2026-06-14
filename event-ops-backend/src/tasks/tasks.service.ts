@@ -9,7 +9,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
-import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskGroup } from '../entities/task-group.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { TaskChangeLog } from '../entities/task-change-log.entity';
@@ -42,8 +41,6 @@ export class TasksService {
     @InjectRepository(Task) private taskRepo: Repository<Task>,
     @InjectRepository(TaskAssignment)
     private assignRepo: Repository<TaskAssignment>,
-    @InjectRepository(TaskDependency)
-    private depRepo: Repository<TaskDependency>,
     @InjectRepository(TaskGroup) private groupRepo: Repository<TaskGroup>,
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
     @InjectRepository(TaskChangeLog)

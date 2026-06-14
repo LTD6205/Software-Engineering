@@ -34,7 +34,6 @@ function makeRepo() {
 function build() {
   const taskRepo = makeRepo();
   const assignRepo = makeRepo();
-  const depRepo = makeRepo();
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
   const changeLogRepo = makeRepo();
@@ -56,7 +55,6 @@ function build() {
   const service = new TasksService(
     taskRepo as never,
     assignRepo as never,
-    depRepo as never,
     groupRepo as never,
     logRepo as never,
     changeLogRepo as never,
@@ -70,7 +68,6 @@ function build() {
     service,
     taskRepo,
     assignRepo,
-    depRepo,
     groupRepo,
     logRepo,
     userRepo,

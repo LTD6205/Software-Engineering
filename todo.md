@@ -497,7 +497,11 @@ and the frontend helpers `eventsApi.getOne`, `tasksApi.getOne/assign/unassign`,
 `usersApi.getOne/deactivate`. `assignUser()` was kept (the AI service uses it) and
 `GET /tasks/:id/assignments` was kept (now viewer-scoped).
 
-**Still present, intentionally left** (harmless, removing would churn the schema/
-constructor for no functional gain):
-- `task_dependencies` table/entity — no feature creates or reads dependencies.
-- `TasksService` injects `depRepo` but never uses it (tied to the above).
+**Batch 5 cleanup (2026-06-14)** — removed remaining dead code found in a full scan:
+- Dropped the unused `TaskDependency` entity + its registration (app.module, tasks.module)
+  and the unused `depRepo` injection in `TasksService` (+ spec wiring). The
+  `task_dependencies` **table** stays in the schema and the `DELETE FROM task_dependencies`
+  cleanups on task delete are kept (defensive; the table has no other code path).
+- Removed unused npm packages: backend `passport-local` + `@types/passport-local`;
+  frontend `@fullcalendar/{daygrid,interaction,react,timegrid}` + `@tanstack/react-query`
+  (zero imports in either `src/`).
