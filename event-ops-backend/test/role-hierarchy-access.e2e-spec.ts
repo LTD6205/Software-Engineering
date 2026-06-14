@@ -123,13 +123,6 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
       expect(res.status).toBe(403);
     });
 
-    it('cannot use the AI command (POST /ai/command → 403)', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/api/ai/command')
-        .set(auth(emToken))
-        .send({ userId: 'x', eventId: hostEventId, message: 'blocked' });
-      expect(res.status).toBe(403);
-    });
   });
 
   describe('Manager keeps Manager-only routes', () => {
@@ -212,6 +205,18 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
         .get('/api/events/available-managers')
         .set(auth(emToken));
       expect(res.status).toBe(200);
+    });
+
+    // The AI assistant is open to organizers (for event-scoped actions), so the
+    // role guard must NOT block them. The command itself may fail later (e.g. 400
+    // when no AI key is configured in the test env) — what matters here is it is
+    // not a 403 from RolesGuard.
+    it('can reach the AI command (POST /ai/command → not 403)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/ai/command')
+        .set(auth(emToken))
+        .send({ eventId: hostEventId, message: 'hello' });
+      expect(res.status).not.toBe(403);
     });
   });
 
