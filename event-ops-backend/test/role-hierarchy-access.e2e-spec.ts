@@ -170,6 +170,31 @@ describe('Role boundaries: exact-match RBAC (e2e)', () => {
         .send(newEvent());
       expect(res.status).toBe(403);
     });
+
+    // Account creation/editing is admin-only — a manager may only reassign or
+    // remove their own staff (the reassign / remove-from-team routes), never
+    // create or edit a person's details.
+    it('is DENIED creating an account (POST /users → 403)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/users')
+        .set(auth(managerToken))
+        .send({
+          name: 'blocked',
+          email: `mgr-blocked-${Date.now()}@eventops.com`,
+          password: 'x1234567',
+          phone: '0900000097',
+          role: 'staff',
+        });
+      expect(res.status).toBe(403);
+    });
+
+    it('is DENIED editing an account (PUT /users/:id → 403)', async () => {
+      const res = await request(app.getHttpServer())
+        .put(`/api/users/${staffId}`)
+        .set(auth(managerToken))
+        .send({ name: 'renamed' });
+      expect(res.status).toBe(403);
+    });
   });
 
   describe('Organizer keeps its OWN routes', () => {

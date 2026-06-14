@@ -8,7 +8,6 @@ import {
   Body,
   UseGuards,
   Request,
-  ForbiddenException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -148,11 +147,12 @@ export class UsersController {
     return this.usersService.removeFromTeam(id, req.user);
   }
 
-  // POST /api/users — manager creates staff; only admin creates non-staff roles
+  // POST /api/users — admin only. Managers no longer create accounts; they can
+  // only reassign or remove their own staff (the reassign/remove-from-team
+  // routes above), never create or edit a person's details.
   @Post()
-  @Roles('manager', 'admin')
+  @Roles('admin')
   create(@Request() req: { user: JwtPayload }, @Body() body: CreateUserDto) {
-    this.assertCanAssignRole(req.user.role, body.role);
     return this.usersService.create(body, req.user);
   }
 
@@ -166,33 +166,17 @@ export class UsersController {
     return this.usersService.updateProfile(req.user.sub, body);
   }
 
-  // PUT /api/users/:id — manager updates their own staff; only admin sets roles,
-  // resets passwords, or (de)activates accounts.
+  // PUT /api/users/:id — admin only. Editing a person's name/role/contact,
+  // resetting passwords, and (de)activating accounts are all admin actions.
+  // A manager changes a staff member's team via the reassign/remove-from-team
+  // routes, not by editing the account, so they never touch personal details.
   @Put(':id')
-  @Roles('manager', 'admin')
+  @Roles('admin')
   update(
     @Request() req: { user: JwtPayload },
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: UpdateUserDto,
   ) {
-    this.assertCanAssignRole(req.user.role, body.role);
-    // Activating/deactivating an account is admin-only.
-    if (body.is_active !== undefined && req.user.role !== 'admin') {
-      throw new ForbiddenException(
-        'Only an admin can activate or deactivate accounts / Chỉ quản trị viên mới có thể kích hoạt hoặc vô hiệu hóa tài khoản',
-      );
-    }
     return this.usersService.update(id, body, req.user);
-  }
-
-  // Only an admin may grant any non-staff role. A plain manager may only create
-  // staff — never a peer manager, an organizer, or an admin.
-  private assertCanAssignRole(actorRole: string, targetRole?: string) {
-    if (!targetRole || actorRole === 'admin') return;
-    if (targetRole !== 'staff') {
-      throw new ForbiddenException(
-        'Only an admin can assign a non-staff role / Chỉ quản trị viên mới có thể cấp vai trò ngoài nhân viên',
-      );
-    }
   }
 }

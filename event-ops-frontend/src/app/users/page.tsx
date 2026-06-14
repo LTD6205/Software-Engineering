@@ -247,7 +247,7 @@ export default function UsersPage() {
               {onlineCount} {t('online', 'trực tuyến')}
             </span>
           </div>
-          {isManager && (
+          {isAdmin && (
             <button onClick={() => setShowModal(true)} style={{
               display: 'flex', alignItems: 'center', gap: '7px',
               background: 'var(--accent-blue)', color: 'white',

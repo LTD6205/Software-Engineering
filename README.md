@@ -130,7 +130,7 @@ npm run db:restore -- backups/event_ops_20260101-120000.sql   # restore a specif
 
 ## Roles & Permissions (Admin · Organizer · Manager · Staff)
 
-The table below is **authoritative**: the backend enforces it with **exact role matching** (`RolesGuard`), so the API and the UI agree. There is **no level hierarchy / no inheritance** between roles — an Organizer is *not* a Manager and cannot call Manager-only endpoints (create tasks, manage staff), and a Manager cannot call Organizer-only endpoints (events/membership). The **only** cross-role rule is that **Admin is the superuser**, permitted on every role-guarded route. Staff and task management belong to Managers (they own a staff team); Organizers focus on events and membership. The AI assistant is open to **managers and organizers** (each limited to the actions their role allows) plus admin.
+The table below is **authoritative**: the backend enforces it with **exact role matching** (`RolesGuard`), so the API and the UI agree. There is **no level hierarchy / no inheritance** between roles — an Organizer is *not* a Manager and cannot call Manager-only endpoints (create tasks, manage staff), and a Manager cannot call Organizer-only endpoints (events/membership). The **only** cross-role rule is that **Admin is the superuser**, permitted on every role-guarded route. Task management belongs to Managers; a Manager **owns a staff team** but only manages its *membership* — assigning tasks, and reassigning or removing their own staff — while **creating or editing an account (name, contact, role) is admin-only**, as are activate/deactivate and password resets. Organizers focus on events and membership. The AI assistant is open to **managers and organizers** (each limited to the actions their role allows) plus admin; AI account actions (`create_user`/`update_user`/`reset_password`) are admin-only too.
 
 | Action | Admin | Organizer | Manager | Staff |
 |---|---|---|---|---|
@@ -141,10 +141,10 @@ The table below is **authoritative**: the backend enforces it with **exact role 
 | Create tasks, assign, group, batch-delete | ✅ | ❌ | ✅ (own staff) | ❌ |
 | Update task status | ✅ | ✅ (if assigned) | ✅ | ✅ (if assigned) |
 | Undo recent task changes | ✅ | ❌ | ✅ (own events) | ❌ |
-| Reassign a staff member to another manager | ✅ | ❌ | ✅ (own staff) | ❌ |
+| Reassign or remove own staff (team membership only) | ✅ | ❌ | ✅ (own staff) | ❌ |
 | Request to join a manager's team | ❌ | ❌ | ❌ | ✅ |
-| AI Assistant | ✅ | ✅ (event-scoped actions) | ✅ (task/team actions) | ❌ |
-| Add / manage staff accounts | ✅ | ❌ | ✅ (own team) | ❌ |
+| AI Assistant | ✅ | ✅ (event-scoped actions) | ✅ (task/group/reassign actions) | ❌ |
+| Create / edit accounts (name, contact, role) | ✅ | ❌ | ❌ | ❌ |
 | Activate/deactivate accounts, reset passwords | ✅ | ❌ | ❌ | ❌ |
 | Create an Admin account | ✅ | ❌ | ❌ | ❌ |
 
@@ -194,7 +194,8 @@ Access is by **exact role match** with Admin as the superuser. Below, "manager+"
 | Area | Endpoints | Access |
 |---|---|---|
 | Auth | `POST /auth/login`, `GET /auth/me` | public / any |
-| Users | `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, reassign workflow (`/reassign`, `…/accept`, `…/reject`, `…/cancel`), `POST /users/:id/remove-from-team` | manager+ |
+| Users | `GET /users`, `GET /users/:id`, reassign workflow (`/reassign`, `…/accept`, `…/reject`, `…/cancel`), `POST /users/:id/remove-from-team` | manager+ |
+| | `POST /users`, `PUT /users/:id` (create / edit / role / activate / reset password) | admin |
 | | `GET /users/directory`, `PUT /users/me` | any (presence board / own profile) |
 | | `POST /users/join-request`, `…/cancel` | staff |
 | Events | `GET /events` (viewer-scoped), `GET /events/:id`, `GET /events/:id/managers` | any |

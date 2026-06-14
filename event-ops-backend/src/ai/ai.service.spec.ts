@@ -1500,7 +1500,7 @@ describe('AiService.processCommand', () => {
     expect(r.unresolved).toContain('Sam');
   });
 
-  it('manager create_user is rejected if it names a non-staff role', async () => {
+  it('manager create_user is rejected by the role gate (admin-only)', async () => {
     const { service, usersService } = build('manager');
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
@@ -1510,17 +1510,19 @@ describe('AiService.processCommand', () => {
             name: 'New',
             email: 'n@x.com',
             phone: '0900000001',
-            role: 'manager',
+            role: 'staff',
           },
         ]),
       ),
     );
     const r = (await service.processCommand(
       { sub: 'm1', role: 'manager' },
-      { message: 'add a manager named New' },
+      { message: 'add a staff member named New' },
     )) as { rejected: Array<{ reason: string }> };
+    // create_user is now admin-only — a manager cannot create accounts at all,
+    // not even staff (the central role gate blocks it before the service runs).
     expect(usersService.create).not.toHaveBeenCalled();
-    expect(r.rejected[0].reason).toMatch(/admin/i);
+    expect(r.rejected[0].reason).toMatch(/role/i);
   });
 
   it('manager reset_password is rejected by the role gate', async () => {
