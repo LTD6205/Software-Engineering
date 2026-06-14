@@ -102,7 +102,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    localStorage.removeItem('ai_chat_history') // don't carry one user's AI chat into the next session
+    // Don't carry one user's AI chat into the next session. Histories are
+    // namespaced per user (`ai_chat_history:<userId>`) so roles never share;
+    // clear every such key on logout (incl. the legacy un-namespaced key).
+    Object.keys(localStorage)
+      .filter((k) => k === 'ai_chat_history' || k.startsWith('ai_chat_history:'))
+      .forEach((k) => localStorage.removeItem(k))
     delete axios.defaults.headers.common['Authorization']
     router.push('/login')
   }
