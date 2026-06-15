@@ -1665,6 +1665,32 @@ describe('AiService.processCommand', () => {
     });
   });
 
+  it('lists other managers as reassignment targets in the system prompt', async () => {
+    const { service, userRepo } = build('manager');
+    userRepo.find.mockImplementation((opts: { where: Record<string, unknown> }) => {
+      // staff roster query vs. the managers (reassign-target) query
+      if (opts.where.role === 'manager') {
+        return Promise.resolve([
+          { user_id: 'u1', name: 'Me', email: 'me@x.com' }, // self — filtered out
+          { user_id: 'm3', name: 'Mona', email: 'manager03@eventops.com' },
+        ]);
+      }
+      return Promise.resolve([
+        { user_id: 's1', name: 'Bob', email: 'bob@x.com', is_active: true },
+      ]);
+    });
+    mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
+    await service.processCommand(ACTOR, { message: 'who can I move staff to?' });
+    const body = mockedAxios.post.mock.calls[0][1] as {
+      messages: { role: string; content: string }[];
+    };
+    const systemContent = body.messages[0].content;
+    expect(systemContent).toContain('Managers you can reassign staff to');
+    expect(systemContent).toContain('manager03@eventops.com');
+    // The actor themselves is excluded from the reassignment-target list.
+    expect(systemContent).not.toContain('me@x.com');
+  });
+
   it('executes a generative create plan without asking (anti-nag)', async () => {
     const { service, userRepo } = build('manager');
     userRepo.findOne.mockResolvedValue(null);

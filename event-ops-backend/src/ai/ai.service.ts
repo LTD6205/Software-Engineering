@@ -459,6 +459,28 @@ export class AiService {
       lines.push('People you can assign tasks to: (none on record)');
     }
 
+    // Reassignment targets. The staff roster above only covers task assignment;
+    // to move a staffer to another team (request_reassign) a manager/admin also
+    // needs to see the OTHER managers they can hand staff to.
+    if (actor.role === 'manager' || actor.role === 'admin') {
+      const managers = (await this.userRepo.find({
+        where: { role: 'manager', is_active: true },
+      })) as Array<{ user_id?: string; name?: string; email?: string }>;
+      const others = managers
+        .filter((m) => m.user_id !== actor.sub)
+        .slice(0, 50);
+      if (others.length) {
+        lines.push(
+          'Managers you can reassign staff to (reference by exact name, email, or id):',
+        );
+        for (const m of others) {
+          lines.push(
+            `- ${m.name ?? ''}${m.email ? ` <${m.email}>` : ''}${m.user_id ? ` (id ${m.user_id})` : ''}`,
+          );
+        }
+      }
+    }
+
     return lines.join('\n');
   }
 
