@@ -70,7 +70,15 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Grow the textarea to fit its content (wrap onto new lines) up to a cap,
+  // then scroll. Called on every change and reset to one row after sending.
+  const autoGrow = (el: HTMLTextAreaElement | null) => {
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+  }
 
   // Restore the persisted confirm mode on mount (effect, not a lazy initializer,
   // to avoid an SSR/client hydration mismatch — same pattern as LanguageContext).
@@ -185,6 +193,7 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
 
     setTranscript(prev => [...prev, userTurn, loadingTurn])
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     setBusy(true)
     // No manual refetch is needed here: the open page (tasks/events/etc.)
     // re-fetches itself via its existing useLiveData subscription when the
@@ -234,6 +243,7 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
   const resetChat = () => {
     setTranscript([])
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     try { localStorage.removeItem(chatKey) } catch { /* storage unavailable — non-fatal */ }
     inputRef.current?.focus()
   }
@@ -420,14 +430,15 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
       {/* Input */}
       <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <input
+          <textarea
             ref={inputRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            rows={1}
+            onChange={e => { setInput(e.target.value); autoGrow(e.target) }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder={t('Ask or command...', 'Hỏi hoặc ra lệnh...')}
+            placeholder={t('Ask or command... (Shift+Enter for new line)', 'Hỏi hoặc ra lệnh... (Shift+Enter để xuống dòng)')}
             disabled={busy}
-            style={{ flex: 1 }}
+            style={{ flex: 1, resize: 'none', overflowY: 'auto', maxHeight: '140px', lineHeight: 1.45, fontFamily: 'inherit' }}
           />
           <button onClick={send} disabled={!input.trim() || busy}
             style={{
