@@ -2,14 +2,23 @@
 import { useRef, useState } from 'react'
 import { Calendar, Trash2, ChevronRight, Users, Pencil, AlertTriangle } from 'lucide-react'
 import { Event } from '@/lib/types'
+import { formatDate } from '@/lib/time'
 import { useLang } from '@/context/LanguageContext'
 import StatusBadge from './StatusBadge'
 import MilestoneBar from './MilestoneBar'
+import IdChip from './IdChip'
 
 interface Props {
   event: Event
   onDelete: (id: string) => void
-  onClick: (event: Event) => void
+  // Open/select handler. Receives the mouse event so the caller can branch on
+  // Ctrl/Cmd (multi-select) vs a plain click. Omit it to make the card
+  // non-openable (e.g. on the Dashboard, where events can't be opened directly).
+  onClick?: (event: Event, e: React.MouseEvent) => void
+  // Right-click handler (the caller shows a context menu). Omit to disable.
+  onContextMenu?: (event: Event, e: React.MouseEvent) => void
+  // Highlight the card with a ring when it's part of a multi-selection.
+  selected?: boolean
   canDelete?: boolean
   onManageMembers?: (event: Event) => void
   // Read-only members view for people who can see the event but can't edit its
@@ -29,7 +38,7 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'var(--accent-green)',
 }
 
-export default function EventCard({ event, onDelete, onClick, canDelete = true, onManageMembers, onViewMembers, onEditDates, onEditDetails }: Props) {
+export default function EventCard({ event, onDelete, onClick, onContextMenu, selected = false, canDelete = true, onManageMembers, onViewMembers, onEditDates, onEditDetails }: Props) {
   const { t, lang } = useLang()
   const [expanded, setExpanded] = useState(false)
   const desc = event.description?.trim()
@@ -39,15 +48,15 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
   // text-selection drag.
   const downPos = useRef<{ x: number; y: number } | null>(null)
   const handleCardClick = (e: React.MouseEvent) => {
+    if (!onClick) return
     // If the user just selected text, releasing inside the card shouldn't open it.
     if (window.getSelection?.()?.toString()) return
     // Likewise ignore a click that ended a drag (pointer moved more than a few px).
     const d = downPos.current
     if (d && (Math.abs(e.clientX - d.x) > 6 || Math.abs(e.clientY - d.y) > 6)) return
-    onClick(event)
+    onClick(event, e)
   }
-  const fmt = (d: string) =>
-    new Date(d).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmt = (d: string) => formatDate(d, lang)
   const accent = STATUS_COLOR[event.status] || 'var(--accent-blue)'
   // An event with no members needs a manager — warn whoever can manage members
   // (an organizer) so they don't forget to staff it.
@@ -60,21 +69,26 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
     <div
       onMouseDown={e => { downPos.current = { x: e.clientX, y: e.clientY } }}
       onClick={handleCardClick}
+      onContextMenu={onContextMenu ? (e => { e.preventDefault(); onContextMenu(event, e) }) : undefined}
       style={{
       background: 'var(--bg-card)',
-      border: `1px solid ${borderIdle}`,
+      border: `1px solid ${selected ? 'var(--accent-purple)' : borderIdle}`,
       borderLeft: `3px solid ${needsMembers ? 'var(--accent-amber)' : accent}`,
       borderRadius: '12px', padding: '16px 20px',
       display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '12px',
-      cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s',
-      boxShadow: needsMembers ? '0 0 14px rgba(245,158,11,0.18)' : undefined,
+      cursor: onClick ? 'pointer' : 'default', transition: 'border-color 0.15s, background 0.15s',
+      boxShadow: [
+        selected ? '0 0 0 2px var(--accent-purple)' : '',
+        needsMembers ? '0 0 14px rgba(245,158,11,0.18)' : '',
+      ].filter(Boolean).join(', ') || undefined,
     }}
     onMouseEnter={e => {
-      (e.currentTarget as HTMLElement).style.borderColor = needsMembers ? 'var(--accent-amber)' : 'var(--border-light)'
+      // Keep the purple selection border while selected; otherwise lighten on hover.
+      if (!selected) (e.currentTarget as HTMLElement).style.borderColor = needsMembers ? 'var(--accent-amber)' : 'var(--border-light)'
       ;(e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'
     }}
     onMouseLeave={e => {
-      (e.currentTarget as HTMLElement).style.borderColor = borderIdle
+      if (!selected) (e.currentTarget as HTMLElement).style.borderColor = borderIdle
       ;(e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -97,17 +111,20 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.event_name}</span>
             {onEditDetails && <Pencil size={11} style={{ opacity: 0.7, flexShrink: 0 }} />}
           </p>
-          <p
-            onClick={onEditDates ? (e => { e.stopPropagation(); onEditDates(event) }) : undefined}
-            title={onEditDates ? t('Change dates', 'Đổi thời gian') : undefined}
-            style={{
-              fontSize: '12px', color: 'var(--text-muted)', width: 'fit-content',
-              display: 'flex', alignItems: 'center', gap: '5px',
-              cursor: onEditDates ? 'pointer' : 'default',
-            }}>
-            {fmt(event.start_time)} — {fmt(event.end_time)}
-            {onEditDates && <Pencil size={11} style={{ opacity: 0.7 }} />}
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <p
+              onClick={onEditDates ? (e => { e.stopPropagation(); onEditDates(event) }) : undefined}
+              title={onEditDates ? t('Change dates', 'Đổi thời gian') : undefined}
+              style={{
+                fontSize: '12px', color: 'var(--text-muted)', width: 'fit-content',
+                display: 'flex', alignItems: 'center', gap: '5px',
+                cursor: onEditDates ? 'pointer' : 'default',
+              }}>
+              {fmt(event.start_time)} — {fmt(event.end_time)}
+              {onEditDates && <Pencil size={11} style={{ opacity: 0.7 }} />}
+            </p>
+            <IdChip id={event.event_id} />
+          </div>
         </div>
         {event.people_count != null && (
           <span
@@ -138,7 +155,9 @@ export default function EventCard({ event, onDelete, onClick, canDelete = true, 
             <Trash2 size={15} />
           </button>
         )}
-        <ChevronRight size={15} color="var(--text-muted)" />
+        {/* The "open" chevron only when the card is actually openable (it isn't
+            on the Dashboard, where events open from the Events panel instead). */}
+        {onClick && <ChevronRight size={15} color="var(--text-muted)" />}
       </div>
       {/* Empty-event warning for managers: nudge them to add a member. */}
       {needsMembers && (

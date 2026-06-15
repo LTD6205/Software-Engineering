@@ -4,6 +4,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { Plus, CheckSquare, RotateCcw } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
 import { Task, Event } from '@/lib/types'
+import { toLocalInputValue } from '@/lib/time'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import TaskTimeline from '@/components/TaskTimeline'
@@ -22,15 +23,6 @@ const emptyTask = {
   task_name: '', description: '',
   startDate: '', startTime: '', deadlineDate: '', deadlineTime: '',
   assigned_to: [] as string[],
-}
-
-// Format a stored timestamp to a local "YYYY-MM-DDTHH:mm" string.
-function toLocalDateTime(v?: string) {
-  if (!v) return ''
-  const d = new Date(v)
-  if (isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 // Current epoch ms. Module-level so the "is this in the past?" guards can read
@@ -148,8 +140,8 @@ function TasksContent() {
 
   // The task's dates must stay within the parent event's time range.
   const selEvent = events.find(e => e.event_id === selectedEvent)
-  const evStart = toLocalDateTime(selEvent?.start_time) // "YYYY-MM-DDTHH:mm"
-  const evEnd   = toLocalDateTime(selEvent?.end_time)
+  const evStart = toLocalInputValue(selEvent?.start_time) // "YYYY-MM-DDTHH:mm"
+  const evEnd   = toLocalInputValue(selEvent?.end_time)
 
   const handleCreate = async () => {
     if (!selectedEvent) {
@@ -394,10 +386,19 @@ function TasksContent() {
     try { await tasksApi.renameGroup(groupId, title); await reloadTasks() }
     catch (e) { showToast(tError(getErrorMessage(e, 'Could not rename the group / Không thể đổi tên nhóm'))) }
   }
-  // Manual priority override from a task's Edit panel (pins it to user-set).
+  // Priority change from a task's Edit panel. Picking 'Auto' hands the task back
+  // to the auto-prioritise system (source 'auto'); the backend re-buckets it to
+  // high/medium/low, so we reload to show the computed label. Picking a concrete
+  // level pins it to user-set so auto-recompute won't overwrite it.
   const handleEditPriority = async (taskId: string, label: string) => {
+    if (label === 'auto') {
+      setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_source: 'auto' } : t))
+      try { await tasksApi.update(taskId, { priority_source: 'auto' }); await reloadTasks() }
+      catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
+      return
+    }
     const score = label === 'high' ? 90 : label === 'medium' ? 50 : 10
-    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score } : t))
+    setTasks(p => p.map(t => t.task_id === taskId ? { ...t, priority_label: label as Task['priority_label'], priority_score: score, priority_source: 'user' } : t))
     try { await tasksApi.update(taskId, { priority_label: label, priority_score: score }) }
     catch (e) { await reloadTasks(); showToast(tError(getErrorMessage(e, 'Could not update priority / Không thể cập nhật ưu tiên'))) }
   }

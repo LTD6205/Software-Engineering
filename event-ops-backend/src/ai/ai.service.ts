@@ -14,12 +14,16 @@ import { AiTaskMap } from '../entities/ai-task-map.entity';
 import { User } from '../entities/user.entity';
 import { TasksService, UndoOp } from '../tasks/tasks.service';
 import { EventsService } from '../events/events.service';
-import { randomBytes } from 'crypto';
 import {
   Actor,
+  TaskRef,
   CommandOptions,
   ExecResult,
   AiActionKind,
+  AiAction,
+  CreateAction,
+  UpdateAction,
+  ReassignAction,
   UnassignAction,
   DeleteAction,
   UndoAction,
@@ -40,83 +44,20 @@ import {
   RejectReassignAction,
   CancelReassignAction,
 } from './ai.types';
-import { isActionAllowedForRole, AI_ACTION_ROLES } from './ai.authz';
+import { isActionAllowedForRole } from './ai.authz';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
-
-type Priority = 'low' | 'medium' | 'high';
-
-// The AI may now return a list of *actions*, not just new tasks, so a single
-// natural-language command can also reschedule, re-prioritise, rename, change
-// status, or reassign existing tasks ("push everything back two days", "move
-// Bob's tasks to Carol"). For backward compatibility an item with no `action`
-// field is treated as a `create` (the original array-of-tasks behaviour).
-//   create   — add a new task (task_name + optional priority/assignee/deadline)
-//   update   — change an existing task's name/priority/deadline/status
-//   reassign — replace an existing task's assignee
-// split_task / add_dependency are intentionally not supported yet (the latter
-// needs the currently-unused task_dependencies table).
-interface CreateAction {
-  action: 'create';
-  task_name: string;
-  priority: Priority;
-  assigned_to: string;
-  // The AI chooses each task's length: a start_time and a deadline (start before
-  // deadline). start_time is optional on the wire — executeActions fills in a
-  // sensible default window when the model omits it — but a real duration is what
-  // keeps the task draggable on the timeline.
-  start_time?: string;
-  deadline: string;
-  // Optional group title: new tasks sharing the same group are linked into one
-  // task group after the action loop (see executeActions).
-  group?: string;
-}
-interface UpdateAction {
-  action: 'update';
-  task_ref: string; // existing task id or (case-insensitive) name
-  task_name?: string; // rename the task
-  priority?: Priority;
-  start_time?: string; // move the task's start time
-  deadline?: string;
-  status?: 'in_progress' | 'completed' | 'overdue';
-}
-interface ReassignAction {
-  action: 'reassign';
-  task_ref: string;
-  assigned_to: string;
-}
-type AiAction =
-  | CreateAction
-  | UpdateAction
-  | ReassignAction
-  | UnassignAction
-  | DeleteAction
-  | UndoAction
-  | MergeAction
-  | AddToGroupAction
-  | RenameGroupAction
-  | UngroupAction
-  | CreateEventAction
-  | UpdateEventAction
-  | DeleteEventAction
-  | AddEventManagerAction
-  | RemoveEventManagerAction
-  | CreateUserAction
-  | UpdateUserAction
-  | ResetPasswordAction
-  | RequestReassignAction
-  | AcceptReassignAction
-  | RejectReassignAction
-  | CancelReassignAction;
-
-// A task as listed for the model (and for resolving a task_ref to a real row).
-// `assignees` lets the model scope commands like "reassign all of Bob's tasks"
-// to the right tasks — without it, it can't tell whose tasks are whose.
-interface TaskRef {
-  task_id: string;
-  task_name: string;
-  assignees?: { user_id: string; name: string }[];
-}
+import { fmtVN, parseDeadline, fitWindow } from './ai.time';
+import { extractJson, priorityScore } from './ai.parse';
+import { validateActions } from './ai.validate';
+import { buildActionCatalog } from './ai.catalog';
+import { buildDateGuidance, buildSystemPrompt } from './ai.prompt';
+import {
+  resolveTaskRef,
+  resolveEventRef,
+  resolveGroupRef,
+  tempPassword,
+} from './ai.resolve';
 
 // The provider is any OpenAI-compatible chat-completions API — selected via
 // AI_BASE_URL / AI_MODEL / AI_API_KEY in the environment, not hard-coded to one
@@ -169,413 +110,6 @@ export class AiService {
     this.recentCalls.set(userId, calls);
   }
 
-  // Pull the JSON payload out of a model reply. Models sometimes wrap the JSON
-  // in a ```json fence or add a sentence of prose despite the "JSON only"
-  // instruction; strip a surrounding code fence and, failing that, slice from
-  // the first opening bracket to the last closing one so JSON.parse succeeds.
-  private static extractJson(raw: string): string {
-    let s = raw.trim();
-    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-    if (fence) s = fence[1].trim();
-    if (s[0] !== '{' && s[0] !== '[') {
-      const starts = [s.indexOf('{'), s.indexOf('[')].filter((i) => i >= 0);
-      const start = starts.length ? Math.min(...starts) : -1;
-      const end = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
-      if (start >= 0 && end > start) s = s.slice(start, end + 1);
-    }
-    return s;
-  }
-
-  private static priorityScore(p: Priority): number {
-    return p === 'high' ? 90 : p === 'medium' ? 50 : 10;
-  }
-
-  private static normalisePriority(p: unknown): Priority {
-    return p === 'high' || p === 'low' ? p : 'medium';
-  }
-
-  // Parse a model deadline string into a Date, dropping anything unparseable so
-  // an "Invalid Date" is never persisted. Returns undefined when absent/invalid.
-  private static parseDeadline(value: unknown): Date | undefined {
-    if (typeof value !== 'string' || !value.trim()) return undefined;
-    const d = new Date(value);
-    return isNaN(d.getTime()) ? undefined : d;
-  }
-
-  private static readonly MIN_MS = 60 * 1000;
-  private static readonly HOUR_MS = 60 * 60 * 1000;
-
-  // Fit an AI task's [start, deadline] into [max(now, eventStart) .. eventEnd],
-  // preserving its intended length where the window allows. Guarantees the result
-  // never starts in the past and never overflows the event window — so a plan for
-  // a SHORT event (e.g. one day) is created instead of being rejected by
-  // TasksService (assertNotInPast / assertWithinEventWindow, REQ-19). When the
-  // model gives no deadline the value is returned unchanged. With no window it
-  // degrades to the past-only slide-forward behaviour.
-  private static fitWindow(
-    startTime: Date | undefined,
-    deadline: Date | undefined,
-    now: number,
-    win?: { start: number; end: number },
-  ): { startTime?: Date; deadline?: Date } {
-    if (!deadline) return { startTime, deadline };
-    const { MIN_MS: MIN, HOUR_MS: HOUR } = AiService;
-    // The task's intended length: the model's [start, deadline] span when both
-    // are given and valid, otherwise a one-hour default.
-    const span =
-      startTime && startTime.getTime() < deadline.getTime()
-        ? deadline.getTime() - startTime.getTime()
-        : HOUR;
-    const winStart = win ? Math.max(now, win.start) : now;
-    const winEnd = win ? win.end : Number.POSITIVE_INFINITY;
-    // The longest length that still fits inside the window; keep at least a
-    // minute so start stays strictly before the deadline.
-    let effSpan = span;
-    if (Number.isFinite(winEnd)) {
-      const room = winEnd - winStart;
-      effSpan = room > MIN ? Math.min(span, room) : MIN;
-    }
-    // Anchor on the model's deadline, then pull the window inside [winStart, winEnd].
-    let dl = Math.min(deadline.getTime(), winEnd);
-    if (dl < winStart + effSpan) dl = winStart + effSpan;
-    let st = dl - effSpan;
-    if (st < winStart) st = winStart;
-    if (dl - st < MIN) dl = st + MIN;
-    return { startTime: new Date(st), deadline: new Date(dl) };
-  }
-
-  // Runtime validation of the model's JSON array of actions. Unknown/missing
-  // `action` defaults to 'create' (backward compatible with the old
-  // array-of-tasks format). Malformed items (e.g. a create with no name, or an
-  // update/reassign with no task_ref) are dropped and counted.
-  private validateActions(parsed: unknown[]): {
-    actions: AiAction[];
-    skipped: number;
-  } {
-    const actions: AiAction[] = [];
-    let skipped = 0;
-    for (const raw of parsed) {
-      const item = (raw ?? {}) as Record<string, unknown>;
-      const action =
-        typeof item.action === 'string' ? item.action.toLowerCase() : 'create';
-      const ref = typeof item.task_ref === 'string' ? item.task_ref.trim() : '';
-      const name =
-        typeof item.task_name === 'string' ? item.task_name.trim() : '';
-      const assignedTo =
-        typeof item.assigned_to === 'string' ? item.assigned_to : '';
-      const targetRef =
-        typeof item.target_ref === 'string' ? item.target_ref.trim() : '';
-      const groupRef =
-        typeof item.group_ref === 'string' ? item.group_ref.trim() : '';
-      const title = typeof item.title === 'string' ? item.title.trim() : '';
-      const eventRef =
-        typeof item.event_ref === 'string' ? item.event_ref.trim() : '';
-      const eventName =
-        typeof item.event_name === 'string' ? item.event_name.trim() : '';
-      const startTime =
-        typeof item.start_time === 'string' ? item.start_time.trim() : '';
-      const endTime =
-        typeof item.end_time === 'string' ? item.end_time.trim() : '';
-      const description =
-        typeof item.description === 'string' ? item.description.trim() : '';
-      const managerRef =
-        typeof item.manager_ref === 'string' ? item.manager_ref.trim() : '';
-      const userName = typeof item.name === 'string' ? item.name.trim() : '';
-      const email = typeof item.email === 'string' ? item.email.trim() : '';
-      const phone = typeof item.phone === 'string' ? item.phone.trim() : '';
-      const password =
-        typeof item.password === 'string' ? item.password : undefined;
-      const role = typeof item.role === 'string' ? item.role.trim() : '';
-      const userRef =
-        typeof item.user_ref === 'string' ? item.user_ref.trim() : '';
-      const newPassword =
-        typeof item.new_password === 'string' ? item.new_password : '';
-      const staffRef =
-        typeof item.staff_ref === 'string' ? item.staff_ref.trim() : '';
-      const targetManagerRef =
-        typeof item.target_manager_ref === 'string'
-          ? item.target_manager_ref.trim()
-          : '';
-      const isActive =
-        typeof item.is_active === 'boolean' ? item.is_active : undefined;
-
-      if (action === 'update') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        const status =
-          item.status === 'in_progress' ||
-          item.status === 'completed' ||
-          item.status === 'overdue'
-            ? item.status
-            : undefined;
-        // An update that changes nothing usable is dropped.
-        if (
-          !name &&
-          item.priority === undefined &&
-          !startTime &&
-          item.deadline === undefined &&
-          !status
-        ) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update',
-          task_ref: ref,
-          ...(name ? { task_name: name } : {}),
-          ...(item.priority !== undefined
-            ? { priority: AiService.normalisePriority(item.priority) }
-            : {}),
-          ...(startTime ? { start_time: startTime } : {}),
-          ...(typeof item.deadline === 'string'
-            ? { deadline: item.deadline }
-            : {}),
-          ...(status ? { status } : {}),
-        });
-      } else if (action === 'reassign') {
-        if (!ref || !assignedTo.trim()) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'reassign',
-          task_ref: ref,
-          assigned_to: assignedTo,
-        });
-      } else if (action === 'unassign') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'unassign', task_ref: ref });
-      } else if (action === 'delete') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'delete', task_ref: ref });
-      } else if (action === 'undo') {
-        actions.push({ action: 'undo' });
-      } else if (action === 'merge') {
-        if (!ref || !targetRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'merge', task_ref: ref, target_ref: targetRef });
-      } else if (action === 'add_to_group') {
-        if (!groupRef || !ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'add_to_group',
-          group_ref: groupRef,
-          task_ref: ref,
-        });
-      } else if (action === 'rename_group') {
-        if (!groupRef || !title) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'rename_group', group_ref: groupRef, title });
-      } else if (action === 'ungroup') {
-        if (!ref) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'ungroup', task_ref: ref });
-      } else if (action === 'create_event') {
-        if (!eventName || !startTime || !endTime) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'create_event',
-          event_name: eventName,
-          start_time: startTime,
-          end_time: endTime,
-          ...(description ? { description } : {}),
-        });
-      } else if (action === 'update_event') {
-        if (!eventRef || (!eventName && !description)) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update_event',
-          event_ref: eventRef,
-          ...(eventName ? { event_name: eventName } : {}),
-          ...(description ? { description } : {}),
-        });
-      } else if (action === 'delete_event') {
-        if (!eventRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action: 'delete_event', event_ref: eventRef });
-      } else if (action === 'add_event_manager') {
-        if (!eventRef || !managerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'add_event_manager',
-          event_ref: eventRef,
-          manager_ref: managerRef,
-        });
-      } else if (action === 'remove_event_manager') {
-        if (!eventRef || !managerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'remove_event_manager',
-          event_ref: eventRef,
-          manager_ref: managerRef,
-        });
-      } else if (action === 'create_user') {
-        if (!userName || !email) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'create_user',
-          name: userName,
-          email,
-          ...(role ? { role } : {}),
-          ...(phone ? { phone } : {}),
-          ...(password !== undefined ? { password } : {}),
-        });
-      } else if (action === 'update_user') {
-        // Need a target plus at least one changeable field.
-        if (!userRef || (!userName && !role && isActive === undefined)) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'update_user',
-          user_ref: userRef,
-          ...(userName ? { name: userName } : {}),
-          ...(role ? { role } : {}),
-          ...(isActive !== undefined ? { is_active: isActive } : {}),
-        });
-      } else if (action === 'reset_password') {
-        if (!userRef || !newPassword) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'reset_password',
-          user_ref: userRef,
-          new_password: newPassword,
-        });
-      } else if (action === 'request_reassign') {
-        if (!staffRef || !targetManagerRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({
-          action: 'request_reassign',
-          staff_ref: staffRef,
-          target_manager_ref: targetManagerRef,
-        });
-      } else if (
-        action === 'accept_reassign' ||
-        action === 'reject_reassign' ||
-        action === 'cancel_reassign'
-      ) {
-        if (!staffRef) {
-          skipped++;
-          continue;
-        }
-        actions.push({ action, staff_ref: staffRef });
-      } else {
-        // create (default)
-        if (!name) {
-          skipped++;
-          continue;
-        }
-        const group =
-          typeof item.group === 'string' && item.group.trim()
-            ? item.group.trim()
-            : undefined;
-        actions.push({
-          action: 'create',
-          task_name: name,
-          priority: AiService.normalisePriority(item.priority),
-          assigned_to: assignedTo,
-          ...(startTime ? { start_time: startTime } : {}),
-          deadline: typeof item.deadline === 'string' ? item.deadline : '',
-          ...(group ? { group } : {}),
-        });
-      }
-    }
-    // Cap a single command at 40 actions so a runaway generative reply can't fan
-    // out into an unbounded batch of writes; the overflow is counted as skipped.
-    const MAX_ACTIONS = 40;
-    if (actions.length > MAX_ACTIONS) {
-      skipped += actions.length - MAX_ACTIONS;
-      actions.length = MAX_ACTIONS;
-    }
-    return { actions, skipped };
-  }
-
-  // Resolve a model-supplied task_ref to a real task in this event: an exact id
-  // match first, else a case-insensitive name match. Null when no match.
-  private resolveTaskRef(ref: string, tasks: TaskRef[]): TaskRef | null {
-    const needle = ref.trim().toLowerCase();
-    return (
-      tasks.find((t) => t.task_id.toLowerCase() === needle) ??
-      tasks.find((t) => t.task_name.trim().toLowerCase() === needle) ??
-      null
-    );
-  }
-
-  // Resolve a model-supplied event_ref to a real event id the actor can see: an
-  // exact id match first, else a case-insensitive event-name match. When no ref
-  // is given, fall back to the request's default event. Null when no match.
-  private resolveEventRef(
-    ref: string | undefined,
-    events: { event_id: string; event_name: string }[],
-    defaultEventId?: string,
-  ): string | null {
-    if (!ref) return defaultEventId ?? null;
-    const needle = ref.trim().toLowerCase();
-    return (
-      events.find((e) => e.event_id.toLowerCase() === needle)?.event_id ??
-      events.find((e) => e.event_name.trim().toLowerCase() === needle)
-        ?.event_id ??
-      null
-    );
-  }
-
-  // Resolve a model-supplied group_ref to a real group id in this event: an
-  // exact id match first, else a case-insensitive group-title match. Null when
-  // no match.
-  private resolveGroupRef(
-    ref: string,
-    groupIds: Set<string>,
-    groupByTitle: Map<string, string>,
-  ): string | null {
-    const needle = ref.trim().toLowerCase();
-    if (groupIds.has(ref)) return ref;
-    return groupByTitle.get(needle) ?? null;
-  }
-
-  // A non-trivial fallback password for an AI-created user when the command did
-  // not supply one. Deliberately avoids Math.random: a Date.now()-derived suffix
-  // keeps it reproducible-by-time and easy to reason about in tests/logs while
-  // still satisfying the policy (mixed case, digit, symbol, length). The new
-  // account is expected to have its password reset on first use.
-  private tempPassword(): string {
-    // Cryptographically random so the initial password is unguessable
-    // regardless of creation time; base64url + a fixed suffix satisfies any
-    // complexity policy. The account is expected to reset it on first use.
-    return `Tmp_${randomBytes(16).toString('base64url')}A1`;
-  }
-
   // Turn a thrown service error into a short, client-safe reason string.
   private reason(e: unknown): string {
     return e instanceof HttpException
@@ -583,29 +117,41 @@ export class AiService {
       : 'Action failed';
   }
 
-  // Resolve an AI-provided "assigned_to" string (name or email) to a real,
-  // active user. Returns null when no confident match is found.
+  // Resolve an AI-provided "assigned_to" string (id, name, or email) to a real,
+  // active user. Returns null when no confident match is found. An exact user_id
+  // (UUID) is matched first so same-name accounts are reachable by id.
   private async resolveAssignee(assignedTo?: string): Promise<User | null> {
     const needle = assignedTo?.trim();
     if (!needle) return null;
-    return this.userRepo.findOne({
-      where: [
-        { email: needle, is_active: true },
-        { name: needle, is_active: true },
-      ],
-    });
+    const where: Record<string, unknown>[] = [];
+    if (AiService.isUuid(needle))
+      where.push({ user_id: needle, is_active: true });
+    where.push({ email: needle, is_active: true });
+    where.push({ name: needle, is_active: true });
+    return this.userRepo.findOne({ where });
   }
 
-  // Resolve a user reference by name or email REGARDLESS of active state. Used
-  // for admin account-management actions (update_user/reset_password) so an
+  // Resolve a user reference by id, name, or email REGARDLESS of active state.
+  // Used for admin account-management actions (update_user/reset_password) so an
   // admin can target a deactivated account — e.g. "reactivate Bob" — which the
   // active-only resolveAssignee above could never match.
   private async resolveUserRef(ref?: string): Promise<User | null> {
     const needle = ref?.trim();
     if (!needle) return null;
-    return this.userRepo.findOne({
-      where: [{ email: needle }, { name: needle }],
-    });
+    const where: Record<string, unknown>[] = [];
+    if (AiService.isUuid(needle)) where.push({ user_id: needle });
+    where.push({ email: needle });
+    where.push({ name: needle });
+    return this.userRepo.findOne({ where });
+  }
+
+  // Only query the uuid `user_id` column when the reference actually looks like
+  // a UUID — Postgres rejects a non-UUID literal against a uuid column, which
+  // would otherwise throw on every name/email lookup.
+  private static readonly UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  private static isUuid(s: string): boolean {
+    return AiService.UUID_RE.test(s);
   }
 
   // Assign a task to an AI-named user if one matches. Permission failures (an
@@ -692,11 +238,11 @@ export class AiService {
     groupByTitle: Map<string, string>,
   ): { kind: string; description: string }[] {
     const taskName = (ref: string): string => {
-      const t = this.resolveTaskRef(ref, currentTasks);
+      const t = resolveTaskRef(ref, currentTasks);
       return t ? t.task_name : ref;
     };
     const groupName = (ref: string): string => {
-      const gid = this.resolveGroupRef(ref, groupIds, groupByTitle);
+      const gid = resolveGroupRef(ref, groupIds, groupByTitle);
       if (!gid) return ref;
       for (const [title, id] of groupByTitle) if (id === gid) return title;
       return ref;
@@ -777,10 +323,11 @@ export class AiService {
       completed_count?: number;
     }>,
   ): Promise<string> {
-    const fmt = (d: Date | string | null | undefined) =>
-      d ? new Date(d).toISOString() : 'unspecified';
+    const fmt = (d: Date | string | null | undefined) => fmtVN(d);
     const lines: string[] = [];
-    lines.push(`Actor role: ${actor.role}. Current date-time: ${new Date().toISOString()}.`);
+    lines.push(
+      `Actor role: ${actor.role}. Current date-time (Vietnam time, UTC+7): ${fmtVN(new Date())}.`,
+    );
 
     // Up to 20 viewable events, nearest end_time first; note any overflow.
     const sortedEvents = [...viewableEvents].sort((a, b) => {
@@ -829,17 +376,19 @@ export class AiService {
     // The assignable roster. For a manager this is their own active staff; for
     // organizer/admin we keep it simple (best-effort empty list — see spec
     // Limitations) since their assignable set spans whole teams.
-    let roster: Array<{ name?: string; email?: string }> = [];
+    let roster: Array<{ user_id?: string; name?: string; email?: string }> = [];
     if (actor.role === 'manager') {
       roster = (await this.userRepo.find({
         where: { manager_id: actor.sub, is_active: true },
-      })) as Array<{ name?: string; email?: string }>;
+      })) as Array<{ user_id?: string; name?: string; email?: string }>;
     }
     const shownRoster = roster.slice(0, 50);
     if (shownRoster.length) {
-      lines.push('People you can assign tasks to:');
+      lines.push('People you can assign tasks to (reference by exact name, email, or id):');
       for (const u of shownRoster) {
-        lines.push(`- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}`);
+        lines.push(
+          `- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}${u.user_id ? ` (id ${u.user_id})` : ''}`,
+        );
       }
     } else {
       lines.push('People you can assign tasks to: (none on record)');
@@ -848,62 +397,6 @@ export class AiService {
     return lines.join('\n');
   }
 
-  // One-line JSON shape per action kind, advertised to the model. Only the
-  // shapes whose role allow-list includes the actor are emitted (so the prompt
-  // never describes an action the role cannot perform).
-  private static readonly ACTION_SHAPES: Record<AiActionKind, string> = {
-    create:
-      '{ "action": "create", "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "start_time": "YYYY-MM-DDTHH:mm:ss", "deadline": "YYYY-MM-DDTHH:mm:ss", "group"?: "group title" }',
-    update:
-      '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string (rename)", "priority"?: "low|medium|high", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }',
-    reassign:
-      '{ "action": "reassign", "task_ref": "task name or id", "assigned_to": "name or email" }',
-    unassign: '{ "action": "unassign", "task_ref": "task name or id" }',
-    delete: '{ "action": "delete", "task_ref": "task name or id" }',
-    undo: '{ "action": "undo" }',
-    merge:
-      '{ "action": "merge", "task_ref": "source task", "target_ref": "target task" }',
-    add_to_group:
-      '{ "action": "add_to_group", "group_ref": "group title or id", "task_ref": "task name or id" }',
-    rename_group:
-      '{ "action": "rename_group", "group_ref": "group title or id", "title": "new title" }',
-    ungroup: '{ "action": "ungroup", "task_ref": "task name or id" }',
-    create_event:
-      '{ "action": "create_event", "event_name": "string", "start_time": "YYYY-MM-DDTHH:mm:ss", "end_time": "YYYY-MM-DDTHH:mm:ss", "description"?: "string" }',
-    update_event:
-      '{ "action": "update_event", "event_ref": "event name or id", "event_name"?: "string", "description"?: "string" }',
-    delete_event:
-      '{ "action": "delete_event", "event_ref": "event name or id" }',
-    add_event_manager:
-      '{ "action": "add_event_manager", "event_ref": "event name or id", "manager_ref": "manager name or email" }',
-    remove_event_manager:
-      '{ "action": "remove_event_manager", "event_ref": "event name or id", "manager_ref": "manager name or email" }',
-    create_user:
-      '{ "action": "create_user", "name": "string", "email": "string", "role"?: "staff|manager|organizer", "phone"?: "string" }',
-    update_user:
-      '{ "action": "update_user", "user_ref": "name or email", "name"?: "string", "role"?: "string", "is_active"?: true|false }',
-    reset_password:
-      '{ "action": "reset_password", "user_ref": "name or email", "new_password": "string" }',
-    request_reassign:
-      '{ "action": "request_reassign", "staff_ref": "name or email", "target_manager_ref": "manager name or email" }',
-    accept_reassign: '{ "action": "accept_reassign", "staff_ref": "name or email" }',
-    reject_reassign: '{ "action": "reject_reassign", "staff_ref": "name or email" }',
-    cancel_reassign: '{ "action": "cancel_reassign", "staff_ref": "name or email" }',
-  };
-
-  // The allowed action shapes for a role, one per line, derived from the same
-  // role allow-list used by the hard gate.
-  private buildActionCatalog(role: string): string {
-    const shapes = (
-      Object.keys(AI_ACTION_ROLES) as AiActionKind[]
-    ).filter((kind) => isActionAllowedForRole(role, kind));
-    if (!shapes.length) {
-      return '  (your role has no write actions; you may only answer questions)';
-    }
-    return shapes
-      .map((kind) => `  ${AiService.ACTION_SHAPES[kind]}`)
-      .join('\n');
-  }
 
   // Single execution path for the validated action list. `currentTasks` is the
   // resolvable task list (mutated as creates land); `defaultEventId` is the
@@ -1058,9 +551,9 @@ export class AiService {
         // overflows the event window (assertWithinEventWindow, REQ-19). Without
         // this the model's out-of-window tasks would be rejected one by one and
         // only a couple would survive.
-        const { startTime, deadline } = AiService.fitWindow(
-          AiService.parseDeadline(item.start_time),
-          AiService.parseDeadline(item.deadline),
+        const { startTime, deadline } = fitWindow(
+          parseDeadline(item.start_time),
+          parseDeadline(item.deadline),
           Date.now(),
           eventWindow,
         );
@@ -1070,7 +563,7 @@ export class AiService {
               event_id: eventId,
               task_name: item.task_name,
               priority_label: item.priority,
-              priority_score: AiService.priorityScore(item.priority),
+              priority_score: priorityScore(item.priority),
               priority_source: 'ai',
               ...(startTime ? { start_time: startTime } : {}),
               deadline,
@@ -1118,7 +611,7 @@ export class AiService {
       }
 
       case 'update': {
-        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        const target = resolveTaskRef(item.task_ref, currentTasks);
         if (!target) {
           res.unresolved.push(item.task_ref);
           return;
@@ -1127,14 +620,14 @@ export class AiService {
         if (item.task_name) patch.task_name = item.task_name;
         if (item.priority) {
           patch.priority_label = item.priority;
-          patch.priority_score = AiService.priorityScore(item.priority);
+          patch.priority_score = priorityScore(item.priority);
         }
         if (item.start_time !== undefined) {
-          const s = AiService.parseDeadline(item.start_time);
+          const s = parseDeadline(item.start_time);
           if (s) patch.start_time = s;
         }
         if (item.deadline !== undefined) {
-          const d = AiService.parseDeadline(item.deadline);
+          const d = parseDeadline(item.deadline);
           if (d) patch.deadline = d;
         }
         if (item.status) patch.status = item.status;
@@ -1160,7 +653,7 @@ export class AiService {
       }
 
       case 'reassign': {
-        const target = this.resolveTaskRef(item.task_ref, currentTasks);
+        const target = resolveTaskRef(item.task_ref, currentTasks);
         if (!target) {
           res.unresolved.push(item.task_ref);
           return;
@@ -1193,7 +686,7 @@ export class AiService {
       }
 
       case 'unassign': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -1208,7 +701,7 @@ export class AiService {
       }
 
       case 'delete': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -1246,8 +739,8 @@ export class AiService {
       }
 
       case 'merge': {
-        const s = this.resolveTaskRef(item.task_ref, currentTasks);
-        const tg = this.resolveTaskRef(item.target_ref, currentTasks);
+        const s = resolveTaskRef(item.task_ref, currentTasks);
+        const tg = resolveTaskRef(item.target_ref, currentTasks);
         if (!s || !tg) {
           res.unresolved.push(!s ? item.task_ref : item.target_ref);
           return;
@@ -1265,8 +758,8 @@ export class AiService {
       }
 
       case 'add_to_group': {
-        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const gid = resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!gid || !t) {
           res.unresolved.push(!gid ? item.group_ref : item.task_ref);
           return;
@@ -1281,7 +774,7 @@ export class AiService {
       }
 
       case 'rename_group': {
-        const gid = this.resolveGroupRef(item.group_ref, groupIds, groupByTitle);
+        const gid = resolveGroupRef(item.group_ref, groupIds, groupByTitle);
         if (!gid) {
           res.unresolved.push(item.group_ref);
           return;
@@ -1300,7 +793,7 @@ export class AiService {
       }
 
       case 'ungroup': {
-        const t = this.resolveTaskRef(item.task_ref, currentTasks);
+        const t = resolveTaskRef(item.task_ref, currentTasks);
         if (!t) {
           res.unresolved.push(item.task_ref);
           return;
@@ -1318,8 +811,8 @@ export class AiService {
         // Validate the model's dates are parseable before persisting, mirroring
         // the task path's parseDeadline — an Invalid Date would slip past
         // EventsService.assertValidDateRange (NaN comparisons are false).
-        const start = AiService.parseDeadline(item.start_time);
-        const end = AiService.parseDeadline(item.end_time);
+        const start = parseDeadline(item.start_time);
+        const end = parseDeadline(item.end_time);
         if (!start || !end) {
           res.rejected.push({
             ref: item.event_name,
@@ -1358,7 +851,7 @@ export class AiService {
       }
 
       case 'update_event': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -1369,14 +862,39 @@ export class AiService {
         }
         try {
           await this.events.assertCanManageEvent(actor, id);
-          const ev = await this.events.update(id, {
-            event_name: item.event_name,
-            description: item.description,
-          });
+          let eventName: string | undefined;
+          // Date change → updateDates (shifts the event's tasks along). The user
+          // may give only one side ("move the start to June 10"); fill the other
+          // from the current event. Times are Vietnam-local (parseDeadline → UTC).
+          const newStart = parseDeadline(item.start_time);
+          const newEnd = parseDeadline(item.end_time);
+          if (newStart || newEnd) {
+            const cur = (await this.events.findOneForViewer(id, actor)) as {
+              start_time?: string | Date;
+              end_time?: string | Date;
+              event_name?: string;
+            };
+            const startIso = (
+              newStart ?? new Date(cur.start_time as string | Date)
+            ).toISOString();
+            const endIso = (
+              newEnd ?? new Date(cur.end_time as string | Date)
+            ).toISOString();
+            await this.events.updateDates(id, startIso, endIso, 'shift');
+            eventName = cur.event_name;
+          }
+          // Name / description change → update (only when provided).
+          if (item.event_name !== undefined || item.description !== undefined) {
+            const ev = await this.events.update(id, {
+              event_name: item.event_name,
+              description: item.description,
+            });
+            eventName = (ev as { event_name?: string }).event_name;
+          }
           res.events_changed.push({
             action: 'update_event',
             event_id: id,
-            event_name: (ev as { event_name?: string }).event_name,
+            event_name: eventName,
           });
         } catch (e) {
           res.rejected.push({ ref: item.event_ref, reason: this.reason(e) });
@@ -1385,7 +903,7 @@ export class AiService {
       }
 
       case 'delete_event': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -1405,7 +923,7 @@ export class AiService {
       }
 
       case 'add_event_manager': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -1431,7 +949,7 @@ export class AiService {
       }
 
       case 'remove_event_manager': {
-        const id = this.resolveEventRef(
+        const id = resolveEventRef(
           item.event_ref,
           viewableEvents,
           defaultEventId,
@@ -1471,7 +989,7 @@ export class AiService {
               name: item.name,
               email: item.email,
               phone: item.phone ?? '',
-              password: item.password ?? this.tempPassword(),
+              password: item.password ?? tempPassword(),
               role: item.role,
             },
             actor,
@@ -1681,75 +1199,23 @@ export class AiService {
     // window and not in the past — otherwise dates like "next Friday" get
     // rejected. Only meaningful when a specific event is in scope. The actor
     // already passed the view/manage check above.
-    const fmt = (d: Date | string | null | undefined) =>
-      d ? new Date(d).toISOString() : 'unspecified';
-    let windowInfo = `DATE GUIDANCE:
-- Today (now, ISO 8601) is ${new Date().toISOString()}.
-- Never output a task start_time or deadline in the past.
-- When the user prompt, schedule from the CURRENT TIME onward: lay the tasks out one after another AFTER now, never starting in the morning of a day that is already partly over.
-- Give every task "create" BOTH a "start_time" and a "deadline", with the start_time strictly before the deadline, so each task has a real duration (about an hour if unsure).
-- For "create_event": the "end_time" MUST be at least one day from now; the "start_time" may be earlier (even in the past).`;
+    // Tell the model the event's date window (and "now") via the date-guidance
+    // block, plus the role-filtered action catalog (the hard gate still
+    // re-checks each action in executeActions). Only fetch the event when one is
+    // in scope; the actor already passed the view/manage check above.
+    let eventWindow:
+      | { start: Date | string | null; end: Date | string | null }
+      | undefined;
     if (eventId) {
       const event = await this.events.findOneForViewer(eventId, actor);
-      windowInfo = `HARD DATE CONSTRAINT — read carefully:
-- Today (now, ISO 8601) is ${new Date().toISOString()}.
-- This event's window is ${fmt(event.start_time)} to ${fmt(event.end_time)} (ISO 8601).
-- EVERY "deadline" you output MUST be >= the event start AND <= the event end, and
-  must not be in the past. A date outside this window will be REJECTED.
-- NEVER output a deadline later than ${fmt(event.end_time)}. If the user asks for a
-  later date (e.g. "next Friday" that falls after the event end), use exactly
-  ${fmt(event.end_time)} instead. If they ask for an earlier/past date, use the
-  later of now and the event start.
-- Give every task BOTH a "start_time" and a "deadline": both MUST sit inside this
-  window, with the start_time strictly BEFORE the deadline (a sensible duration,
-  e.g. about an hour), so the task has a real length on the timeline.
-- Spread multiple tasks across times INSIDE this window; do not exceed it.
-- If the window is SHORT (e.g. a single day or a few hours), make the tasks
-  shorter (e.g. 30-60 minutes) and place them back-to-back so the WHOLE plan fits
-  before the event end. Divide the available time by the number of tasks rather
-  than giving each a full hour and running past the end.
-- When the user says "today" (or a time of day that has already passed), start
-  from the CURRENT TIME and lay the tasks out one after another AFTER now — do not
-  schedule them in the morning of a day that is already partly over.`;
+      eventWindow = { start: event.start_time, end: event.end_time };
     }
-
-    // The advertised action catalog is filtered to the actor's role so the model
-    // only ever sees shapes it is permitted to use (the hard gate still re-checks
-    // each action in executeActions).
-    const actionCatalog = this.buildActionCatalog(actor.role);
-
-    const systemPrompt = `You are an event operations partner for the role "${actor.role}".
-The user issues a natural-language command or question about events, tasks,
-groups, people, and (for some roles) accounts. Use the context below to answer
-questions, resolve references, and plan work.
-
-CONTEXT (everything you can see right now):
-${contextBlock}
-
-${windowInfo}
-
-You reply with a SINGLE JSON OBJECT — and NOTHING else (no markdown, no prose,
-no preamble). It MUST be exactly one of these three json shapes:
-
-1) ACTIONS to perform — "kind":"actions" with an "actions" array of action
-   objects: { "kind": "actions", "actions": [ <action>, <action>, ... ] }
-   Allowed action shapes for the "actions" array (for your role):
-${actionCatalog}
-
-2) A direct ANSWER to a question, answered ONLY from the context above:
-  { "kind": "answer", "answer": "..." }
-
-3) A CLARIFICATION request, ONLY when truly blocked and you cannot infer a sane default:
-  { "kind": "clarification", "question": "..." }
-
-RULES:
-- Reference existing tasks/events/groups/people by their exact name (or id) from the context.
-- For an "update", include ONLY the fields that change. To shift deadlines, emit one update per affected task.
-- To undo the most recent change in the current event (an edit or a deletion), emit { "action": "undo" }. Use this for "undo", "revert that", "undo the last change", "put it back".
-- SCOPED BULK CHANGES: When a command targets "all of <person>'s tasks" (reassign, reschedule, etc.), act ONLY on tasks whose "assigned to:" in the context lists that person. Emit one action per such task by its exact name, and DO NOT touch tasks assigned to anyone else. If no task is assigned to that person, make no changes and say so (an answer) instead of guessing.
-- ANTI-NAG: Prefer sensible defaults over asking. Ask for clarification ONLY when a command is genuinely ambiguous or missing an essential detail you cannot reasonably infer. A high-level/generative goal (e.g. "plan a birthday party", "set up everything for the gala") MUST NOT ask a question — decompose it instead.
-- GENERATIVE PLANNING: For a high-level goal, decompose it into a COMPLETE checklist of "create" actions, each with a "start_time" and a "deadline" (start before deadline, a sensible duration) INSIDE the event window, group related tasks via a "group" title, and spread "assigned_to" across the people listed in the context.
-- If a command is too vague to act on and a clarification would not help, return: { "error": "insufficient info", "missing": ["field1", "field2"] }.`;
+    const systemPrompt = buildSystemPrompt(
+      actor.role,
+      contextBlock,
+      buildDateGuidance(eventWindow),
+      buildActionCatalog(actor.role),
+    );
 
     const aiRequest = await this.aiRequestRepo.save({
       user_id: userId,
@@ -1774,7 +1240,7 @@ RULES:
       let parsed: unknown;
 
       try {
-        parsed = JSON.parse(AiService.extractJson(raw));
+        parsed = JSON.parse(extractJson(raw));
       } catch {
         // Don't echo the raw model output back to the client.
         throw new BadRequestException(
@@ -1850,7 +1316,7 @@ RULES:
       }
 
       // Drop malformed items; reject outright if nothing usable came back.
-      const { actions, skipped } = this.validateActions(parsed);
+      const { actions, skipped } = validateActions(parsed);
       if (actions.length === 0) {
         await this.aiRequestRepo.update(aiRequest.request_id, {
           response: parsed as object,

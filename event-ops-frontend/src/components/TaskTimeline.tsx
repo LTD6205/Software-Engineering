@@ -2,12 +2,14 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Clock, Trash2, Users as UsersIcon, Unlink, Pencil, Check, X, Plus, Minus, Maximize2 } from 'lucide-react'
 import { Task, Event } from '@/lib/types'
-import { snapMs } from '@/lib/time'
+import { snapMs, formatDate } from '@/lib/time'
+import { HOUR, DAY, ms, packLanes, computeTicks } from '@/lib/timeline'
 import { useLang } from '@/context/LanguageContext'
 import Modal from './Modal'
 import Dropdown from './Dropdown'
 import TimePicker from './TimePicker'
 import Avatar from './Avatar'
+import IdChip from './IdChip'
 
 // Status -> colour. Blocks are tinted by their current state.
 const STATUS_COLOR: Record<string, string> = {
@@ -22,8 +24,6 @@ const PRIORITY_COLOR: Record<string, string> = {
   low: 'var(--accent-green)',
 }
 
-const HOUR = 3600000
-const DAY = 86400000
 const ROW_H = 74       // height of one lane (a block); fits name + stacked start/end
 const LANE_GAP = 6
 const GROUP_TITLE_H = 22
@@ -32,8 +32,6 @@ const MIN_BLOCK_PX = 14  // thin bar floor so blocks stay proportional and stret
 const LABEL_PX = 150     // horizontal room reserved for a block's label (it spills right of a thin bar)
 const MAX_PXPERDAY = 3000 // deepest zoom = hour labels with 15-min gridlines
 const AXIS_H = 26
-// Candidate axis steps (ms), smallest first.
-const TICK_STEPS = [15 * 60000, 30 * 60000, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 90 * DAY]
 
 interface Props {
   event: Event
@@ -59,21 +57,6 @@ interface Props {
   onNotice?: (message: string) => void
 }
 
-const ms = (v?: string | null) => (v ? new Date(v).getTime() : NaN)
-// Greedy lane packing: items keep their own [start,end]; non-overlapping ones
-// share a lane, overlapping ones drop to the next — so blocks never overlap.
-function packLanes<T extends { start: number; end: number }>(items: T[]) {
-  const sorted = [...items].sort((a, b) => a.start - b.start)
-  const laneEnd: number[] = []
-  const placed = new Map<T, number>()
-  for (const it of sorted) {
-    let lane = laneEnd.findIndex(end => end <= it.start)
-    if (lane === -1) { lane = laneEnd.length; laneEnd.push(it.end) }
-    else laneEnd[lane] = it.end
-    placed.set(it, lane)
-  }
-  return { placed, lanes: Math.max(1, laneEnd.length) }
-}
 
 export default function TaskTimeline(props: Props) {
   const { event, tasks, matches, canManage } = props
@@ -99,11 +82,13 @@ export default function TaskTimeline(props: Props) {
         if (n.has(taskId)) n.delete(taskId); else n.add(taskId)
         return n
       })
-    } else {
-      setSelected(new Set())
-      const tk = tasks.find(x2 => x2.task_id === taskId)
-      if (tk) setEditTask(tk)
+      return
     }
+    // A plain click with an active multi-selection just clears it (no edit
+    // panel) — a second click then opens the task as normal.
+    if (selected.size > 0) { setSelected(new Set()); return }
+    const tk = tasks.find(x2 => x2.task_id === taskId)
+    if (tk) setEditTask(tk)
   }
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropKey, setDropKey] = useState<string | null>(null)
@@ -192,6 +177,7 @@ export default function TaskTimeline(props: Props) {
     if ((e.target as HTMLElement).closest('[data-block]')) return // let blocks drag-to-merge
     const el = scrollRef.current
     if (!el) return
+    const downX = e.clientX, downY = e.clientY
     let lastX = e.clientX, lastY = e.clientY
     setPanning(true)
     const move = (ev: MouseEvent) => {
@@ -200,7 +186,16 @@ export default function TaskTimeline(props: Props) {
       el.scrollTop -= ev.clientY - lastY
       lastX = ev.clientX; lastY = ev.clientY
     }
-    const up = () => { setPanning(false); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    const up = (ev: MouseEvent) => {
+      setPanning(false)
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      // A plain click on empty background (not a drag-pan) clears an active
+      // multi-selection — the canvas equivalent of clicking a block to deselect.
+      if (Math.abs(ev.clientX - downX) < 6 && Math.abs(ev.clientY - downY) < 6) {
+        setSelected(prev => (prev.size > 0 ? new Set() : prev))
+      }
+    }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
   }
@@ -302,42 +297,16 @@ export default function TaskTimeline(props: Props) {
   const hasVisible = singles.some(matches) || [...groups.values()].some(arr => arr.some(matches))
   const nothing = !hasVisible
 
-  // Date axis ticks. The major step (labelled) is the finest one that still
-  // leaves ≥66px between labels; minor gridlines subdivide it ×4 (so at hour
-  // zoom you get unlabelled 15-min marks to place tasks precisely).
+  // Date-axis ticks for the current zoom (pure geometry in lib/timeline).
   const loc = lang === 'vi' ? 'vi-VN' : 'en-US'
-  const majorStep = pxPerDay > 0
-    ? (TICK_STEPS.find(s => (s / DAY) * pxPerDay >= 66) ?? TICK_STEPS[TICK_STEPS.length - 1])
-    : DAY
-  const minorStep = majorStep / 4
-  const showMinor = pxPerDay > 0 && minorStep >= 5 * 60000 && (minorStep / DAY) * pxPerDay >= 11
-  // First tick at/after evStart, aligned to a local boundary of the step.
-  const alignedFirst = (step: number) => {
-    const d = new Date(evStart)
-    if (step >= DAY) { d.setHours(0, 0, 0, 0) }
-    else {
-      const stepMin = step / 60000
-      const mod = (d.getHours() * 60 + d.getMinutes()) % stepMin
-      d.setSeconds(0, 0); d.setMinutes(d.getMinutes() - mod)
-    }
-    let tk = d.getTime()
-    while (tk < evStart) tk += step
-    return tk
-  }
-  const majors: number[] = []
-  const minors: number[] = []
-  if (pxPerDay > 0) {
-    for (let tk = alignedFirst(majorStep); tk <= evEnd && majors.length < 600; tk += majorStep) majors.push(tk)
-    if (showMinor) for (let tk = alignedFirst(minorStep); tk <= evEnd && minors.length < 2500; tk += minorStep) minors.push(tk)
-  }
+  const { majorStep, majors, minors } = computeTicks({ pxPerDay, evStart, evEnd })
   const fmtTick = (time: number) => {
     const d = new Date(time)
     if (majorStep >= DAY) return d.toLocaleDateString(loc, majorStep >= 30 * DAY ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' })
     if (d.getHours() === 0 && d.getMinutes() === 0) return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' })
     return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: lang !== 'vi' })
   }
-  const fmtFull = (iso?: string | null) =>
-    !iso ? '—' : new Date(iso).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmtFull = (iso?: string | null) => formatDate(iso, lang)
   // ── Drag-and-drop, handled entirely at the canvas level by geometry so it's
   // reliable no matter which element the browser reports under the cursor (this
   // is why dragging one block onto ANOTHER always merges, even when they
@@ -448,6 +417,14 @@ export default function TaskTimeline(props: Props) {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
             <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: completed ? 'line-through' : 'none' }}>{tk.task_name}</span>
+            {/* Auto-prioritised tasks show an "Auto" tag next to their resolved
+                High/Med/Low badge — the colour still conveys urgency. */}
+            {tk.priority_source === 'auto' && (
+              <span style={{
+                flexShrink: 0, fontSize: '9px', fontWeight: 800, letterSpacing: '0.03em', textTransform: 'uppercase',
+                padding: '1px 5px', borderRadius: '6px', background: 'rgba(59,130,246,0.16)', color: 'var(--accent-blue)',
+              }}>{t('Auto', 'Tự động')}</span>
+            )}
             <span style={{
               flexShrink: 0, fontSize: '9px', fontWeight: 800, letterSpacing: '0.03em', textTransform: 'uppercase',
               padding: '1px 5px', borderRadius: '6px', background: `${pColor}26`, color: pColor,
@@ -674,6 +651,9 @@ export default function TaskTimeline(props: Props) {
         const color = STATUS_COLOR[tk.status] || 'var(--text-muted)'
         return (
           <Modal title={tk.task_name} onClose={() => setEditTask(null)}>
+            <div style={{ marginBottom: '12px' }}>
+              <IdChip id={tk.task_id} />
+            </div>
             {tk.group_title != null && (
               <p style={{ fontSize: '12px', color: 'var(--accent-purple)', fontWeight: 600, marginBottom: '12px' }}>
                 {t('In group', 'Trong nhóm')}: {tk.group_title || t('Untitled group', 'Nhóm chưa đặt tên')}
@@ -704,10 +684,13 @@ export default function TaskTimeline(props: Props) {
               {canManage && (
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                    {t('Priority', 'Ưu tiên')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('auto unless changed', 'tự động trừ khi chỉnh')})</span>
+                    {t('Priority', 'Ưu tiên')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({t('Auto follows the timeline', 'Tự động theo tiến độ')})</span>
                   </label>
-                  <Dropdown fullWidth value={tk.priority_label} onChange={v => props.onEditPriority(tk.task_id, v)}
+                  {/* Value reflects the source: an 'auto' task shows "Auto" (the
+                      backend keeps re-bucketing it); choosing a level pins it. */}
+                  <Dropdown fullWidth value={tk.priority_source === 'auto' ? 'auto' : tk.priority_label} onChange={v => props.onEditPriority(tk.task_id, v)}
                     options={[
+                      { value: 'auto', label: t('Auto', 'Tự động'), color: 'var(--accent-blue)' },
                       { value: 'high', label: t('High', 'Cao'), color: 'var(--accent-red)' },
                       { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
                       { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },

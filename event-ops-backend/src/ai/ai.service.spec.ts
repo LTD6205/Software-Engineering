@@ -5,6 +5,7 @@
 } from '@nestjs/common';
 import axios from 'axios';
 import { AiService } from './ai.service';
+import { resolveEventRef } from './ai.resolve';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -62,6 +63,7 @@ function build(role = 'manager') {
     // Event write methods (organizer/admin only).
     create: jest.fn().mockResolvedValue({ event_id: 'e9', event_name: 'Gala' }),
     update: jest.fn().mockResolvedValue({ event_id: 'e1', event_name: 'X' }),
+    updateDates: jest.fn().mockResolvedValue(undefined),
     remove: jest.fn().mockResolvedValue(undefined),
     addManager: jest.fn().mockResolvedValue(undefined),
     removeManager: jest.fn().mockResolvedValue(undefined),
@@ -551,6 +553,38 @@ describe('AiService.processCommand', () => {
       'req1',
       expect.objectContaining({ status: 'success' }),
     );
+  });
+
+  it("never creates an AI task on 'auto' — a stray priority is coerced to a concrete label", async () => {
+    const { service, tasksService, userRepo } = build();
+    userRepo.findOne.mockResolvedValue(null);
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            task_name: 'Book venue',
+            // The model shouldn't emit 'auto', but if it does it must not slip
+            // through: AI tasks always carry a fixed priority, never the
+            // auto-prioritise source.
+            priority: 'auto',
+            assigned_to: '',
+            deadline: '2026-07-01T10:00:00',
+          },
+        ]),
+      ),
+    );
+
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'book a venue',
+    });
+
+    const created = tasksService.create.mock.calls[0][0] as {
+      priority_label: string;
+      priority_source: string;
+    };
+    expect(created.priority_source).toBe('ai');
+    expect(['low', 'medium', 'high']).toContain(created.priority_label);
   });
 
   it('assigns the created task when the AI names a matching active user', async () => {
@@ -1143,25 +1177,15 @@ describe('AiService.processCommand', () => {
   });
 
   it('resolveEventRef resolves by id and by case-insensitive name', () => {
-    const { service } = build();
-    const resolve = (
-      service as unknown as {
-        resolveEventRef: (
-          ref: string | undefined,
-          events: { event_id: string; event_name: string }[],
-          defaultEventId?: string,
-        ) => string | null;
-      }
-    ).resolveEventRef.bind(service);
     const events = [
       { event_id: 'e1', event_name: 'Spring Gala' },
       { event_id: 'e2', event_name: 'Summer Fest' },
     ];
-    expect(resolve('e2', events)).toBe('e2');
-    expect(resolve('spring gala', events)).toBe('e1');
-    expect(resolve('unknown', events)).toBeNull();
-    expect(resolve(undefined, events, 'e1')).toBe('e1');
-    expect(resolve(undefined, events)).toBeNull();
+    expect(resolveEventRef('e2', events)).toBe('e2');
+    expect(resolveEventRef('spring gala', events)).toBe('e1');
+    expect(resolveEventRef('unknown', events)).toBeNull();
+    expect(resolveEventRef(undefined, events, 'e1')).toBe('e1');
+    expect(resolveEventRef(undefined, events)).toBeNull();
   });
 
   it('create_event (organizer) calls events.create with created_by from JWT', async () => {
@@ -1275,6 +1299,76 @@ describe('AiService.processCommand', () => {
       action: 'update_event',
       event_id: 'e1',
     });
+  });
+
+  it('update_event with a start_time changes the event dates via updateDates (Vietnam time → UTC, shift)', async () => {
+    const { service, events } = build('organizer');
+    events.findForViewer.mockResolvedValue([
+      { event_id: 'e1', event_name: 'Spring Gala' },
+    ]);
+    // Current event window the handler fills the unspecified (end) side from.
+    events.findOneForViewer.mockResolvedValue({
+      event_id: 'e1',
+      event_name: 'Spring Gala',
+      start_time: '2026-06-01T00:00:00Z',
+      end_time: '2026-06-30T17:00:00.000Z',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'update_event',
+            event_ref: 'Spring Gala',
+            start_time: '2026-06-10T00:00:00', // bare = Vietnam local (UTC+7)
+          },
+        ]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'o1', role: 'organizer' },
+      { message: 'chuyển ngày bắt đầu sự kiện Spring Gala thành ngày 10 tháng 6' },
+    )) as { events_changed: Array<Record<string, unknown>> };
+    // 2026-06-10T00:00 Vietnam (UTC+7) == 2026-06-09T17:00:00Z; end filled from current.
+    expect(events.updateDates).toHaveBeenCalledWith(
+      'e1',
+      '2026-06-09T17:00:00.000Z',
+      '2026-06-30T17:00:00.000Z',
+      'shift',
+    );
+    expect(r.events_changed[0]).toMatchObject({
+      action: 'update_event',
+      event_id: 'e1',
+    });
+  });
+
+  it('interprets a bare task time as Vietnam local (UTC+7), persisting the correct UTC instant', async () => {
+    const { service, tasksService } = build('manager');
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([
+          {
+            action: 'update',
+            task_ref: 'Lên kế hoạch chương trình',
+            start_time: '2026-06-10T20:00:00', // "8h tối" Vietnam time
+          },
+        ]),
+      ),
+    );
+    // The task must already exist so the update resolves.
+    (tasksService.findAllByEvent as jest.Mock).mockResolvedValue([
+      { task_id: 'tk1', task_name: 'Lên kế hoạch chương trình', event_id: 'e1' },
+    ]);
+    await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { eventId: 'e1', message: 'chỉnh task bắt đầu lúc 8h tối' },
+    );
+    const patch = (tasksService.update as jest.Mock).mock.calls[0][1] as {
+      start_time?: Date;
+    };
+    // 20:00 Vietnam (UTC+7) == 13:00Z — NOT 20:00Z (the old +7h bug showed 03:00 local).
+    expect((patch.start_time as Date).toISOString()).toBe(
+      '2026-06-10T13:00:00.000Z',
+    );
   });
 
   it('delete_event resolves event_ref then removes; unmatched ref → unresolved', async () => {
@@ -1406,7 +1500,7 @@ describe('AiService.processCommand', () => {
     expect(r.unresolved).toContain('Sam');
   });
 
-  it('manager create_user is rejected if it names a non-staff role', async () => {
+  it('manager create_user is rejected by the role gate (admin-only)', async () => {
     const { service, usersService } = build('manager');
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
@@ -1416,17 +1510,19 @@ describe('AiService.processCommand', () => {
             name: 'New',
             email: 'n@x.com',
             phone: '0900000001',
-            role: 'manager',
+            role: 'staff',
           },
         ]),
       ),
     );
     const r = (await service.processCommand(
       { sub: 'm1', role: 'manager' },
-      { message: 'add a manager named New' },
+      { message: 'add a staff member named New' },
     )) as { rejected: Array<{ reason: string }> };
+    // create_user is now admin-only — a manager cannot create accounts at all,
+    // not even staff (the central role gate blocks it before the service runs).
     expect(usersService.create).not.toHaveBeenCalled();
-    expect(r.rejected[0].reason).toMatch(/admin/i);
+    expect(r.rejected[0].reason).toMatch(/role/i);
   });
 
   it('manager reset_password is rejected by the role gate', async () => {

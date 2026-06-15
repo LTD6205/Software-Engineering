@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Bot, Send, User, CheckCircle, XCircle, Loader, X, Sparkles, RotateCcw } from 'lucide-react'
 import { aiApi, getErrorMessage } from '@/lib/api'
 import { useLang } from '@/context/LanguageContext'
+import { useAuth } from '@/context/AuthContext'
 
 // A turn in the visible conversation. `role` mirrors the backend's history
 // contract ('user' | 'assistant'); `status`/`plan`/`requestId` decorate the
@@ -21,8 +22,11 @@ interface Turn {
 
 type Mode = 'auto' | 'ask'
 
-// localStorage key for the saved conversation (cleared on logout — see AuthContext).
-const AI_CHAT_KEY = 'ai_chat_history'
+// localStorage key PREFIX for the saved conversation. The real key is namespaced
+// per user (`ai_chat_history:<userId>`) so different accounts/roles never share a
+// transcript — a Manager never sees an Organizer's history. Cleared on logout
+// (see AuthContext).
+const AI_CHAT_PREFIX = 'ai_chat_history'
 
 // Prepare the transcript for storage: drop in-flight 'loading' turns, and fold an
 // awaiting-confirmation plan into plain text — it can't be confirmed after a
@@ -56,6 +60,10 @@ function useCurrentEventId(): string | undefined {
 function AiDrawerInner({ onClose }: { onClose: () => void }) {
   const eventId = useCurrentEventId()
   const { t, tError, lang } = useLang()
+  const { user } = useAuth()
+  // Per-user transcript key, so each account (and therefore each role) keeps its
+  // own AI history — a Manager never loads an Organizer's chat.
+  const chatKey = `${AI_CHAT_PREFIX}:${user?.user_id ?? 'anon'}`
 
   const [mode, setMode] = useState<Mode>('auto')
   const [transcript, setTranscript] = useState<Turn[]>([])
@@ -77,14 +85,14 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
   // localStorage, keyed per provider key 'ai_chat_history'. Restored on mount.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(AI_CHAT_KEY)
+      const saved = localStorage.getItem(chatKey)
       if (saved) {
         const parsed = JSON.parse(saved) as Turn[]
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (Array.isArray(parsed) && parsed.length) setTranscript(parsed)
       }
     } catch { /* ignore corrupt history */ }
-  }, [])
+  }, [chatKey])
 
   // Save on every change — but skip the initial mount run so it can't clobber the
   // saved history before the restore effect above has populated it.
@@ -92,9 +100,9 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (firstPersist.current) { firstPersist.current = false; return }
     try {
-      localStorage.setItem(AI_CHAT_KEY, JSON.stringify(persistableTranscript(transcript)))
+      localStorage.setItem(chatKey, JSON.stringify(persistableTranscript(transcript)))
     } catch { /* storage full / unavailable — non-fatal */ }
-  }, [transcript])
+  }, [transcript, chatKey])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [transcript])
 
@@ -226,7 +234,7 @@ function AiDrawerInner({ onClose }: { onClose: () => void }) {
   const resetChat = () => {
     setTranscript([])
     setInput('')
-    try { localStorage.removeItem(AI_CHAT_KEY) } catch { /* storage unavailable — non-fatal */ }
+    try { localStorage.removeItem(chatKey) } catch { /* storage unavailable — non-fatal */ }
     inputRef.current?.focus()
   }
 

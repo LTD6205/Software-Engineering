@@ -1,10 +1,11 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { Plus, CalendarDays } from 'lucide-react'
+import { Plus, CalendarDays, Trash2, FolderOpen } from 'lucide-react'
 import { eventsApi, getErrorMessage } from '@/lib/api'
 import { useLiveData } from '@/lib/useLiveData'
 import { isEventNearby, isEventInMonth, isEventOnDate, NEARBY_DAYS } from '@/lib/filters'
 import { Event, ManagerOption } from '@/lib/types'
+import { splitLocalDateTime } from '@/lib/time'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import EventCard from '@/components/EventCard'
@@ -30,6 +31,11 @@ export default function EventsPage() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  // Ctrl/Cmd-click multi-select (organizers/admins): a set of event ids the user
+  // can act on in batch via the right-click menu. A plain click clears it.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [menu, setMenu] = useState<{ x: number; y: number; event: Event } | null>(null)
+  const [batchDeleting, setBatchDeleting] = useState(false)
   const [managers, setManagers] = useState<ManagerOption[]>([])
   const [pickedManagers, setPickedManagers] = useState<string[]>([])
   const [editing, setEditing] = useState<Event | null>(null) // member editor
@@ -64,16 +70,6 @@ export default function EventsPage() {
   const router = useRouter()
   const { canManageEvents } = useAuth()
   const { t, tError } = useLang()
-
-  // Split an ISO timestamp into local date + time inputs.
-  const splitDT = (iso: string) => {
-    const d = new Date(iso)
-    const p = (n: number) => String(n).padStart(2, '0')
-    return {
-      date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
-      time: `${p(d.getHours())}:${p(d.getMinutes())}`,
-    }
-  }
 
   const load = async () => {
     setLoading(true)
@@ -166,8 +162,8 @@ export default function EventsPage() {
 
   // Date editor: open prefilled, then save with a task strategy.
   const openDateEditor = (ev: Event) => {
-    const s = splitDT(ev.start_time)
-    const e = splitDT(ev.end_time)
+    const s = splitLocalDateTime(ev.start_time)
+    const e = splitLocalDateTime(ev.end_time)
     setDForm({ startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time })
     setEditingDates(ev)
     setDErr('')
@@ -254,6 +250,36 @@ export default function EventsPage() {
     setEvents(prev => prev.filter(e => e.event_id !== id))
   }
 
+  // Card interactions (organizers/admins only — gated by canManageEvents):
+  //  • Ctrl/Cmd-click toggles the event in the multi-selection.
+  //  • A plain click with an active selection clears it (and does NOT open).
+  //  • A plain click with no selection opens the event's tasks.
+  const onCardClick = (ev: Event, e: React.MouseEvent) => {
+    if ((e.ctrlKey || e.metaKey) && canManageEvents) {
+      setSelected(prev => {
+        const n = new Set(prev)
+        if (n.has(ev.event_id)) n.delete(ev.event_id); else n.add(ev.event_id)
+        return n
+      })
+      return
+    }
+    if (selected.size > 0) { setSelected(new Set()); return }
+    router.push(`/tasks?eventId=${ev.event_id}`)
+  }
+  // Right-click → context menu (organizers/admins). Mirrors the task timeline.
+  const onCardContext = (ev: Event, e: React.MouseEvent) => {
+    if (!canManageEvents) return
+    setMenu({ x: e.clientX, y: e.clientY, event: ev })
+  }
+  // Delete every selected event, then refresh and clear the selection. Routed
+  // through the confirm dialog first (deleting an event cascades its tasks).
+  const doBatchDelete = async () => {
+    const ids = [...selected]
+    await Promise.allSettled(ids.map(id => eventsApi.remove(id)))
+    setSelected(new Set())
+    load()
+  }
+
   const field = (label: string, labelVi: string, key: keyof typeof form, type = 'text') => (
     <div style={{ marginBottom: '16px' }}>
       <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
@@ -290,12 +316,24 @@ export default function EventsPage() {
   return (
     <div>
       <TopBar title="Events" titleVi="Sự kiện" />
-      <div style={{ padding: '28px' }}>
+      {/* A plain click on empty space clears an active multi-selection (a
+          Ctrl/Cmd-click on a card is excluded so it can still toggle). */}
+      <div
+        style={{ padding: '28px' }}
+        onClick={e => { if (!(e.ctrlKey || e.metaKey) && selected.size > 0) setSelected(new Set()) }}
+      >
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
             {filteredEvents.length}{filteredEvents.length !== events.length ? ` / ${events.length}` : ''}{' '}
             {t(events.length === 1 ? 'event' : 'events', 'sự kiện')}
+            {canManageEvents && events.length > 0 && (
+              <span style={{ marginLeft: '10px', fontSize: '11px' }}>
+                {selected.size > 0
+                  ? t(`· ${selected.size} selected — right-click to delete · click to clear`, `· đã chọn ${selected.size} — chuột phải để xóa · nhấn để bỏ chọn`)
+                  : t('· Ctrl+click to select multiple · right-click for actions', '· Ctrl+nhấn để chọn nhiều · chuột phải để thao tác')}
+              </span>
+            )}
           </p>
           {canManageEvents && (
             <button
@@ -382,7 +420,9 @@ export default function EventsPage() {
                 key={event.event_id}
                 event={event}
                 onDelete={setPendingDelete}
-                onClick={e => router.push(`/tasks?eventId=${e.event_id}`)}
+                onClick={onCardClick}
+                onContextMenu={onCardContext}
+                selected={selected.has(event.event_id)}
                 canDelete={canManageEvents}
                 onManageMembers={canManageEvents ? openMembers : undefined}
                 onViewMembers={canManageEvents ? undefined : openViewMembers}
@@ -701,6 +741,28 @@ export default function EventsPage() {
         </Modal>
       )}
 
+      {/* Right-click context menu (organizers/admins). When events are
+          multi-selected it offers a batch delete; otherwise per-event actions. */}
+      {menu && (
+        <>
+          <div onMouseDown={() => setMenu(null)} onWheel={() => setMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+          <div style={{
+            position: 'fixed', left: Math.min(menu.x, (typeof window !== 'undefined' ? window.innerWidth : 9999) - 200), top: menu.y, zIndex: 201,
+            background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: '10px',
+            boxShadow: '0 12px 30px rgba(0,0,0,0.4)', padding: '6px', minWidth: '180px',
+          }}>
+            {selected.size > 0 && (
+              <>
+                {ctxItem(`${t('Delete selected', 'Xóa mục đã chọn')} (${selected.size})`, <Trash2 size={14} />, () => { setBatchDeleting(true); setMenu(null) }, 'var(--accent-red)')}
+                <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }} />
+              </>
+            )}
+            {ctxItem(t('Open', 'Mở'), <FolderOpen size={14} />, () => { router.push(`/tasks?eventId=${menu.event.event_id}`); setMenu(null) })}
+            {ctxItem(t('Delete', 'Xóa'), <Trash2 size={14} />, () => { setPendingDelete(menu.event.event_id); setMenu(null) }, 'var(--accent-red)')}
+          </div>
+        </>
+      )}
+
       <ConfirmDialog
         open={!!pendingDelete}
         danger
@@ -711,6 +773,35 @@ export default function EventsPage() {
         onConfirm={() => { if (pendingDelete) doDelete(pendingDelete); setPendingDelete(null) }}
         onCancel={() => setPendingDelete(null)}
       />
+
+      <ConfirmDialog
+        open={batchDeleting}
+        danger
+        title={t('Delete selected events', 'Xóa các sự kiện đã chọn')}
+        message={t(
+          `Delete ${selected.size} selected event(s)? This also removes their tasks and cannot be undone.`,
+          `Xóa ${selected.size} sự kiện đã chọn? Thao tác này cũng xóa các công việc của chúng và không thể hoàn tác.`,
+        )}
+        confirmLabel={t('Delete', 'Xóa')}
+        cancelLabel={t('Cancel', 'Hủy')}
+        onConfirm={() => { doBatchDelete(); setBatchDeleting(false) }}
+        onCancel={() => setBatchDeleting(false)}
+      />
     </div>
   )
+
+  // A single context-menu row, styled like the task timeline's menu items.
+  function ctxItem(label: string, icon: React.ReactNode, onClick: () => void, color?: string) {
+    return (
+      <button onClick={onClick} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 10px',
+        background: 'transparent', border: 'none', borderRadius: '7px', cursor: 'pointer',
+        fontSize: '13px', fontWeight: 600, color: color || 'var(--text-primary)', textAlign: 'left',
+      }}
+        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+        {icon} {label}
+      </button>
+    )
+  }
 }

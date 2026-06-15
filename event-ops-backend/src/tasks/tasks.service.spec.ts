@@ -32,7 +32,6 @@ function makeRepo() {
 function build() {
   const taskRepo = makeRepo();
   const assignRepo = makeRepo();
-  const depRepo = makeRepo();
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
   const changeLogRepo = makeRepo();
@@ -55,7 +54,6 @@ function build() {
   const service = new TasksService(
     taskRepo as never,
     assignRepo as never,
-    depRepo as never,
     groupRepo as never,
     logRepo as never,
     changeLogRepo as never,
@@ -395,6 +393,48 @@ describe('TasksService', () => {
           { sub: 'mgr', role: 'manager' },
         ),
       ).rejects.toThrow(/cannot be in the past/);
+    });
+
+    it('reverting priority to auto drops any manual label and re-buckets', async () => {
+      const ctx = build();
+      const DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      ctx.taskRepo.findOne.mockResolvedValue({
+        task_id: 't1',
+        event_id: 'e1',
+        status: 'in_progress',
+        created_by: 'mgr',
+      });
+      ctx.eventRepo.findOne.mockResolvedValue(null);
+      // The recompute reads the event's tasks: an auto task already past the
+      // "now" line always buckets to high, giving a deterministic label.
+      ctx.taskRepo.find.mockResolvedValue([
+        {
+          task_id: 't1',
+          priority_source: 'auto',
+          group_id: null,
+          deadline: new Date(now - 1 * DAY).toISOString(),
+        },
+      ]);
+
+      await ctx.service.update(
+        't1',
+        // A client may send a label alongside; the auto source must win and the
+        // label be ignored (it's the timeline's to decide).
+        { priority_source: 'auto', priority_label: 'low' },
+        { sub: 'mgr', role: 'manager' },
+      );
+
+      // The row is written with source 'auto' and no pinned label/score…
+      const patch = ctx.taskRepo.update.mock.calls[0][1];
+      expect(patch.priority_source).toBe('auto');
+      expect(patch).not.toHaveProperty('priority_label');
+      expect(patch).not.toHaveProperty('priority_score');
+      // …and the recompute then buckets it (a second update sets the label).
+      const rebucket = ctx.taskRepo.update.mock.calls.find(
+        ([, p]) => p.priority_label !== undefined,
+      );
+      expect(rebucket?.[1].priority_label).toBe('high');
     });
 
     it('slides an overdue task forward to now when it is reopened', async () => {

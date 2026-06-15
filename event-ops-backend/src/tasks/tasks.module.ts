@@ -2,7 +2,6 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Task } from '../entities/task.entity';
 import { TaskAssignment } from '../entities/task-assignment.entity';
-import { TaskDependency } from '../entities/task-dependency.entity';
 import { TaskGroup } from '../entities/task-group.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { TaskChangeLog } from '../entities/task-change-log.entity';
@@ -19,7 +18,6 @@ import { EventsModule } from '../events/events.module';
     TypeOrmModule.forFeature([
       Task,
       TaskAssignment,
-      TaskDependency,
       TaskGroup,
       TaskLog,
       TaskChangeLog,
