@@ -26,6 +26,7 @@ export const AI_ACTION_ROLES: Record<AiActionKind, string[]> = {
   accept_reassign: ['manager', 'admin'],
   reject_reassign: ['manager', 'admin'],
   cancel_reassign: ['manager', 'admin'],
+  remove_from_team: ['manager', 'admin'],
 };
 
 export function isActionAllowedForRole(role: string, action: string): boolean {

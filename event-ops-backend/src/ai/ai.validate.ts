@@ -243,7 +243,8 @@ export function validateActions(parsed: unknown[]): {
     } else if (
       action === 'accept_reassign' ||
       action === 'reject_reassign' ||
-      action === 'cancel_reassign'
+      action === 'cancel_reassign' ||
+      action === 'remove_from_team'
     ) {
       if (!staffRef) {
         skipped++;

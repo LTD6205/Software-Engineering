@@ -122,8 +122,8 @@ describe('EventsService', () => {
       await service.create(
         {
           event_name: 'X',
-          start_time: new Date('2026-06-10T10:00:00Z'),
-          end_time: new Date('2026-06-11T10:00:00Z'),
+          start_time: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          end_time: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
         },
         ['m1'],
       );
@@ -217,8 +217,8 @@ describe('EventsService', () => {
         service.create(
           {
             event_name: 'X',
-            start_time: new Date('2026-06-10T10:00:00Z'),
-            end_time: new Date('2026-06-11T10:00:00Z'),
+            start_time: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            end_time: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
           },
           ['m-empty'],
         ),

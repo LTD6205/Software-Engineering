@@ -77,6 +77,7 @@ function build(role = 'manager') {
     acceptReassign: jest.fn().mockResolvedValue(undefined),
     rejectReassign: jest.fn().mockResolvedValue(undefined),
     cancelReassign: jest.fn().mockResolvedValue(undefined),
+    removeFromTeam: jest.fn().mockResolvedValue(undefined),
     // Eligible managers the AI seeds into a newly-created event (empty by
     // default; a test overrides it to assert they are passed to events.create).
     findManagerIdsWithActiveStaff: jest.fn().mockResolvedValue([]),
@@ -227,10 +228,15 @@ describe('AiService.processCommand', () => {
   it('fits a task into a SHORT event window instead of letting it overflow and be rejected', async () => {
     const { service, tasksService, userRepo, events } = build();
     userRepo.findOne.mockResolvedValue(null);
-    // A 12-hour event window in the future; the model schedules a deadline days
-    // past the end (what it does for short events). fitWindow must pull it inside.
-    const winStart = '2026-06-09T08:00:00.000Z';
-    const winEnd = '2026-06-09T20:00:00.000Z';
+    // A 12-hour event window starting tomorrow (kept relative to now so the test
+    // never goes stale); the model schedules a deadline days past the end (what
+    // it does for short events). fitWindow must pull it inside.
+    const day = 24 * 60 * 60 * 1000;
+    const winStart = new Date(new Date(Date.now() + day).setHours(8, 0, 0, 0)).toISOString();
+    const winEnd = new Date(new Date(Date.now() + day).setHours(20, 0, 0, 0)).toISOString();
+    // Model's reply overshoots the window by days.
+    const replyStart = new Date(Date.now() + 4 * day).toISOString();
+    const replyDeadline = new Date(Date.now() + 7 * day).toISOString();
     events.findOneForViewer.mockResolvedValue({
       event_id: 'e1',
       start_time: winStart,
@@ -243,8 +249,8 @@ describe('AiService.processCommand', () => {
             task_name: 'Cater',
             priority: 'medium',
             assigned_to: '',
-            start_time: '2026-06-12T08:00:00Z',
-            deadline: '2026-06-15T10:00:00Z',
+            start_time: replyStart,
+            deadline: replyDeadline,
           },
         ]),
       ),
@@ -1573,6 +1579,32 @@ describe('AiService.processCommand', () => {
     );
     expect(r.users_changed[0]).toMatchObject({
       action: 'request_reassign',
+      user_id: 's5',
+    });
+  });
+
+  it('remove_from_team resolves staff_ref and calls removeFromTeam', async () => {
+    const { service, usersService, userRepo } = build('manager');
+    userRepo.findOne.mockResolvedValue({
+      user_id: 's5',
+      name: 'Sam',
+      role: 'staff',
+    });
+    mockedAxios.post.mockResolvedValue(
+      deepSeekReply(
+        JSON.stringify([{ action: 'remove_from_team', staff_ref: 'Sam' }]),
+      ),
+    );
+    const r = (await service.processCommand(
+      { sub: 'm1', role: 'manager' },
+      { message: 'remove Sam from my team' },
+    )) as { users_changed: Array<Record<string, unknown>> };
+    expect(usersService.removeFromTeam).toHaveBeenCalledWith(
+      's5',
+      expect.objectContaining({ sub: 'm1' }),
+    );
+    expect(r.users_changed[0]).toMatchObject({
+      action: 'remove_from_team',
       user_id: 's5',
     });
   });

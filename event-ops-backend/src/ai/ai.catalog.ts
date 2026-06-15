@@ -44,6 +44,8 @@ export const ACTION_SHAPES: Record<AiActionKind, string> = {
   accept_reassign: '{ "action": "accept_reassign", "staff_ref": "name or email" }',
   reject_reassign: '{ "action": "reject_reassign", "staff_ref": "name or email" }',
   cancel_reassign: '{ "action": "cancel_reassign", "staff_ref": "name or email" }',
+  remove_from_team:
+    '{ "action": "remove_from_team", "staff_ref": "name or email" }',
 };
 
 // The allowed action shapes for a role, one per line, derived from the same

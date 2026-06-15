@@ -299,6 +299,71 @@ export class AiService {
             kind: 'ungroup',
             description: `Remove "${taskName(item.task_ref)}" from its group`,
           };
+        case 'create_event':
+          return {
+            kind: 'create_event',
+            description: `Create event "${item.event_name}"`,
+          };
+        case 'update_event':
+          return {
+            kind: 'update_event',
+            description: `Update event "${item.event_ref}"`,
+          };
+        case 'delete_event':
+          return {
+            kind: 'delete_event',
+            description: `Delete event "${item.event_ref}"`,
+          };
+        case 'add_event_manager':
+          return {
+            kind: 'add_event_manager',
+            description: `Add manager ${item.manager_ref} to event "${item.event_ref}"`,
+          };
+        case 'remove_event_manager':
+          return {
+            kind: 'remove_event_manager',
+            description: `Remove manager ${item.manager_ref} from event "${item.event_ref}"`,
+          };
+        case 'create_user':
+          return {
+            kind: 'create_user',
+            description: `Create ${item.role ?? 'staff'} account for ${item.name} (${item.email})`,
+          };
+        case 'update_user':
+          return {
+            kind: 'update_user',
+            description: `Update account ${item.user_ref}`,
+          };
+        case 'reset_password':
+          return {
+            kind: 'reset_password',
+            description: `Reset password for ${item.user_ref}`,
+          };
+        case 'request_reassign':
+          return {
+            kind: 'request_reassign',
+            description: `Request to move ${item.staff_ref} to manager ${item.target_manager_ref}`,
+          };
+        case 'accept_reassign':
+          return {
+            kind: 'accept_reassign',
+            description: `Accept reassignment of ${item.staff_ref}`,
+          };
+        case 'reject_reassign':
+          return {
+            kind: 'reject_reassign',
+            description: `Reject reassignment of ${item.staff_ref}`,
+          };
+        case 'cancel_reassign':
+          return {
+            kind: 'cancel_reassign',
+            description: `Cancel pending reassignment of ${item.staff_ref}`,
+          };
+        case 'remove_from_team':
+          return {
+            kind: 'remove_from_team',
+            description: `Remove ${item.staff_ref} from the team`,
+          };
         default:
           return { kind: 'unknown', description: 'Unknown action' };
       }
@@ -1122,6 +1187,25 @@ export class AiService {
             action: item.action,
             user_id: staff.user_id,
             summary: `${item.action} for ${staff.name}`,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.staff_ref, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'remove_from_team': {
+        const staff = await this.resolveAssignee(item.staff_ref);
+        if (!staff) {
+          res.unresolved.push(item.staff_ref);
+          return;
+        }
+        try {
+          await this.users.removeFromTeam(staff.user_id, actor);
+          res.users_changed.push({
+            action: 'remove_from_team',
+            user_id: staff.user_id,
+            summary: `Removed ${staff.name} from team`,
           });
         } catch (e) {
           res.rejected.push({ ref: item.staff_ref, reason: this.reason(e) });

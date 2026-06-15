@@ -23,7 +23,8 @@ export type AiActionKind =
   | 'request_reassign'
   | 'accept_reassign'
   | 'reject_reassign'
-  | 'cancel_reassign';
+  | 'cancel_reassign'
+  | 'remove_from_team';
 
 // Core task action shapes. For backward compatibility an item with no `action`
 // field is treated as a `create` (the original array-of-tasks behaviour).
@@ -167,6 +168,12 @@ export interface CancelReassignAction {
   action: 'cancel_reassign';
   staff_ref: string;
 }
+// Remove a staff member from the actor's own team (manager/admin). Routes to
+// UsersService.removeFromTeam.
+export interface RemoveFromTeamAction {
+  action: 'remove_from_team';
+  staff_ref: string;
+}
 
 // The full set of actions the model may emit. An item with no `action` field is
 // treated as a `create` (see validateActions in ai.validate.ts).
@@ -192,7 +199,8 @@ export type AiAction =
   | RequestReassignAction
   | AcceptReassignAction
   | RejectReassignAction
-  | CancelReassignAction;
+  | CancelReassignAction
+  | RemoveFromTeamAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 // `assignees` lets the model scope commands like "reassign all of Bob's tasks"
