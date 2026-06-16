@@ -12,6 +12,8 @@ import { TaskAssignment } from '../entities/task-assignment.entity';
 import { TaskGroup } from '../entities/task-group.entity';
 import { TaskLog } from '../entities/task-log.entity';
 import { TaskChangeLog } from '../entities/task-change-log.entity';
+import { TaskCustomStatus } from '../entities/task-custom-status.entity';
+import { TaskDependency } from '../entities/task-dependency.entity';
 import { User } from '../entities/user.entity';
 import { Event } from '../entities/event.entity';
 import { EventsGateway } from '../websocket/events.gateway';
@@ -45,6 +47,10 @@ export class TasksService {
     @InjectRepository(TaskLog) private logRepo: Repository<TaskLog>,
     @InjectRepository(TaskChangeLog)
     private changeLogRepo: Repository<TaskChangeLog>,
+    @InjectRepository(TaskCustomStatus)
+    private customStatusRepo: Repository<TaskCustomStatus>,
+    @InjectRepository(TaskDependency)
+    private depRepo: Repository<TaskDependency>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Event) private eventRepo: Repository<Event>,
     private readonly gateway: EventsGateway,
@@ -76,13 +82,18 @@ export class TasksService {
       where: { event_id: eventId },
       order: { priority_score: 'DESC', deadline: 'ASC' },
     });
-    // Staff only see tasks they are assigned to; managers+ see all of them.
+    // Staff see tasks they are assigned to, plus any task linked (either
+    // direction) to one of their assigned tasks (read-only); managers+ see all.
     if (viewer?.role === 'staff') {
       const mine = await this.assignRepo.find({
         where: { user_id: viewer.sub },
       });
-      const myTaskIds = new Set(mine.map((a) => a.task_id));
-      tasks = tasks.filter((tk) => myTaskIds.has(tk.task_id));
+      const myTaskIds = mine.map((a) => a.task_id);
+      const mySet = new Set(myTaskIds);
+      const linked = await this.linkedTaskIds(myTaskIds);
+      tasks = tasks.filter(
+        (tk) => mySet.has(tk.task_id) || linked.has(tk.task_id),
+      );
     }
     if (tasks.length === 0) return tasks;
     // Attach each task's assignees (id, name, avatar) so the UI can show
@@ -239,6 +250,7 @@ export class TasksService {
     'status',
     'start_time',
     'deadline',
+    'custom_status_id',
   ];
 
   private pickUpdatable(data: Partial<Task>): Partial<Task> {
@@ -365,10 +377,13 @@ export class TasksService {
     // re-attribute it.
     data = this.pickUpdatable(data);
 
-    // Editing anything other than `status` is a manager action and requires
-    // managing the task's event. The status field has its own per-actor rules
-    // below (creator/assignee), so a plain assignee can still progress a task.
-    const editsMetadata = Object.keys(data).some((k) => k !== 'status');
+    // Editing anything other than `status`/`custom_status_id` is a manager action
+    // and requires managing the task's event. Those two fields have their own
+    // per-actor rules (creator/assignee) below, so a plain assignee can still
+    // progress a task or set its custom progress label.
+    const editsMetadata = Object.keys(data).some(
+      (k) => k !== 'status' && k !== 'custom_status_id',
+    );
     if (editsMetadata) {
       if (!actor || actor.role === 'staff') {
         throw new BadRequestException(
@@ -376,6 +391,12 @@ export class TasksService {
         );
       }
       await this.events.assertCanManageEvent(actor, old.event_id);
+    }
+
+    // Setting/clearing the custom progress label is allowed for the creator or an
+    // assignee (same gate as a status change), regardless of role.
+    if (data.custom_status_id !== undefined && actor) {
+      await this.assertCreatorOrAssignee(old, actor);
     }
 
     // Reopening a task whose deadline has already passed (e.g. an overdue task
@@ -560,6 +581,7 @@ export class TasksService {
     priority_source: 'priority',
     start_time: 'start time',
     deadline: 'deadline',
+    custom_status_id: 'custom status',
   };
 
   newUndoOp(): UndoOp {
@@ -926,6 +948,194 @@ export class TasksService {
         );
       }
     }
+  }
+
+  // The creator of a task or any of its assignees — the gate shared by status
+  // changes, custom-status edits, and task linking.
+  private async assertCreatorOrAssignee(
+    task: Task,
+    actor: { sub: string; role: string },
+  ) {
+    const assignments = await this.assignRepo.find({
+      where: { task_id: task.task_id },
+    });
+    const isCreator = task.created_by === actor.sub;
+    const isAssigned = assignments.some((a) => a.user_id === actor.sub);
+    if (!isCreator && !isAssigned) {
+      throw new BadRequestException(
+        'You are not allowed to change this task / Bạn không có quyền thay đổi công việc này',
+      );
+    }
+  }
+
+  // ── Custom statuses (reusable per-event progress labels) ────
+
+  async listCustomStatuses(
+    eventId: string,
+    viewer: { sub: string; role: string },
+  ) {
+    await this.events.assertCanViewEvent(viewer, eventId);
+    return this.customStatusRepo.find({
+      where: { event_id: eventId },
+      order: { created_at: 'ASC' },
+    });
+  }
+
+  async createCustomStatus(
+    eventId: string,
+    data: { name: string; color?: string | null },
+    actor: { sub: string; role: string },
+  ) {
+    // Any member of the event (manager or staff) may define a status.
+    await this.events.assertCanViewEvent(actor, eventId);
+    const name = (data.name ?? '').trim();
+    if (!name) {
+      throw new BadRequestException(
+        'Status name is required / Cần có tên trạng thái',
+      );
+    }
+    const existing = await this.customStatusRepo
+      .createQueryBuilder('s')
+      .where('s.event_id = :eventId', { eventId })
+      .andWhere('lower(s.name) = lower(:name)', { name })
+      .getOne();
+    if (existing) {
+      throw new BadRequestException(
+        'A status with this name already exists / Trạng thái này đã tồn tại',
+      );
+    }
+    const row = this.customStatusRepo.create({
+      event_id: eventId,
+      name,
+      color: data.color ?? null,
+      created_by: actor.sub,
+    });
+    const saved = await this.customStatusRepo.save(row);
+    this.broadcastChange(eventId);
+    return saved;
+  }
+
+  async deleteCustomStatus(
+    statusId: string,
+    actor: { sub: string; role: string },
+  ) {
+    const row = await this.customStatusRepo.findOne({
+      where: { status_id: statusId },
+    });
+    if (!row) {
+      throw new NotFoundException(
+        'Custom status not found / Không tìm thấy trạng thái',
+      );
+    }
+    // The creator may delete their own; anyone else must manage the event.
+    if (row.created_by === actor.sub) {
+      await this.events.assertCanViewEvent(actor, row.event_id);
+    } else {
+      await this.events.assertCanManageEvent(actor, row.event_id);
+    }
+    // FK is ON DELETE SET NULL, so any tasks using it are detached automatically.
+    await this.customStatusRepo.delete({ status_id: statusId });
+    this.broadcastChange(row.event_id);
+    return { message: 'Custom status deleted / Đã xoá trạng thái' };
+  }
+
+  // ── Task links (symmetric "related" relationship over task_dependencies) ──
+
+  // Managers/admin who manage the event, or staff who are the task's creator or
+  // an assignee, may link/unlink it.
+  private async assertCanLink(
+    task: Task,
+    actor: { sub: string; role: string },
+  ) {
+    if (
+      actor.role === 'manager' ||
+      actor.role === 'admin' ||
+      actor.role === 'organizer'
+    ) {
+      await this.events.assertCanManageEvent(actor, task.event_id);
+      return;
+    }
+    await this.assertCreatorOrAssignee(task, actor);
+  }
+
+  // The set of task ids linked (in either direction) to any of the given tasks.
+  private async linkedTaskIds(taskIds: string[]): Promise<Set<string>> {
+    if (taskIds.length === 0) return new Set();
+    const rows: Array<{ task_id: string; depends_on_task: string }> =
+      await this.depRepo.manager.query(
+        `SELECT task_id, depends_on_task FROM task_dependencies
+         WHERE task_id = ANY($1::uuid[]) OR depends_on_task = ANY($1::uuid[])`,
+        [taskIds],
+      );
+    const out = new Set<string>();
+    for (const r of rows) {
+      out.add(r.task_id);
+      out.add(r.depends_on_task);
+    }
+    return out;
+  }
+
+  async linkTasks(
+    taskId: string,
+    targetId: string,
+    actor: { sub: string; role: string },
+  ) {
+    if (taskId === targetId) {
+      throw new BadRequestException(
+        'Cannot link a task to itself / Không thể liên kết công việc với chính nó',
+      );
+    }
+    const a = await this.findOne(taskId);
+    const b = await this.findOne(targetId);
+    if (a.event_id !== b.event_id) {
+      throw new BadRequestException(
+        'Tasks must be in the same event / Công việc phải cùng một sự kiện',
+      );
+    }
+    await this.assertCanLink(a, actor);
+    // Symmetric: only create when no link exists in either direction.
+    const existing = await this.depRepo
+      .createQueryBuilder('d')
+      .where(
+        '(d.task_id = :a AND d.depends_on_task = :b) OR (d.task_id = :b AND d.depends_on_task = :a)',
+        { a: taskId, b: targetId },
+      )
+      .getOne();
+    if (!existing) {
+      await this.depRepo.save(
+        this.depRepo.create({ task_id: taskId, depends_on_task: targetId }),
+      );
+    }
+    this.broadcastChange(a.event_id);
+    return { message: 'Linked / Đã liên kết' };
+  }
+
+  async unlinkTasks(
+    taskId: string,
+    targetId: string,
+    actor: { sub: string; role: string },
+  ) {
+    const a = await this.findOne(taskId);
+    await this.assertCanLink(a, actor);
+    await this.depRepo
+      .createQueryBuilder()
+      .delete()
+      .where(
+        '(task_id = :a AND depends_on_task = :b) OR (task_id = :b AND depends_on_task = :a)',
+        { a: taskId, b: targetId },
+      )
+      .execute();
+    this.broadcastChange(a.event_id);
+    return { message: 'Unlinked / Đã gỡ liên kết' };
+  }
+
+  async getLinks(taskId: string, viewer: { sub: string; role: string }) {
+    const task = await this.findOne(taskId);
+    await this.events.assertCanViewEvent(viewer, task.event_id);
+    const ids = await this.linkedTaskIds([taskId]);
+    ids.delete(taskId);
+    if (ids.size === 0) return [];
+    return this.taskRepo.find({ where: { task_id: In(Array.from(ids)) } });
   }
 
   // ── Assignments ────────────────────────────────────────────

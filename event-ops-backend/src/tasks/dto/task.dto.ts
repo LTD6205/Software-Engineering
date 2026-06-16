@@ -8,6 +8,7 @@ import {
   IsDateString,
   IsIn,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 
 // PUT /tasks/:id — edit an existing task. Mirrors TasksService.UPDATABLE_FIELDS:
@@ -50,9 +51,34 @@ export class UpdateTaskDto {
   @IsDateString()
   deadline?: string;
 
+  // The custom progress label to attach (UUID) or null to clear it.
+  @IsOptional()
+  @ValidateIf((o: UpdateTaskDto) => o.custom_status_id !== null)
+  @IsUUID()
+  custom_status_id?: string | null;
+
   @IsOptional()
   @IsUUID()
   actor_user_id?: string;
+}
+
+// POST /tasks/event/:eventId/custom-statuses — define a reusable progress label.
+export class CreateCustomStatusDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  color?: string | null;
+}
+
+// POST /tasks/:id/links — link this task to another task in the same event.
+export class LinkTaskDto {
+  @IsUUID()
+  target_task_id: string;
 }
 
 // POST /tasks/groups/merge — merge one task into another (creates/extends a group).

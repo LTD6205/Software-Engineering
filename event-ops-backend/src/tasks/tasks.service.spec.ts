@@ -35,6 +35,8 @@ function build() {
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
   const changeLogRepo = makeRepo();
+  const customStatusRepo = makeRepo();
+  const depRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
   const gateway = {
@@ -57,6 +59,8 @@ function build() {
     groupRepo as never,
     logRepo as never,
     changeLogRepo as never,
+    customStatusRepo as never,
+    depRepo as never,
     userRepo as never,
     eventRepo as never,
     gateway as never,
@@ -70,6 +74,8 @@ function build() {
     groupRepo,
     logRepo,
     changeLogRepo,
+    customStatusRepo,
+    depRepo,
     userRepo,
     eventRepo,
     gateway,
@@ -788,6 +794,86 @@ describe('TasksService', () => {
         }),
       ).rejects.toThrow();
       expect(assignRepo.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('custom statuses', () => {
+    it('creates a custom status for an event member', async () => {
+      const { service, customStatusRepo } = build();
+      customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({ andWhere: () => ({ getOne: async () => null }) }),
+      });
+      const made = await service.createCustomStatus(
+        'e1',
+        { name: 'Blocked', color: '#f00' },
+        { sub: 'u1', role: 'manager' },
+      );
+      expect(customStatusRepo.save).toHaveBeenCalled();
+      expect((made as { name: string }).name).toBe('Blocked');
+    });
+
+    it('rejects a duplicate status name in the same event', async () => {
+      const { service, customStatusRepo } = build();
+      customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({
+          andWhere: () => ({ getOne: async () => ({ status_id: 'x' }) }),
+        }),
+      });
+      await expect(
+        service.createCustomStatus(
+          'e1',
+          { name: 'Blocked' },
+          { sub: 'u1', role: 'manager' },
+        ),
+      ).rejects.toThrow(/already exists/);
+    });
+
+    it('lets a non-creator delete only if they manage the event', async () => {
+      const { service, customStatusRepo, events } = build();
+      customStatusRepo.findOne.mockResolvedValue({
+        status_id: 's1',
+        event_id: 'e1',
+        created_by: 'someoneElse',
+      });
+      events.assertCanManageEvent.mockRejectedValue(
+        new BadRequestException('nope'),
+      );
+      await expect(
+        service.deleteCustomStatus('s1', { sub: 'u2', role: 'manager' }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('task links', () => {
+    it('rejects linking tasks from different events', async () => {
+      const { service, taskRepo } = build();
+      taskRepo.findOne
+        .mockResolvedValueOnce({ task_id: 'a', event_id: 'e1', created_by: 'u1' })
+        .mockResolvedValueOnce({ task_id: 'b', event_id: 'e2', created_by: 'u1' });
+      await expect(
+        service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' }),
+      ).rejects.toThrow(/same event/);
+    });
+
+    it('rejects linking a task to itself', async () => {
+      const { service } = build();
+      await expect(
+        service.linkTasks('a', 'a', { sub: 'u1', role: 'manager' }),
+      ).rejects.toThrow(/itself/);
+    });
+
+    it('creates a symmetric link when none exists', async () => {
+      const { service, taskRepo, depRepo } = build();
+      taskRepo.findOne
+        .mockResolvedValueOnce({ task_id: 'a', event_id: 'e1', created_by: 'u1' })
+        .mockResolvedValueOnce({ task_id: 'b', event_id: 'e1', created_by: 'u1' });
+      depRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({ getOne: async () => null }),
+      });
+      await service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' });
+      expect(depRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ task_id: 'a', depends_on_task: 'b' }),
+      );
     });
   });
 
