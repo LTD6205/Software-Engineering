@@ -139,7 +139,7 @@ The table below is **authoritative**: the backend enforces it with **exact role 
 | View Team presence board | ✅ | ✅ | ✅ | ✅ (read-only) |
 | Create/edit/delete events, shift dates, add member managers | ✅ | ✅ | ❌ | ❌ |
 | Create tasks, assign, group, batch-delete | ✅ | ❌ | ✅ (own staff) | ❌ |
-| Update task status | ✅ | ✅ (if assigned) | ✅ | ✅ (if assigned) |
+| Update task status | ✅ | ❌ | ✅ | ✅ (if assigned) |
 | Undo recent task changes | ✅ | ❌ | ✅ (own events) | ❌ |
 | Reassign or remove own staff (team membership only) | ✅ | ❌ | ✅ (own staff) | ❌ |
 | Request to join a manager's team | ❌ | ❌ | ❌ | ✅ |
