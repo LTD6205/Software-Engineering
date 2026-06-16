@@ -1,5 +1,8 @@
 # EC2 Docker Compose Deployment
 
+> See also [`DEPLOY.md`](./DEPLOY.md) — the primary, concise deploy guide. This document is the
+> longer walk-through. Both run the same `deploy/docker-compose.prod.yml` stack.
+
 This guide runs the full Event Ops stack on one AWS EC2 Amazon Linux instance:
 
 - Nginx on public port `80`
@@ -83,9 +86,11 @@ cd ~/event-ops
 
 ## 4. Configure Environment
 
-Create the root `.env` file:
+The production stack lives in `deploy/` and uses `docker-compose.prod.yml` with its own `deploy/.env`
+(the root `docker-compose.yml` is for local Postgres only). Create `deploy/.env`:
 
 ```bash
+cd ~/event-ops/deploy
 cp .env.example .env
 nano .env
 ```
@@ -93,14 +98,16 @@ nano .env
 Set these values:
 
 ```env
-PUBLIC_ORIGIN=http://YOUR_EC2_PUBLIC_IP
+PUBLIC_URL=http://YOUR_EC2_PUBLIC_IP
 DB_USERNAME=postgres
 DB_PASSWORD=use_a_strong_database_password
 DB_NAME=event_ops
 JWT_SECRET=replace_with_output_from_openssl_rand
+# AI is optional — leave the key blank to disable the assistant. The deployed
+# stack defaults to Gemini (any OpenAI-compatible endpoint works).
 AI_API_KEY=
-AI_BASE_URL=https://api.deepseek.com/v1
-AI_MODEL=deepseek-chat
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+AI_MODEL=gemini-2.5-flash
 ```
 
 Generate a JWT secret:
@@ -109,23 +116,23 @@ Generate a JWT secret:
 openssl rand -hex 32
 ```
 
-If you later point a domain at the instance, change `PUBLIC_ORIGIN` to `http://your-domain.com` or `https://your-domain.com`.
+`PUBLIC_URL` (the browser-facing origin) drives both HTTP and Socket.io CORS. If you later point a domain at the instance, change it to `http://your-domain.com` or `https://your-domain.com`.
 
 ## 5. Build And Start
 
-From the project root:
+From the `deploy/` directory (where `docker-compose.prod.yml` lives):
 
 ```bash
-docker compose up -d --build
-docker compose ps
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
 ```
 
 Check logs if a service is not healthy:
 
 ```bash
-docker compose logs -f backend
-docker compose logs -f frontend
-docker compose logs -f nginx
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml logs -f frontend
+docker compose -f docker-compose.prod.yml logs -f nginx
 ```
 
 ## 6. Initialize The Database
@@ -136,28 +143,30 @@ The backend uses TypeORM with `synchronize: false`, so it does not create or upd
 2. Run the idempotent SQL migrations from `event-ops-backend/migrations/`.
 3. Seed the default login accounts from `event-ops-backend/seed.js`.
 
-Run the schema SQL once. If you kept the example database username and database name:
+The compose stack mounts `database_creating.txt` as the database's first-boot init, so the baseline
+schema is normally applied automatically the first time the data volume is created. To apply it
+manually (e.g. against an existing volume), run from `deploy/` — the file is one level up:
 
 ```bash
-docker exec -i event_ops_db psql -U postgres -d event_ops < database_creating.txt
+docker exec -i event_ops_db psql -U postgres -d event_ops < ../database_creating.txt
 ```
 
 If you changed `DB_USERNAME` or `DB_NAME`, use those values in the command:
 
 ```bash
-docker exec -i event_ops_db psql -U YOUR_DB_USERNAME -d YOUR_DB_NAME < database_creating.txt
+docker exec -i event_ops_db psql -U YOUR_DB_USERNAME -d YOUR_DB_NAME < ../database_creating.txt
 ```
 
 Apply migrations. This is safe to run repeatedly:
 
 ```bash
-docker compose exec backend npm run db:migrate
+docker compose -f docker-compose.prod.yml exec backend npm run db:migrate
 ```
 
 Create default accounts. This is also safe to run repeatedly; existing seeded accounts are updated:
 
 ```bash
-docker compose exec backend npm run seed
+docker compose -f docker-compose.prod.yml exec backend npm run seed
 ```
 
 If you see `relation "users" does not exist`, the baseline schema was not applied. Re-run the `psql < database_creating.txt` command above, then run migrations and seed again.

@@ -1,7 +1,29 @@
 # TODO — Event Ops
 
 Working notes on what was added, what's still missing, and dead code to review.
-Last updated 2026-06-04 (audit round-2 batch 4: dead-code cleanup + a11y; scoped for a student project).
+Last updated 2026-06-16 (task-management enhancements: list view, self-assign, custom statuses, task links).
+
+## 2026-06-16 — task-management enhancements ✅
+
+Four features shipped (spec/plan in `docs/superpowers/`), backend 265 unit tests green, both apps build.
+
+- **Task list view** — `/tasks` toggles List ↔ Timeline; the list (`components/TaskList.tsx`) sorts
+  (priority/deadline/start/name) and filters (status, priority, custom progress label, staff-only
+  "linked to my tasks") over the same fetched data.
+- **Manager self-assign** — `assertAssignable` lets a manager/admin assign a task to themselves.
+- **Custom progress statuses** — new `task_custom_statuses` table + `tasks.custom_status_id`; reusable
+  per-event labels (display-only, layered on the real lifecycle). CRUD + per-task set via the existing
+  `PUT /tasks/:id` (undo + broadcast for free); manage modal, chip, list filter.
+- **Task links** — the previously-dormant `task_dependencies` table is now **wired** as a symmetric
+  "related" link (`TaskDependency` entity + `depRepo` re-injected); staff also see tasks linked to
+  their assigned tasks (read-only). Endpoints `GET/POST /tasks/:id/links`, `DELETE …/:targetId`.
+- **AI parity** — `create_custom_status`, `link_tasks`/`unlink_tasks`, and `update.custom_status`
+  (resolve-by-name, reject if unknown), gated manager/admin.
+
+> This **supersedes** the earlier "task_dependencies unused" / "add_dependency deferred" notes below:
+> the table is now in active use (task links). The historical `split_task` AI verb remains deferred.
+
+## 2026-06-04 — audit round-2, batch 4 (#13 cleanup + a11y; rest descoped)
 
 ## 2026-06-04 — audit round-2, batch 4 (#13 cleanup + a11y; rest descoped)
 
@@ -33,8 +55,8 @@ Verified: backend unit 161 + e2e 51; frontend tsc + lint + build green.
 - **#18 timeline keyboard/touch a11y rebuild** — large; desktop-only was accepted.
 - **#22 re-enable strict lint rules** — would surface widespread `any`/raw-query
   warnings to fix; churn without functional benefit. (CI keeps lint non-blocking.)
-- `task_dependencies` table/entity + `depRepo` injection remain (unused but
-  harmless; removing churns the schema/service constructor for no gain).
+- ~~`task_dependencies` table/entity + `depRepo` injection remain (unused but
+  harmless)~~ — **superseded 2026-06-16**: now wired as the task-links feature.
 
 ## 2026-06-04 — audit round-2, batch 3 (#6 input validation)
 
@@ -457,13 +479,12 @@ All are in-app (saved to `notifications` + pushed live over WebSocket) and bilin
       compatible (action-less array = create). **Remaining:** `split_task` and `add_dependency`
       ("restructure task lists" / milestone ordering) — the latter ties to the unused
       `task_dependencies` table.
-- [ ] **Task dependencies are unused.** `task_dependencies` table + `TaskDependency` entity
-      exist, but the only code that touches the table is cleanup-on-delete. Nothing
-      creates/reads a dependency, and `tasks.service.ts` injects `depRepo` but never uses it.
-      **Now intentionally retained** as the target of the deferred AI `add_dependency` verb
-      (AI editing landed `create`/`update`/`reassign` — see below); implement that verb to
-      exercise the table, or remove the table/entity/injection if dependencies are dropped
-      from scope.
+- [x] **Task dependencies — now used (2026-06-16).** `task_dependencies` backs the **task links**
+      feature: `linkTasks`/`unlinkTasks`/`getLinks` in `TasksService` (symmetric "related" links),
+      surfaced in the list view + a per-task modal, with staff seeing linked tasks read-only, and
+      mirrored by the AI `link_tasks`/`unlink_tasks` actions. The `DELETE FROM task_dependencies`
+      cleanup-on-delete is still there as a guard. (The separate `add_dependency` ordering verb /
+      `split_task` remain deferred — links are "related", not blocking dependencies.)
 - [x] **Removing the last manager / empty event** → resolved (allow freely, warn the manager).
       No backend guard/confirm; a 0-member event highlights its card amber (border + glow) with
       a clickable "No members yet — add a manager" warning banner, shown only to those who can

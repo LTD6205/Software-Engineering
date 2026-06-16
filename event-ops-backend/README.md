@@ -1,294 +1,156 @@
-# Event Ops Backend — Project README
-> Last updated: April 2026
-> Built with: NestJS + TypeORM + PostgreSQL + Socket.io + DeepSeek AI
+# Event Ops Backend
+
+> NestJS 11 · TypeORM 0.3 · PostgreSQL 16 · Socket.io · any OpenAI-compatible AI (DeepSeek by default)
+
+REST API + Socket.io gateway + per-minute cron scheduler + natural-language AI handler for the
+Intelligent Event Operations & Task Management System. Listens on **port 3000**, all routes under the
+global prefix **`/api`**.
+
+> The repo root [`README.md`](../README.md) is the authoritative setup + roles + endpoint reference.
+> This file covers backend-specific structure and operations. `CLAUDE.md` (root) documents the
+> architecture for contributors in depth.
 
 ---
 
-## Project Overview
+## Architecture
 
-Intelligent Event Operations and Task Management System backend.
-Handles event planning, task assignments, deadline monitoring, real-time
-notifications, and AI-powered natural language task creation.
+A modular monolith: each feature module follows **controller → service → TypeORM repository**.
 
----
+- **auth** — JWT + Passport. `JwtAuthGuard` validates the bearer token; `RolesGuard` + `@Roles(...)`
+  enforce **exact-match** access (no inheritance; `admin` is the only cross-role superuser). The
+  user is re-loaded from the DB each request, so a deactivated account or changed role takes effect
+  immediately.
+- **users** — accounts, the staff↔manager reassignment workflow, and join requests.
+- **events** — events + the **event-membership policy** (`canManageEvent` / `canViewEvent`) that gates
+  *which* event a task action may touch. `TasksService` and `AiService` call it before every
+  read/write, so a route's `@Roles` is not sufficient on its own.
+- **tasks** — task CRUD, assignments (incl. **manager self-assign**), groups (merge/ungroup),
+  **custom progress statuses**, **task links** (symmetric "related" relationship), batch ops, and the
+  3-per-event **undo** change-log. Hard rules enforced here: not-in-past scheduling and the
+  event-window bound.
+- **notifications** — a `@Cron(EVERY_MINUTE)` job flags overdue tasks (bumping `auto`-priority ones to
+  High) and pushes notification rows live via the gateway.
+- **websocket** — Socket.io gateway. Clients `register` with a JWT in the handshake; the gateway
+  verifies it and joins `user:<id>` + an `authenticated` room. Per-user `notification` events and
+  `data_changed` / `celebrate` broadcasts flow from here.
+- **ai** (modular) — `ai.service` orchestrates; `ai.catalog` / `ai.authz` / `ai.prompt` /
+  `ai.validate` / `ai.resolve` / `ai.parse` / `ai.time` / `ai.types` are mostly pure helpers. Calls an
+  **OpenAI-compatible** chat endpoint and returns a JSON array of role-gated actions, run in
+  auto-accept or ask-first mode. All task changes go through `TasksService`, so the same rules apply.
 
-## Development Model
+### Entities (`src/entities/`, 12)
 
-This system uses two combined architectural patterns:
+`User`, `Event`, `Task`, `TaskGroup`, `TaskAssignment`, `TaskLog` (audit), `TaskChangeLog` (undo),
+`TaskCustomStatus`, `TaskDependency` (task links), `Notification`, `AiRequest`, `AiTaskMap`.
 
-### 1. Layered (N-Tier) Architecture
-The system is split into three clear layers:
-- Frontend (Next.js) — what users see and interact with
-- Backend API (NestJS) — business logic and rules
-- Database (PostgreSQL) — persistent data storage
-Each layer only communicates with the layer directly below it.
-
-### 2. Modular Monolith
-The backend is one application divided into independent feature modules:
-- EventsModule — manage events
-- TasksModule — tasks, assignments, dependencies
-- NotificationsModule — deadline monitoring, alerts
-- WebsocketModule — real-time push notifications
-- AiModule — natural language command processing
-Each module owns its own controller, service, and data access.
-Modules can be extracted into microservices later if the system grows.
-
----
-
-## Environment
-
-| Tool          | Version / Location                              |
-|---------------|-------------------------------------------------|
-| OS            | Windows (native, no WSL)                        |
-| Node.js       | v20.9.0                                         |
-| NestJS        | v11                                             |
-| PostgreSQL     | v13, pgAdmin 4, C: drive                        |
-| VS Code       | D:\Software_Engineering\event-ops-backend       |
-| Redis         | Upstash (cloud, free tier) — not yet configured |
-| AI Provider   | Any OpenAI-compatible API (DeepSeek by default) — not yet configured |
+Entity property names match the `snake_case` columns. UUID PKs, CHECK constraints, and JSONB columns
+live in the SQL, **not** the entities (`synchronize: false`).
 
 ---
 
-## How to Start the Server
+## Commands
 
-Open VS Code terminal and run:
-```powershell
-cd D:\Software_Engineering\event-ops-backend
-npm run start:dev
-```
-Wait for: `Nest application successfully started`
+Run from `event-ops-backend/`. `npm install` may need `--legacy-peer-deps`.
 
-## How to Stop the Server ⚠️
+| Command | What it does |
+|---|---|
+| `npm run start:dev` | Dev server with watch (http://localhost:3000/api) |
+| `npm run build` / `npm run start:prod` | Compile to `dist/` and run |
+| `npm run lint` / `npm run format` | ESLint `--fix` / Prettier |
+| `npm test` | Jest unit specs (`*.spec.ts` under `src/`) |
+| `npm test -- tasks.service` | Run specs matching a filter |
+| `npm run test:e2e` | E2E specs (`test/`, needs a running seeded DB) |
+| `npm run db:migrate` | Apply ordered, idempotent `migrations/*.sql` |
+| `npm run db:backup` / `npm run db:restore` | pg_dump / restore to `backups/` |
+| `npm run seed` | Create the demo login accounts (idempotent) |
 
-In the terminal running the server:
-1. Press `Ctrl+C`
-2. Type `Y` when asked `Terminate batch job (Y/N)?`
-3. Press `Enter`
-
-IMPORTANT: Always stop properly with Ctrl+C.
-Never just close the terminal window — it leaves port 3000 occupied
-and causes an `EADDRINUSE` error on next startup.
-
-If you get EADDRINUSE error, run:
-```powershell
-netstat -ano | findstr :3000
-taskkill /PID <pid_number> /F
-```
-
----
-
-## Folder Structure
-
-```
-event-ops-backend/
-├── .env                          ← DB + Redis + API keys
-└── src/
-    ├── main.ts                   ← Entry point, port 3000, prefix /api
-    ├── app.module.ts             ← Root module, wires everything
-    ├── entities/                 ← One file per DB table (10 total)
-    │   ├── user.entity.ts
-    │   ├── event.entity.ts
-    │   ├── task.entity.ts
-    │   ├── task-log.entity.ts
-    │   ├── task-assignment.entity.ts
-    │   ├── task-dependency.entity.ts
-    │   ├── notification.entity.ts
-    │   ├── ai-request.entity.ts
-    │   └── ai-task-map.entity.ts
-    ├── events/                   ← CRUD for events
-    │   ├── events.module.ts
-    │   ├── events.service.ts
-    │   └── events.controller.ts
-    ├── tasks/                    ← CRUD, assignments
-    │   ├── tasks.module.ts
-    │   ├── tasks.service.ts
-    │   └── tasks.controller.ts
-    ├── notifications/            ← Cron job, deadline watcher
-    │   ├── notifications.module.ts
-    │   ├── notifications.service.ts
-    │   └── notifications.controller.ts
-    ├── websocket/                ← Socket.io real-time push
-    │   ├── websocket.module.ts
-    │   └── events.gateway.ts
-    └── ai/                       ← DeepSeek natural language handler
-        ├── ai.module.ts
-        ├── ai.service.ts
-        └── ai.controller.ts
-```
+**Tests** construct each service directly with hand-rolled mock repositories (`jest.fn()` for
+`find`/`save`/`findOne`/`manager.query`, passed `as never`) — no Nest DI container. The event-access
+policy is mocked to "allow" in `TasksService` specs and unit-tested in its own spec; the e2e suite
+boots the real app against a seeded test Postgres.
 
 ---
 
 ## Database
 
-- Engine: PostgreSQL 13
-- Database name: event_ops
-- Managed via: pgAdmin 4
-- Tables (9 total):
-  users, events, tasks, task_logs, task_assignments,
-  task_dependencies, notifications, ai_requests, ai_task_map
-- Schema file: event_ops_schema.sql (already applied, synchronize: false)
-
-### Package versions (compatible set — do not upgrade without testing)
-```
-typeorm:          0.3.20
-@nestjs/typeorm:  11.0.0
-@nestjs/schedule: 4.1.0
-@nestjs/common:   11.x
-```
+- PostgreSQL 16 via Docker (`docker-compose.yml`, container `event_ops_db`, db `event_ops`).
+- **`synchronize: false`** — the schema is **not** derived from entities. The canonical DDL is
+  `../database_creating.txt` (repo root); apply it, then `npm run db:migrate` layers the ordered
+  `migrations/*.sql` on top. Keep the DDL, migrations, and `src/entities/` in sync **by hand**.
+- **Status vocab differs by table**: a **task** is `in_progress` → `completed`, with the cron flipping
+  it to `overdue` (there is no `pending` task stage — dropped by migration; the value lingers in the
+  CHECK only for legacy rows). An **event**'s `status` still uses `pending`.
+- **Priority**: `tasks.priority_source ∈ user|ai|auto`. `auto` derives Low/Med/High from the task's
+  position in the event window (bumped to High when overdue); `user`/`ai` are pinned.
 
 ---
 
-## API Endpoints
+## API surface
 
-### Events
-| Method | URL                  | Description       |
-|--------|----------------------|-------------------|
-| GET    | /api/events          | Get all events    |
-| GET    | /api/events/:id      | Get one event     |
-| POST   | /api/events          | Create event      |
-| PUT    | /api/events/:id      | Update event      |
-| DELETE | /api/events/:id      | Delete event      |
+All routes under `/api`, JWT required except `POST /auth/login`. See the root README for the full
+access table. Highlights:
 
-### Tasks
-| Method | URL                                      | Description             |
-|--------|------------------------------------------|-------------------------|
-| GET    | /api/tasks/event/:eventId                | Get tasks for an event  |
-| GET    | /api/tasks/:id                           | Get one task            |
-| POST   | /api/tasks                               | Create task             |
-| PUT    | /api/tasks/:id                           | Update task             |
-| POST   | /api/tasks/:id/assign                    | Assign user to task     |
-| DELETE | /api/tasks/:id/assign/:userId            | Unassign user           |
+- **Tasks** — `GET /tasks/event/:eventId` (staff see assigned **+ linked** tasks), `GET /tasks/:id`
+  (+ `/assignments`, `/links`), `PUT /tasks/:id` (status / `custom_status_id` by creator or assignee),
+  `POST /tasks`, `DELETE /tasks/:id`, `PUT /tasks/:id/assignments` (managers may self-assign), groups
+  (`/groups/merge`, `…/:groupId/add`, `PUT …/:groupId`, ungroup), batch (`/batch/delete`,
+  `/batch/ungroup`), undo (`GET …/changes`, `POST …/undo`), **custom statuses**
+  (`GET/POST /tasks/event/:eventId/custom-statuses`, `DELETE /tasks/custom-statuses/:id`), **links**
+  (`GET/POST /tasks/:id/links`, `DELETE /tasks/:id/links/:targetId`).
+- **AI** — `POST /ai/command`, `POST /ai/command/:requestId/confirm`, `…/cancel` (organizer / manager /
+  admin). The actor comes from the **verified JWT** — any body `userId` is ignored. Body:
 
-### Notifications
-| Method | URL                              | Description             |
-|--------|----------------------------------|-------------------------|
-| GET    | /api/notifications/user/:userId  | Get unread notifications|
-| PUT    | /api/notifications/:id/read      | Mark as read            |
-
-### AI
-| Method | URL               | Description                    |
-|--------|-------------------|--------------------------------|
-| POST   | /api/ai/command   | Send natural language command  |
-
-**AI command body:**
-```json
-{
-  "userId": "uuid",
-  "eventId": "uuid",
-  "message": "Create 3 tasks for venue setup by next Friday, assign to Bob"
-}
-```
+  ```json
+  { "eventId": "uuid (optional)", "message": "Mark venue setup as Blocked and link it to catering",
+    "mode": "auto", "history": [] }
+  ```
 
 ---
 
-## WebSocket (Socket.io)
+## WebSocket & cron
 
-- Port: 3000 (same as HTTP)
-- Frontend connects and emits: `register` with `{ userId }`
-- Server pushes `notification` event to user's room
-- Used for real-time deadline alerts and overdue warnings
-
----
-
-## Cron Job
-
-- Runs every minute automatically
-- Checks tasks due within 24 hours → sends `reminder` notification
-- Checks tasks past deadline → marks `overdue`, bumps `auto`-priority tasks to High, sends `overdue` notification
-- Located in: `src/notifications/notifications.service.ts`
+- **Socket.io** shares port 3000. Clients emit `register` with the JWT in the handshake auth; the
+  gateway verifies it (user id from the verified `sub`, never trusted from the client). Per-user
+  `notification` events go to `user:<id>`; `data_changed` / presence / `celebrate` broadcasts go to
+  the `authenticated` room.
+- **Cron** (`src/notifications/notifications.service.ts`) runs every minute: marks past-deadline tasks
+  `overdue`, bumps `auto`-priority overdue tasks to High, and creates + pushes notification rows.
 
 ---
 
-## .env Variables
+## Environment (`.env`)
+
+Defaults match `docker-compose.yml`.
 
 ```
-DB_HOST=localhost
-DB_PORT=5433
-DB_USERNAME=postgres
-DB_PASSWORD=your_actual_password
-DB_NAME=event_ops
-
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-AI_API_KEY=your_key_here
-AI_BASE_URL=https://api.deepseek.com/v1
-AI_MODEL=deepseek-chat
-
+DB_HOST=localhost  DB_PORT=5432  DB_USERNAME=postgres  DB_PASSWORD=postgres  DB_NAME=event_ops
+JWT_SECRET=dev_local_secret_change_me
 PORT=3000
+CORS_ORIGIN=http://localhost:3001       # comma-separated; gates HTTP + Socket.io
+FRONTEND_ORIGIN=http://localhost:3001
+AI_API_KEY=                              # blank disables the assistant (DEEPSEEK_API_KEY also accepted)
+AI_BASE_URL=https://api.deepseek.com/v1  # any OpenAI-compatible endpoint
+AI_MODEL=deepseek-chat
+# AI_JSON_MODE=off                       # set if your provider rejects strict response_format
 ```
 
-> The values above and everything in `.env.example` / `docker-compose.yml`
-> (`postgres/postgres`, the dev JWT placeholder, the seeded demo accounts) are
-> **local-development defaults only**. See the checklist below before any
-> non-local deployment.
+> `.env` is git-ignored. The values above are **local-dev defaults only** — see the checklist below.
 
 ---
 
 ## Production deployment checklist ⚠️
 
-The repo ships with convenient local/demo defaults. Do **not** carry them into a
-public or shared deployment — work through this list first:
+Do **not** carry local/demo defaults into a shared deployment:
 
-- [ ] **`JWT_SECRET`** — set a long random value. In production a missing secret
-      is a hard start-up failure (`src/auth/jwt-secret.ts`); never reuse the dev
-      default `eventops_secret_key`.
-- [ ] **`NODE_ENV=production`** — enables the JWT hard-fail above and disables
-      dev conveniences.
-- [ ] **`FRONTEND_ORIGIN`** — set to the real frontend URL. CORS (HTTP + the
-      Socket.io gateway) is locked to this origin, defaulting to
-      `http://localhost:3001` only for local dev (`src/main.ts`).
-- [ ] **Database credentials** — replace `postgres/postgres` with a strong,
-      unique password and a least-privilege role.
-- [ ] **Don't expose Postgres publicly** — `docker-compose.yml` publishes 5432 on
-      the host for local convenience. Remove that port mapping (or bind it to
-      `127.0.0.1`) and put the DB on a private network in production.
-- [ ] **Demo accounts** — `seed.js` loads known demo logins documented in the
-      README. Don't seed them in production, or rotate every password immediately.
-- [ ] **`AI_API_KEY`** (with `AI_BASE_URL` / `AI_MODEL`) — point at your chosen
-      OpenAI-compatible provider; use a production key with its own quota and
-      rotate any key that was ever committed or shared.
+- [ ] **`JWT_SECRET`** — set a long random value (a missing secret is a hard start-up failure in prod).
+- [ ] **`NODE_ENV=production`** — enables the JWT hard-fail and disables dev conveniences.
+- [ ] **`CORS_ORIGIN` / `FRONTEND_ORIGIN`** — set to the real frontend origin(s); CORS (HTTP + the
+      Socket.io gateway) is locked to these, defaulting to `http://localhost:3001` only for local dev.
+- [ ] **Database credentials** — replace `postgres/postgres` with a strong, least-privilege role.
+- [ ] **Don't expose Postgres publicly** — drop the host port mapping in production / keep the DB on a
+      private network.
+- [ ] **Demo accounts** — `seed.js` loads well-known logins; don't seed them in production (or rotate
+      every password immediately).
+- [ ] **`AI_API_KEY`** — use a production key with its own quota; rotate any key ever committed.
 
----
-
-## Progress Tracker
-
-### Phase 1 — Database ✅ COMPLETE
-- [x] PostgreSQL 13 schema created (10 tables, all constraints + indexes)
-- [x] pgAdmin 4 connected and verified
-
-### Phase 2 — Backend ✅ COMPLETE
-- [x] NestJS v11 project scaffolded
-- [x] All packages installed (compatible versions)
-- [x] .env configured and connected to PostgreSQL
-- [x] All 9 entity files created
-- [x] main.ts and app.module.ts configured
-- [x] Events module (CRUD working — tested with Thunder Client ✅)
-- [x] Tasks module (CRUD + assignments)
-- [x] Notifications module (cron job + WebSocket push)
-- [x] WebSocket gateway (Socket.io)
-- [x] AI module (DeepSeek integration)
-
-### Phase 3 — Frontend ⬜ NEXT
-- [ ] Scaffold Next.js project
-- [ ] Scheduler UI (FullCalendar)
-- [ ] Task creation panel
-- [ ] AI chat button (Copilot-style)
-- [ ] Notification bell (real-time)
-- [x] Milestone tracker (per-event progress: completed / total tasks)
-
-### Phase 4 — External Services ⬜ PENDING
-- [ ] Upstash Redis (for BullMQ job queue)
-- [ ] DeepSeek API key (for AI commands)
-
----
-
-## Known Issues & Fixes Applied
-
-| Issue | Fix |
-|---|---|
-| TypeORM incompatible with NestJS 11 | Pinned to typeorm@0.3.20 + @nestjs/typeorm@11.0.0 |
-| ScheduleModule incompatible | Pinned to @nestjs/schedule@4.1.0 |
-| server! not initialized in gateway | Added ! (definite assignment assertion) |
-| tsconfig baseUrl warning | Removed ignoreDeprecations — warning is harmless |
-| Database not found | Updated .env to match PostgreSQL 13 port and credentials |
+For the full EC2 stack (Postgres + API + web + nginx) see [`../DEPLOY.md`](../DEPLOY.md).

@@ -16,12 +16,15 @@ A full-stack platform for event teams: create events, assign tasks with deadline
 ## Features
 
 - **Events & membership** — organizers create events and add member managers; each chosen manager brings their whole staff team in, and the event shows a live headcount. Visibility is scoped: admins/organizers see all events, managers see events they're a member of, and staff see events their manager is in. Events can be multi-selected for batch delete, and event dates can be shifted (tasks are moved or dropped to fit the new window).
-- **Tasks** — managers build per-event task checklists on a draggable **timeline** (Gantt-style) and assign each task to one or many of their own staff; assignees show as avatars and can be re-selected with a click. A new task starts **In Progress** and moves to **Completed**; the cron job auto-flags it **Overdue** once the deadline passes. Tasks can be **merged into groups**, multi-selected for batch delete/ungroup, and every object carries a **copyable short ID** chip.
+- **Tasks** — managers build per-event task checklists on a draggable **timeline** (Gantt-style) and assign each task to one or many of their own staff (a manager may also **assign a task to themselves**); assignees show as avatars and can be re-selected with a click. A new task starts **In Progress** and moves to **Completed**; the cron job auto-flags it **Overdue** once the deadline passes. Tasks can be **merged into groups**, multi-selected for batch delete/ungroup, and every object carries a **copyable short ID** chip.
+- **List view** — the Tasks page toggles between the timeline and a **sortable, filterable list** (sort by priority/deadline/start/name; filter by status, priority, custom progress label, and a staff-only "linked to my tasks"), over the same data the timeline draws.
+- **Custom progress statuses** — managers and staff define **reusable per-event labels** (e.g. "Blocked", "In Review") and attach them to tasks for richer progress tracking. They're display-only — layered on top of the real lifecycle, so the cron and priority automation are untouched.
+- **Task links** — tasks can be linked as **related** to each other within an event; a staff member sees tasks linked to their own assigned tasks (read-only), so cross-person work can be tracked without exposing the whole board.
 - **Undo** — the three most recent task changes per event (manual, batch, or AI-driven) are undoable from a button on the timeline or via an AI command.
 - **Auto priority** — a task's priority can be pinned manually (`user`), set by the AI (`ai`), or left on **Auto** (`auto`), which derives Low/Medium/High from where the task sits in the event window; an overdue auto-priority task is bumped to High.
 - **Staff reassignment & self-service** — a manager can hand one of their staff to another manager (the receiving manager accepts/rejects); staff can also request to join a manager's team (and cancel the request).
 - **Real-time deadline monitoring** — a per-minute cron job flags upcoming/overdue tasks and pushes live notifications over WebSocket to assignees and organizers.
-- **AI commands** — managers and organizers describe changes in plain English/Vietnamese; the model turns them into real operations — creating/updating/assigning/grouping/deleting tasks, undo, and (role permitting) event and account changes. Runs in **Auto-accept** or **Ask-first** mode (preview, then confirm/cancel). Times are interpreted in Vietnam time (UTC+7). Each account keeps its **own private chat history** (stored per user, so roles never share a transcript).
+- **AI commands** — managers and organizers describe changes in plain English/Vietnamese; the model turns them into real operations — creating/updating/assigning/grouping/deleting tasks, **setting custom progress labels, linking/unlinking tasks**, undo, and (role permitting) event and account changes. Runs in **Auto-accept** or **Ask-first** mode (preview, then confirm/cancel). Times are interpreted in Vietnam time (UTC+7). Each account keeps its **own private chat history** (stored per user, so roles never share a transcript).
 - **Roles** — Admin, Organizer, Manager, Staff. Features are scoped by each role's focus: **Managers** own a staff team and handle tasks and the AI assistant; **Organizers** create events, manage event membership, and can also drive the AI for event-scoped changes; **Admins** manage accounts. The backend enforces these per route as an **exact-match allow-list** — no role inherits another's access; `admin` is the only cross-role exception (a superuser allowed everywhere). The UI surfaces only the features that belong to each role, and Staff get a limited UI (their own tasks and notifications).
 - **Online presence** — the Team page shows who's online, colour-coded by role.
 - **Language switch** — EN/VI toggle that translates the whole UI.
@@ -42,6 +45,113 @@ event-ops-frontend/   Next.js dashboard (port 3001)
   share-proxy.js      HTTP+WebSocket proxy for sharing via one tunnel (npm run share)
 deploy/               production stack for EC2 (Postgres + API + web + nginx) — docker-compose.prod.yml
 database_creating.txt canonical SQL schema (repo root; applied manually / on first DB boot)
+```
+
+## Architecture
+
+### System overview
+
+How a request flows from the browser through the API to the database, and how live updates come back over WebSocket.
+
+```mermaid
+flowchart LR
+  subgraph Client["Browser — Next.js 16 (:3001)"]
+    UI["Dashboard / Tasks timeline + list / AI drawer"]
+    SOCK["useSocket / useLiveData / useNotifications"]
+  end
+
+  subgraph API["NestJS 11 API (:3000, prefix /api)"]
+    GUARD["JwtAuthGuard + RolesGuard (exact-match RBAC)"]
+    CTRL["Controllers — auth, users, events, tasks, notifications, ai"]
+    SVC["Services — business rules + event-membership policy"]
+    CRON["Cron every minute — deadline / overdue watcher"]
+    GW["Socket.io gateway (JWT-verified rooms)"]
+    AISVC["AiService"]
+  end
+
+  DB[("PostgreSQL 16 — TypeORM, synchronize:false")]
+  LLM["AI provider (DeepSeek / Gemini / ...)"]
+
+  UI -->|"axios + JWT"| GUARD --> CTRL --> SVC --> DB
+  SVC -->|"data_changed / celebrate"| GW
+  CRON --> DB
+  CRON -->|"notification"| GW
+  GW -->|"WebSocket"| SOCK --> UI
+  CTRL --> AISVC -->|"OpenAI-compatible chat"| LLM
+  AISVC --> SVC
+```
+
+### Data model
+
+The core tables and their relationships (UUID keys; `synchronize:false` — the canonical DDL lives in `database_creating.txt`, layered with `migrations/*.sql`).
+
+```mermaid
+erDiagram
+  USERS ||--o{ EVENT_MANAGERS : "is member"
+  USERS ||--o{ USERS : "manages (manager_id)"
+  EVENTS ||--o{ EVENT_MANAGERS : "has managers"
+  EVENTS ||--o{ TASKS : "contains"
+  EVENTS ||--o{ TASK_GROUPS : "has"
+  EVENTS ||--o{ TASK_CUSTOM_STATUSES : "defines"
+  TASKS ||--o{ TASK_ASSIGNMENTS : "assigned to"
+  USERS ||--o{ TASK_ASSIGNMENTS : "works on"
+  TASK_GROUPS ||--o{ TASKS : "groups"
+  TASK_CUSTOM_STATUSES |o--o{ TASKS : "labels"
+  TASKS ||--o{ TASK_DEPENDENCIES : "links (related)"
+  TASKS ||--o{ NOTIFICATIONS : "triggers"
+  EVENTS ||--o{ TASK_CHANGE_LOG : "undo history"
+  AI_REQUESTS ||--o{ AI_TASK_MAP : "created/changed"
+  TASKS ||--o{ AI_TASK_MAP : "linked to request"
+
+  USERS {
+    uuid user_id PK
+    string role
+    uuid manager_id
+    uuid pending_manager_id
+  }
+  EVENTS {
+    uuid event_id PK
+    string status
+  }
+  TASKS {
+    uuid task_id PK
+    uuid event_id FK
+    string status
+    string priority_source
+    uuid group_id
+    uuid custom_status_id
+  }
+  TASK_CUSTOM_STATUSES {
+    uuid status_id PK
+    uuid event_id FK
+    string name
+    string color
+  }
+  TASK_DEPENDENCIES {
+    uuid dependency_id PK
+    uuid task_id FK
+    uuid depends_on_task FK
+  }
+  TASK_ASSIGNMENTS {
+    uuid assignment_id PK
+    uuid task_id FK
+    uuid user_id FK
+  }
+```
+
+### Task status lifecycle
+
+The real lifecycle the cron and AI drive (custom progress labels sit *beside* this, never replacing it).
+
+```mermaid
+stateDiagram-v2
+  [*] --> in_progress: create (manager / AI)
+  in_progress --> completed: mark done (creator / assignee)
+  completed --> in_progress: reopen (creator only)
+  in_progress --> overdue: deadline passes (cron)
+  overdue --> in_progress: reopen → slides to "now"
+  overdue --> completed: mark done
+  completed --> [*]
 ```
 
 ## Prerequisites
