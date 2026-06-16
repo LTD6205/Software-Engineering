@@ -55,6 +55,9 @@ export function validateActions(parsed: unknown[]): {
         : '';
     const isActive =
       typeof item.is_active === 'boolean' ? item.is_active : undefined;
+    const customStatus =
+      typeof item.custom_status === 'string' ? item.custom_status.trim() : '';
+    const color = typeof item.color === 'string' ? item.color.trim() : '';
 
     if (action === 'update') {
       if (!ref) {
@@ -73,7 +76,8 @@ export function validateActions(parsed: unknown[]): {
         item.priority === undefined &&
         !startTime &&
         item.deadline === undefined &&
-        !status
+        !status &&
+        !customStatus
       ) {
         skipped++;
         continue;
@@ -90,6 +94,7 @@ export function validateActions(parsed: unknown[]): {
           ? { deadline: item.deadline }
           : {}),
         ...(status ? { status } : {}),
+        ...(customStatus ? { custom_status: customStatus } : {}),
       });
     } else if (action === 'reassign') {
       if (!ref || !assignedTo.trim()) {
@@ -251,6 +256,23 @@ export function validateActions(parsed: unknown[]): {
         continue;
       }
       actions.push({ action, staff_ref: staffRef });
+    } else if (action === 'create_custom_status') {
+      if (!userName) {
+        skipped++;
+        continue;
+      }
+      actions.push({
+        action: 'create_custom_status',
+        name: userName,
+        ...(color ? { color } : {}),
+        ...(eventRef ? { event_ref: eventRef } : {}),
+      });
+    } else if (action === 'link_tasks' || action === 'unlink_tasks') {
+      if (!ref || !targetRef) {
+        skipped++;
+        continue;
+      }
+      actions.push({ action, task_ref: ref, target_ref: targetRef });
     } else {
       // create (default)
       if (!name) {

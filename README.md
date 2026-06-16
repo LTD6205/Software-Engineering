@@ -200,10 +200,12 @@ Access is by **exact role match** with Admin as the superuser. Below, "manager+"
 | | `POST /users/join-request`, `…/cancel` | staff |
 | Events | `GET /events` (viewer-scoped), `GET /events/:id`, `GET /events/:id/managers` | any |
 | | `GET /events/available-managers`, `POST/PUT/DELETE /events`, `PUT /events/:id/dates`, `POST/DELETE /events/:id/managers` | organizer+ |
-| Tasks | `GET /tasks/event/:eventId`, `GET /tasks/:id` (+ `/assignments`), `PUT /tasks/:id` | any (scoped) |
-| | `POST /tasks`, `DELETE /tasks/:id`, `PUT /tasks/:id/assignments`, group ops (`/groups/merge`, `…/:groupId/add`, `PUT …/:groupId`, ungroup), batch (`/batch/delete`, `/batch/ungroup`), undo (`GET …/changes`, `POST …/undo`) | manager+ |
+| Tasks | `GET /tasks/event/:eventId` (staff see their assigned + linked tasks), `GET /tasks/:id` (+ `/assignments`, `/links`), `PUT /tasks/:id` (status / custom-status by creator or assignee), `GET /tasks/event/:eventId/custom-statuses` | any (scoped) |
+| | `POST /tasks`, `DELETE /tasks/:id`, `PUT /tasks/:id/assignments` (managers may self-assign), group ops (`/groups/merge`, `…/:groupId/add`, `PUT …/:groupId`, ungroup), batch (`/batch/delete`, `/batch/ungroup`), undo (`GET …/changes`, `POST …/undo`), custom statuses (`POST /tasks/event/:eventId/custom-statuses`, `DELETE /tasks/custom-statuses/:id`), task links (`POST`/`DELETE /tasks/:id/links`) | manager+ (links: also a task's creator/assignee) |
 | Notifications | `GET /notifications/user/:userId` (+ `/all`), `PUT /notifications/:id/read`, `PUT …/read-all` | any (owner-scoped) |
 | AI | `POST /ai/command`, `POST /ai/command/:requestId/confirm`, `…/cancel` | organizer, manager, admin |
+
+The Tasks page offers a **List ↔ Timeline** toggle: the list view sorts (by priority/deadline/start/name) and filters (status, priority, custom progress label, and a staff-only "linked to my tasks") over the same data the Gantt timeline draws. **Custom statuses** are reusable per-event progress labels layered on top of the real lifecycle. **Task links** are symmetric "related" relationships; a staffer sees tasks linked to their assigned tasks (read-only). The AI mirrors these for managers/admin via `create_custom_status`, `link_tasks`/`unlink_tasks`, and a `custom_status` field on `update`.
 
 ## Environment Variables
 

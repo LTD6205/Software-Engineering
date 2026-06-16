@@ -64,6 +64,18 @@ export interface Task {
   // its group mates; group_title is the parent label.
   group_id?: string | null
   group_title?: string | null
+  // Optional reusable custom progress label (display-only; see CustomStatus).
+  custom_status_id?: string | null
+}
+
+// A reusable, per-event custom progress label (display-only, layered on top of
+// the real status lifecycle).
+export interface CustomStatus {
+  status_id: string
+  event_id: string
+  name: string
+  color?: string | null
+  created_by?: string | null
 }
 
 export interface Notification {

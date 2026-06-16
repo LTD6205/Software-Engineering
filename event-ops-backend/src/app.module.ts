@@ -12,6 +12,8 @@ import { TaskLog } from './entities/task-log.entity';
 import { TaskChangeLog } from './entities/task-change-log.entity';
 import { TaskAssignment } from './entities/task-assignment.entity';
 import { TaskGroup } from './entities/task-group.entity';
+import { TaskCustomStatus } from './entities/task-custom-status.entity';
+import { TaskDependency } from './entities/task-dependency.entity';
 import { Notification } from './entities/notification.entity';
 import { AiRequest } from './entities/ai-request.entity';
 import { AiTaskMap } from './entities/ai-task-map.entity';
@@ -45,6 +47,8 @@ import { WebsocketModule } from './websocket/websocket.module';
           TaskChangeLog,
           TaskAssignment,
           TaskGroup,
+          TaskCustomStatus,
+          TaskDependency,
           Notification,
           AiRequest,
           AiTaskMap,

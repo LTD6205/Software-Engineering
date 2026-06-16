@@ -309,3 +309,26 @@ CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_id);
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_priority_source_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_priority_source_check
     CHECK (priority_source IN ('user', 'ai', 'auto'));
+
+-- 10. Custom task statuses: reusable per-event progress labels, display-only and
+--     layered on top of the real status lifecycle (the cron/AI never read them).
+--     tasks.custom_status_id detaches (SET NULL) when its status is deleted.
+--     (Same SQL as event-ops-backend/migrations/2026-06-16_custom_statuses.sql.)
+CREATE TABLE IF NOT EXISTS task_custom_statuses (
+    status_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id    UUID                NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+    name        VARCHAR(60)         NOT NULL,
+    color       VARCHAR(20),
+    created_by  UUID                REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at  TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS task_custom_statuses_event_name_uniq
+    ON task_custom_statuses (event_id, lower(name));
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS custom_status_id UUID;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_custom_status_id_fkey') THEN
+        ALTER TABLE tasks ADD CONSTRAINT tasks_custom_status_id_fkey
+            FOREIGN KEY (custom_status_id) REFERENCES task_custom_statuses(status_id) ON DELETE SET NULL;
+    END IF;
+END $$;

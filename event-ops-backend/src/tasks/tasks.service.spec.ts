@@ -35,6 +35,8 @@ function build() {
   const groupRepo = makeRepo();
   const logRepo = makeRepo();
   const changeLogRepo = makeRepo();
+  const customStatusRepo = makeRepo();
+  const depRepo = makeRepo();
   const userRepo = makeRepo();
   const eventRepo = makeRepo();
   const gateway = {
@@ -57,6 +59,8 @@ function build() {
     groupRepo as never,
     logRepo as never,
     changeLogRepo as never,
+    customStatusRepo as never,
+    depRepo as never,
     userRepo as never,
     eventRepo as never,
     gateway as never,
@@ -70,6 +74,8 @@ function build() {
     groupRepo,
     logRepo,
     changeLogRepo,
+    customStatusRepo,
+    depRepo,
     userRepo,
     eventRepo,
     gateway,
@@ -89,13 +95,19 @@ describe('TasksService', () => {
           edited: [
             {
               task_id: 't1',
-              fields: { task_name: 'Old', deadline: '2026-06-01T09:00:00.000Z' },
+              fields: {
+                task_name: 'Old',
+                deadline: '2026-06-01T09:00:00.000Z',
+              },
             },
           ],
         },
       });
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
@@ -130,7 +142,10 @@ describe('TasksService', () => {
           ],
         },
       });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
       // taskRepo.save returns the re-created task (makeRepo's save echoes input).
 
@@ -152,7 +167,10 @@ describe('TasksService', () => {
         change_type: 'create',
         snapshot: { created: ['a', 'b', 'c'] },
       });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
@@ -182,7 +200,10 @@ describe('TasksService', () => {
         group_id: null,
       });
       assignRepo.find.mockResolvedValue([]);
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.removeMany(['t1', 't2'], { sub: 'm1', role: 'manager' });
@@ -671,6 +692,33 @@ describe('TasksService', () => {
       ).rejects.toThrow(/only assign your own staff/);
     });
 
+    it('allows a manager to assign a task to themselves', async () => {
+      const { service, taskRepo, userRepo, assignRepo } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      // The actor (a manager) is not a 'staff' user, but self-assignment is OK.
+      userRepo.findOne.mockResolvedValue({
+        user_id: 'mgr1',
+        role: 'manager',
+        manager_id: null,
+      });
+      assignRepo.find.mockResolvedValue([]);
+      assignRepo.manager.query.mockResolvedValue([]);
+
+      await expect(
+        service.setAssignees('t1', ['mgr1'], { sub: 'mgr1', role: 'manager' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('still rejects a manager assigning a different non-staff user', async () => {
+      const { service, taskRepo, userRepo } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      userRepo.findOne.mockResolvedValue({ user_id: 'other', role: 'manager' });
+
+      await expect(
+        service.setAssignees('t1', ['other'], { sub: 'mgr1', role: 'manager' }),
+      ).rejects.toThrow(/only be assigned to staff/);
+    });
+
     it('throws NotFound when the assignee does not exist', async () => {
       const { service, taskRepo, userRepo } = build();
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
@@ -761,6 +809,106 @@ describe('TasksService', () => {
         }),
       ).rejects.toThrow();
       expect(assignRepo.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('custom statuses', () => {
+    it('creates a custom status for an event member', async () => {
+      const { service, customStatusRepo } = build();
+      customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({
+          andWhere: () => ({ getOne: () => Promise.resolve(null) }),
+        }),
+      });
+      const made = await service.createCustomStatus(
+        'e1',
+        { name: 'Blocked', color: '#f00' },
+        { sub: 'u1', role: 'manager' },
+      );
+      expect(customStatusRepo.save).toHaveBeenCalled();
+      expect((made as { name: string }).name).toBe('Blocked');
+    });
+
+    it('rejects a duplicate status name in the same event', async () => {
+      const { service, customStatusRepo } = build();
+      customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({
+          andWhere: () => ({
+            getOne: () => Promise.resolve({ status_id: 'x' }),
+          }),
+        }),
+      });
+      await expect(
+        service.createCustomStatus(
+          'e1',
+          { name: 'Blocked' },
+          { sub: 'u1', role: 'manager' },
+        ),
+      ).rejects.toThrow(/already exists/);
+    });
+
+    it('lets a non-creator delete only if they manage the event', async () => {
+      const { service, customStatusRepo, events } = build();
+      customStatusRepo.findOne.mockResolvedValue({
+        status_id: 's1',
+        event_id: 'e1',
+        created_by: 'someoneElse',
+      });
+      events.assertCanManageEvent.mockRejectedValue(
+        new BadRequestException('nope'),
+      );
+      await expect(
+        service.deleteCustomStatus('s1', { sub: 'u2', role: 'manager' }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('task links', () => {
+    it('rejects linking tasks from different events', async () => {
+      const { service, taskRepo } = build();
+      taskRepo.findOne
+        .mockResolvedValueOnce({
+          task_id: 'a',
+          event_id: 'e1',
+          created_by: 'u1',
+        })
+        .mockResolvedValueOnce({
+          task_id: 'b',
+          event_id: 'e2',
+          created_by: 'u1',
+        });
+      await expect(
+        service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' }),
+      ).rejects.toThrow(/same event/);
+    });
+
+    it('rejects linking a task to itself', async () => {
+      const { service } = build();
+      await expect(
+        service.linkTasks('a', 'a', { sub: 'u1', role: 'manager' }),
+      ).rejects.toThrow(/itself/);
+    });
+
+    it('creates a symmetric link when none exists', async () => {
+      const { service, taskRepo, depRepo } = build();
+      taskRepo.findOne
+        .mockResolvedValueOnce({
+          task_id: 'a',
+          event_id: 'e1',
+          created_by: 'u1',
+        })
+        .mockResolvedValueOnce({
+          task_id: 'b',
+          event_id: 'e1',
+          created_by: 'u1',
+        });
+      depRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        where: () => ({ getOne: () => Promise.resolve(null) }),
+      });
+      await service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' });
+      expect(depRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ task_id: 'a', depends_on_task: 'b' }),
+      );
     });
   });
 

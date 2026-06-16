@@ -364,6 +364,21 @@ export class AiService {
             kind: 'remove_from_team',
             description: `Remove ${item.staff_ref} from the team`,
           };
+        case 'create_custom_status':
+          return {
+            kind: 'create_custom_status',
+            description: `Create custom status "${item.name}"`,
+          };
+        case 'link_tasks':
+          return {
+            kind: 'link_tasks',
+            description: `Link "${taskName(item.task_ref)}" with "${taskName(item.target_ref)}"`,
+          };
+        case 'unlink_tasks':
+          return {
+            kind: 'unlink_tasks',
+            description: `Unlink "${taskName(item.task_ref)}" from "${taskName(item.target_ref)}"`,
+          };
         default:
           return { kind: 'unknown', description: 'Unknown action' };
       }
@@ -424,7 +439,9 @@ export class AiService {
     // The current event's tasks (resolvable refs for update/reassign/etc.).
     if (eventId) {
       if (currentTasks.length) {
-        lines.push("Current event's tasks (reference these by exact name or id):");
+        lines.push(
+          "Current event's tasks (reference these by exact name or id):",
+        );
         for (const t of currentTasks) {
           const who = t.assignees?.length
             ? t.assignees.map((a) => a.name).join(', ')
@@ -443,13 +460,15 @@ export class AiService {
     // Limitations) since their assignable set spans whole teams.
     let roster: Array<{ user_id?: string; name?: string; email?: string }> = [];
     if (actor.role === 'manager') {
-      roster = (await this.userRepo.find({
+      roster = await this.userRepo.find({
         where: { manager_id: actor.sub, is_active: true },
-      })) as Array<{ user_id?: string; name?: string; email?: string }>;
+      });
     }
     const shownRoster = roster.slice(0, 50);
     if (shownRoster.length) {
-      lines.push('People you can assign tasks to (reference by exact name, email, or id):');
+      lines.push(
+        'People you can assign tasks to (reference by exact name, email, or id):',
+      );
       for (const u of shownRoster) {
         lines.push(
           `- ${u.name ?? ''}${u.email ? ` <${u.email}>` : ''}${u.user_id ? ` (id ${u.user_id})` : ''}`,
@@ -483,7 +502,6 @@ export class AiService {
 
     return lines.join('\n');
   }
-
 
   // Single execution path for the validated action list. `currentTasks` is the
   // resolvable task list (mutated as creates land); `defaultEventId` is the
@@ -605,7 +623,12 @@ export class AiService {
     }
     // Record the whole command as ONE undoable operation (one undo reverses it).
     if (defaultEventId) {
-      await this.tasksService.recordOp(defaultEventId, undoOp, undefined, actor.sub);
+      await this.tasksService.recordOp(
+        defaultEventId,
+        undoOp,
+        undefined,
+        actor.sub,
+      );
     }
     return res;
   }
@@ -718,6 +741,29 @@ export class AiService {
           if (d) patch.deadline = d;
         }
         if (item.status) patch.status = item.status;
+        // Resolve a custom-status name to its id within this event. Unknown name
+        // → reject this action (resolve-or-reject; never auto-create on update).
+        if (item.custom_status) {
+          if (!defaultEventId) {
+            res.rejected.push({
+              ref: item.task_ref,
+              reason: 'No event context to resolve the custom status',
+            });
+            return;
+          }
+          const cs = await this.tasksService.findCustomStatusByName(
+            defaultEventId,
+            item.custom_status,
+          );
+          if (!cs) {
+            res.rejected.push({
+              ref: item.custom_status,
+              reason: `No custom status named "${item.custom_status}" in this event`,
+            });
+            return;
+          }
+          patch.custom_status_id = cs.status_id;
+        }
         if (Object.keys(patch).length === 0) return;
         try {
           const task = await this.tasksService.update(
@@ -1234,6 +1280,63 @@ export class AiService {
         }
         return;
       }
+
+      case 'create_custom_status': {
+        const eventId = resolveEventRef(
+          item.event_ref,
+          viewableEvents,
+          defaultEventId,
+        );
+        if (!eventId) {
+          res.unresolved.push(item.event_ref ?? item.name);
+          return;
+        }
+        try {
+          const made = await this.tasksService.createCustomStatus(
+            eventId,
+            { name: item.name, color: item.color ?? null },
+            actor,
+          );
+          res.groups_changed.push({
+            action: 'create_custom_status',
+            title: (made as { name: string }).name,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.name, reason: this.reason(e) });
+        }
+        return;
+      }
+
+      case 'link_tasks':
+      case 'unlink_tasks': {
+        const a = resolveTaskRef(item.task_ref, currentTasks);
+        const b = resolveTaskRef(item.target_ref, currentTasks);
+        if (!a) {
+          res.unresolved.push(item.task_ref);
+          return;
+        }
+        if (!b) {
+          res.unresolved.push(item.target_ref);
+          return;
+        }
+        try {
+          if (item.action === 'link_tasks') {
+            await this.tasksService.linkTasks(a.task_id, b.task_id, actor);
+          } else {
+            await this.tasksService.unlinkTasks(a.task_id, b.task_id, actor);
+          }
+          res.tasks_updated.push({
+            action: item.action,
+            task_id: a.task_id,
+            task_name: a.task_name,
+            target_id: b.task_id,
+            target_name: b.task_name,
+          });
+        } catch (e) {
+          res.rejected.push({ ref: item.task_ref, reason: this.reason(e) });
+        }
+        return;
+      }
     }
   }
 
@@ -1334,7 +1437,10 @@ export class AiService {
     // people") across a multi-turn clarification exchange.
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...(opts.history ?? []).map((h) => ({ role: h.role, content: h.content })),
+      ...(opts.history ?? []).map((h) => ({
+        role: h.role,
+        content: h.content,
+      })),
       { role: 'user', content: userMessage },
     ];
 
@@ -1384,7 +1490,7 @@ export class AiService {
         const obj = parsed as Record<string, unknown>;
         if (typeof obj.answer === 'string') {
           await this.aiRequestRepo.update(aiRequest.request_id, {
-            response: parsed as object,
+            response: parsed,
             status: 'success',
           });
           return { status: 'answered', answer: obj.answer };
@@ -1394,7 +1500,7 @@ export class AiService {
           typeof obj.question === 'string'
         ) {
           await this.aiRequestRepo.update(aiRequest.request_id, {
-            response: parsed as object,
+            response: parsed,
             status: 'needs_clarification',
           });
           return {
@@ -1405,7 +1511,7 @@ export class AiService {
         }
         // else: fall through to the "rejected / insufficient info" path below.
         await this.aiRequestRepo.update(aiRequest.request_id, {
-          response: parsed as object,
+          response: parsed,
           status: 'rejected',
         });
         return { status: 'rejected', reason: parsed };
@@ -1453,7 +1559,7 @@ export class AiService {
             eventId,
             descriptions: plan,
             createdAtMs: Date.now(),
-          } as object,
+          },
           status: 'awaiting_confirmation',
         });
         return {

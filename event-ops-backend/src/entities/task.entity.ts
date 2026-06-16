@@ -44,6 +44,11 @@ export class Task {
   @Column({ type: 'uuid', nullable: true })
   group_id: string | null;
 
+  // Optional reusable per-event custom progress label (display-only; not part of
+  // the real status lifecycle the cron/AI drive).
+  @Column({ type: 'uuid', nullable: true })
+  custom_status_id: string | null;
+
   @CreateDateColumn()
   created_at: Date;
 }

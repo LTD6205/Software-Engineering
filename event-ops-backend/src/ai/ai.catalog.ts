@@ -10,7 +10,7 @@ export const ACTION_SHAPES: Record<AiActionKind, string> = {
   create:
     '{ "action": "create", "task_name": "string", "priority": "low|medium|high", "assigned_to": "name or email", "start_time": "YYYY-MM-DDTHH:mm:ss", "deadline": "YYYY-MM-DDTHH:mm:ss", "group"?: "group title" }',
   update:
-    '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string (rename)", "priority"?: "low|medium|high", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue" }',
+    '{ "action": "update", "task_ref": "task name or id", "task_name"?: "string (rename)", "priority"?: "low|medium|high", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "deadline"?: "YYYY-MM-DDTHH:mm:ss", "status"?: "in_progress|completed|overdue", "custom_status"?: "custom status name" }',
   reassign:
     '{ "action": "reassign", "task_ref": "task name or id", "assigned_to": "name or email" }',
   unassign: '{ "action": "unassign", "task_ref": "task name or id" }',
@@ -27,8 +27,7 @@ export const ACTION_SHAPES: Record<AiActionKind, string> = {
     '{ "action": "create_event", "event_name": "string", "start_time": "YYYY-MM-DDTHH:mm:ss", "end_time": "YYYY-MM-DDTHH:mm:ss", "description"?: "string" }',
   update_event:
     '{ "action": "update_event", "event_ref": "event name or id", "event_name"?: "string", "description"?: "string", "start_time"?: "YYYY-MM-DDTHH:mm:ss", "end_time"?: "YYYY-MM-DDTHH:mm:ss" }',
-  delete_event:
-    '{ "action": "delete_event", "event_ref": "event name or id" }',
+  delete_event: '{ "action": "delete_event", "event_ref": "event name or id" }',
   add_event_manager:
     '{ "action": "add_event_manager", "event_ref": "event name or id", "manager_ref": "manager name or email" }',
   remove_event_manager:
@@ -41,11 +40,20 @@ export const ACTION_SHAPES: Record<AiActionKind, string> = {
     '{ "action": "reset_password", "user_ref": "name or email", "new_password": "string" }',
   request_reassign:
     '{ "action": "request_reassign", "staff_ref": "name or email", "target_manager_ref": "manager name or email" }',
-  accept_reassign: '{ "action": "accept_reassign", "staff_ref": "name or email" }',
-  reject_reassign: '{ "action": "reject_reassign", "staff_ref": "name or email" }',
-  cancel_reassign: '{ "action": "cancel_reassign", "staff_ref": "name or email" }',
+  accept_reassign:
+    '{ "action": "accept_reassign", "staff_ref": "name or email" }',
+  reject_reassign:
+    '{ "action": "reject_reassign", "staff_ref": "name or email" }',
+  cancel_reassign:
+    '{ "action": "cancel_reassign", "staff_ref": "name or email" }',
   remove_from_team:
     '{ "action": "remove_from_team", "staff_ref": "name or email" }',
+  create_custom_status:
+    '{ "action": "create_custom_status", "name": "string", "color"?: "#hex", "event_ref"?: "event name or id" }',
+  link_tasks:
+    '{ "action": "link_tasks", "task_ref": "task name or id", "target_ref": "task name or id" }',
+  unlink_tasks:
+    '{ "action": "unlink_tasks", "task_ref": "task name or id", "target_ref": "task name or id" }',
 };
 
 // The allowed action shapes for a role, one per line, derived from the same

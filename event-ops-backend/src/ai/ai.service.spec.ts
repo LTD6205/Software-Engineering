@@ -23,7 +23,10 @@ function build(role = 'manager') {
     findOne: jest.fn(),
   };
   const aiTaskMapRepo = { save: jest.fn() };
-  const userRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+  const userRepo = {
+    findOne: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+  };
   const tasksService = {
     create: jest.fn().mockResolvedValue({ task_id: 'tk1', task_name: 'A' }),
     assignUser: jest.fn(),
@@ -188,7 +191,10 @@ describe('AiService.processCommand', () => {
         ]),
       ),
     );
-    await service.processCommand(ACTOR, { eventId: 'e1', message: 'add a task' });
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add a task',
+    });
     const arg = tasksService.create.mock.calls[0][0] as {
       start_time?: Date;
       deadline?: Date;
@@ -218,7 +224,10 @@ describe('AiService.processCommand', () => {
         ]),
       ),
     );
-    await service.processCommand(ACTOR, { eventId: 'e1', message: 'add setup' });
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'add setup',
+    });
     const arg = tasksService.create.mock.calls[0][0] as { start_time?: Date };
     expect((arg.start_time as Date).toISOString()).toBe(
       '2027-01-01T08:00:00.000Z',
@@ -232,8 +241,12 @@ describe('AiService.processCommand', () => {
     // never goes stale); the model schedules a deadline days past the end (what
     // it does for short events). fitWindow must pull it inside.
     const day = 24 * 60 * 60 * 1000;
-    const winStart = new Date(new Date(Date.now() + day).setHours(8, 0, 0, 0)).toISOString();
-    const winEnd = new Date(new Date(Date.now() + day).setHours(20, 0, 0, 0)).toISOString();
+    const winStart = new Date(
+      new Date(Date.now() + day).setHours(8, 0, 0, 0),
+    ).toISOString();
+    const winEnd = new Date(
+      new Date(Date.now() + day).setHours(20, 0, 0, 0),
+    ).toISOString();
     // Model's reply overshoots the window by days.
     const replyStart = new Date(Date.now() + 4 * day).toISOString();
     const replyDeadline = new Date(Date.now() + 7 * day).toISOString();
@@ -255,7 +268,10 @@ describe('AiService.processCommand', () => {
         ]),
       ),
     );
-    await service.processCommand(ACTOR, { eventId: 'e1', message: 'cater the party' });
+    await service.processCommand(ACTOR, {
+      eventId: 'e1',
+      message: 'cater the party',
+    });
     const arg = tasksService.create.mock.calls[0][0] as {
       start_time?: Date;
       deadline?: Date;
@@ -373,11 +389,19 @@ describe('AiService.processCommand', () => {
     expect(result.question).toBe('Which event?');
   });
 
-  it('shows each task\'s current assignee in the prompt (so reassignment is scoped to the right person)', async () => {
+  it("shows each task's current assignee in the prompt (so reassignment is scoped to the right person)", async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([
-      { task_id: 't1', task_name: 'Alpha', assignees: [{ user_id: 'u1', name: 'Alice' }] },
-      { task_id: 't2', task_name: 'Beta', assignees: [{ user_id: 'u6', name: 'Frank' }] },
+      {
+        task_id: 't1',
+        task_name: 'Alpha',
+        assignees: [{ user_id: 'u1', name: 'Alice' }],
+      },
+      {
+        task_id: 't2',
+        task_name: 'Beta',
+        assignees: [{ user_id: 'u6', name: 'Frank' }],
+      },
       { task_id: 't3', task_name: 'Gamma', assignees: [] },
     ]);
     mockedAxios.post.mockResolvedValue(
@@ -496,7 +520,10 @@ describe('AiService.processCommand', () => {
         ]),
       ),
     );
-    await service.processCommand({ sub: 'a1', role: 'admin' }, { message: 'reactivate Bob' });
+    await service.processCommand(
+      { sub: 'a1', role: 'admin' },
+      { message: 'reactivate Bob' },
+    );
     expect(usersService.update).toHaveBeenCalledWith(
       'd1',
       expect.objectContaining({ is_active: true }),
@@ -846,7 +873,12 @@ describe('AiService.processCommand', () => {
   it('rename_group resolves a group by title and calls renameGroup', async () => {
     const { service, tasksService } = build();
     tasksService.findAllByEvent.mockResolvedValue([
-      { task_id: 't1', task_name: 'A', group_id: 'g1', group_title: 'Catering' },
+      {
+        task_id: 't1',
+        task_name: 'A',
+        group_id: 'g1',
+        group_title: 'Catering',
+      },
     ]);
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
@@ -979,10 +1011,7 @@ describe('AiService.processCommand', () => {
       eventId: 'e1',
       message: 'ungroup A',
     })) as { groups_changed: Array<Record<string, unknown>> };
-    expect(tasksService.ungroup).toHaveBeenCalledWith(
-      't1',
-      expect.anything(),
-    );
+    expect(tasksService.ungroup).toHaveBeenCalledWith('t1', expect.anything());
     expect(r.groups_changed[0]).toMatchObject({ action: 'ungroup' });
   });
 
@@ -1033,7 +1062,10 @@ describe('AiService.processCommand', () => {
     const { service } = build();
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
-        JSON.stringify({ clarification_needed: true, question: 'Which event?' }),
+        JSON.stringify({
+          clarification_needed: true,
+          question: 'Which event?',
+        }),
       ),
     );
     const r = (await service.processCommand(ACTOR, {
@@ -1277,7 +1309,10 @@ describe('AiService.processCommand', () => {
     events.findForViewer.mockResolvedValue([
       { event_id: 'e1', event_name: 'Spring Gala' },
     ]);
-    events.update.mockResolvedValue({ event_id: 'e1', event_name: 'Autumn Gala' });
+    events.update.mockResolvedValue({
+      event_id: 'e1',
+      event_name: 'Autumn Gala',
+    });
     mockedAxios.post.mockResolvedValue(
       deepSeekReply(
         JSON.stringify([
@@ -1332,7 +1367,10 @@ describe('AiService.processCommand', () => {
     );
     const r = (await service.processCommand(
       { sub: 'o1', role: 'organizer' },
-      { message: 'chuyển ngày bắt đầu sự kiện Spring Gala thành ngày 10 tháng 6' },
+      {
+        message:
+          'chuyển ngày bắt đầu sự kiện Spring Gala thành ngày 10 tháng 6',
+      },
     )) as { events_changed: Array<Record<string, unknown>> };
     // 2026-06-10T00:00 Vietnam (UTC+7) == 2026-06-09T17:00:00Z; end filled from current.
     expect(events.updateDates).toHaveBeenCalledWith(
@@ -1361,14 +1399,18 @@ describe('AiService.processCommand', () => {
       ),
     );
     // The task must already exist so the update resolves.
-    (tasksService.findAllByEvent as jest.Mock).mockResolvedValue([
-      { task_id: 'tk1', task_name: 'Lên kế hoạch chương trình', event_id: 'e1' },
+    tasksService.findAllByEvent.mockResolvedValue([
+      {
+        task_id: 'tk1',
+        task_name: 'Lên kế hoạch chương trình',
+        event_id: 'e1',
+      },
     ]);
     await service.processCommand(
       { sub: 'm1', role: 'manager' },
       { eventId: 'e1', message: 'chỉnh task bắt đầu lúc 8h tối' },
     );
-    const patch = (tasksService.update as jest.Mock).mock.calls[0][1] as {
+    const patch = tasksService.update.mock.calls[0][1] as {
       start_time?: Date;
     };
     // 20:00 Vietnam (UTC+7) == 13:00Z — NOT 20:00Z (the old +7h bug showed 03:00 local).
@@ -1667,20 +1709,24 @@ describe('AiService.processCommand', () => {
 
   it('lists other managers as reassignment targets in the system prompt', async () => {
     const { service, userRepo } = build('manager');
-    userRepo.find.mockImplementation((opts: { where: Record<string, unknown> }) => {
-      // staff roster query vs. the managers (reassign-target) query
-      if (opts.where.role === 'manager') {
+    userRepo.find.mockImplementation(
+      (opts: { where: Record<string, unknown> }) => {
+        // staff roster query vs. the managers (reassign-target) query
+        if (opts.where.role === 'manager') {
+          return Promise.resolve([
+            { user_id: 'u1', name: 'Me', email: 'me@x.com' }, // self — filtered out
+            { user_id: 'm3', name: 'Mona', email: 'manager03@eventops.com' },
+          ]);
+        }
         return Promise.resolve([
-          { user_id: 'u1', name: 'Me', email: 'me@x.com' }, // self — filtered out
-          { user_id: 'm3', name: 'Mona', email: 'manager03@eventops.com' },
+          { user_id: 's1', name: 'Bob', email: 'bob@x.com', is_active: true },
         ]);
-      }
-      return Promise.resolve([
-        { user_id: 's1', name: 'Bob', email: 'bob@x.com', is_active: true },
-      ]);
-    });
+      },
+    );
     mockedAxios.post.mockResolvedValue(deepSeekReply(JSON.stringify([])));
-    await service.processCommand(ACTOR, { message: 'who can I move staff to?' });
+    await service.processCommand(ACTOR, {
+      message: 'who can I move staff to?',
+    });
     const body = mockedAxios.post.mock.calls[0][1] as {
       messages: { role: string; content: string }[];
     };
