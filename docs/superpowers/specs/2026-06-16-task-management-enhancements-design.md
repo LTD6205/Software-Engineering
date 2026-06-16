@@ -77,8 +77,9 @@ ordering, no scheduling enforcement — purely a relationship for visibility and
 ### Endpoints & rules
 - `GET /tasks/:id/links` — viewers of the task's event; returns linked tasks (querying **both**
   columns so the link is treated as symmetric).
-- `POST /tasks/:id/links` `{ targetTaskId }` — actor must be creator/assignee of the source task
-  (staff) or manager/admin of the event. Both tasks must belong to the **same event**.
+- `POST /tasks/:id/links` `{ targetTaskId }` — usable by **both managers and staff**: a manager/admin
+  of the event (any task in it), or a staffer who is creator/assignee of the source task. Both tasks
+  must belong to the **same event**.
 - `DELETE /tasks/:id/links/:targetId` — same authorization as create.
 
 ### Visibility change
