@@ -72,6 +72,14 @@ export const tasksApi = {
   // Multi-select batch actions (one undoable operation each).
   batchDelete:  (taskIds: string[])                    => api.post('/tasks/batch/delete', { task_ids: taskIds }).then(r => r.data),
   batchUngroup: (taskIds: string[])                    => api.post('/tasks/batch/ungroup', { task_ids: taskIds }).then(r => r.data),
+  // Custom progress statuses (reusable per-event labels, display-only).
+  listCustomStatuses:  (eventId: string)                            => api.get(`/tasks/event/${eventId}/custom-statuses`).then(r => r.data),
+  createCustomStatus:  (eventId: string, body: { name: string; color?: string | null }) => api.post(`/tasks/event/${eventId}/custom-statuses`, body).then(r => r.data),
+  deleteCustomStatus:  (statusId: string)                           => api.delete(`/tasks/custom-statuses/${statusId}`).then(r => r.data),
+  // Symmetric task links ("related" relationship).
+  getLinks:    (taskId: string)                        => api.get(`/tasks/${taskId}/links`).then(r => r.data),
+  linkTask:    (taskId: string, targetTaskId: string)  => api.post(`/tasks/${taskId}/links`, { target_task_id: targetTaskId }).then(r => r.data),
+  unlinkTask:  (taskId: string, targetId: string)      => api.delete(`/tasks/${taskId}/links/${targetId}`).then(r => r.data),
 }
 
 export const usersApi = {
