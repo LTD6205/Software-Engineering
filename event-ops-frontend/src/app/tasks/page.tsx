@@ -1,13 +1,14 @@
 'use client'
 import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
-import { Plus, CheckSquare, RotateCcw } from 'lucide-react'
+import { Plus, CheckSquare, RotateCcw, List, GanttChartSquare, Tags, X } from 'lucide-react'
 import { tasksApi, eventsApi, usersApi, getErrorMessage } from '@/lib/api'
-import { Task, Event } from '@/lib/types'
+import { Task, Event, CustomStatus } from '@/lib/types'
 import { toLocalInputValue } from '@/lib/time'
 import TimePicker from '@/components/TimePicker'
 import TopBar from '@/components/TopBar'
 import TaskTimeline from '@/components/TaskTimeline'
+import TaskList, { type SortKey, type SortDir } from '@/components/TaskList'
 import Dropdown from '@/components/Dropdown'
 import Modal from '@/components/Modal'
 import Avatar from '@/components/Avatar'
@@ -52,9 +53,23 @@ function TasksContent() {
   // Avatar re-select picker: the task whose assignees are being edited.
   const [editingAssignees, setEditingAssignees] = useState<Task | null>(null)
   const [pickedStaff, setPickedStaff] = useState<string[]>([])
-  // Filters — status + priority.
+  // Filters — status + priority + custom progress label + (staff) linked-only.
   const [taskStatus, setTaskStatus]     = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'overdue'>('all')
   const [taskPriority, setTaskPriority] = useState<'all' | 'low' | 'medium' | 'high'>('all')
+  const [customFilter, setCustomFilter] = useState<string>('all') // 'all' | 'none' | status_id
+  const [linkedOnly, setLinkedOnly]     = useState(false)
+  // Timeline (Gantt) vs flat list view, and the list's sort.
+  const [viewMode, setViewMode] = useState<'timeline' | 'list'>('timeline')
+  const [sortKey, setSortKey]   = useState<SortKey>('priority')
+  const [sortDir, setSortDir]   = useState<SortDir>('desc')
+  // Reusable per-event custom progress statuses + the manage modal / links modal.
+  const [customStatuses, setCustomStatuses] = useState<CustomStatus[]>([])
+  const [showStatusMgr, setShowStatusMgr]   = useState(false)
+  const [newStatusName, setNewStatusName]   = useState('')
+  const [newStatusColor, setNewStatusColor] = useState('#3b82f6')
+  const [editingLinks, setEditingLinks]     = useState<Task | null>(null)
+  const [links, setLinks]                   = useState<Task[]>([])
+  const [linkTargetId, setLinkTargetId]     = useState('')
   // In-app toast (replaces native showToast()) for errors and notices.
   const [toast, setToast] = useState<ToastData | null>(null)
   const dismissToast = useCallback(() => setToast(null), [])
@@ -64,9 +79,17 @@ function TasksContent() {
   )
 
   // Staff this manager may assign: their own team (admins may assign any staff).
-  const assignableStaff = teamMembers.filter(
-    m => m.role === 'staff' && (isAdmin || m.manager_id === user?.user_id),
-  )
+  // A manager/admin may also assign a task to themselves, so they appear in the
+  // list even though their role isn't 'staff'.
+  const assignableStaff = (() => {
+    const staff = teamMembers.filter(
+      m => m.role === 'staff' && (isAdmin || m.manager_id === user?.user_id),
+    )
+    if (isManager && user && !staff.some(s => s.user_id === user.user_id)) {
+      return [{ user_id: user.user_id, name: user.name, role: user.role, manager_id: null, avatar: user.avatar }, ...staff]
+    }
+    return staff
+  })()
   const toggle = (list: string[], id: string) =>
     list.includes(id) ? list.filter(x => x !== id) : [...list, id]
 
@@ -114,6 +137,15 @@ function TasksContent() {
     }
   }, [selectedEvent, isManager])
 
+  // The selected event's reusable custom progress statuses.
+  const loadCustomStatuses = useCallback(() => {
+    if (selectedEvent) {
+      tasksApi.listCustomStatuses(selectedEvent).then(setCustomStatuses).catch(() => setCustomStatuses([]))
+    } else {
+      setCustomStatuses([])
+    }
+  }, [selectedEvent])
+
   // Live updates: when anyone changes a task/event, refresh the board + milestone
   // without a manual reload (e.g. a staff completing the last task).
   const onLiveChange = useCallback((c: DataChange) => {
@@ -121,8 +153,9 @@ function TasksContent() {
     if (selectedEvent && (!c.event_id || c.event_id === selectedEvent)) {
       tasksApi.getByEvent(selectedEvent).then(setTasks).catch(() => {})
       loadChanges()
+      loadCustomStatuses()
     }
-  }, [selectedEvent, refreshEvents, loadChanges])
+  }, [selectedEvent, refreshEvents, loadChanges, loadCustomStatuses])
   useLiveData(onLiveChange)
 
   // Reload tasks whenever the selected event changes. setLoading(true) up front
@@ -136,7 +169,8 @@ function TasksContent() {
       .catch(() => {})
       .finally(() => setLoading(false))
     loadChanges()
-  }, [selectedEvent, loadChanges])
+    loadCustomStatuses()
+  }, [selectedEvent, loadChanges, loadCustomStatuses])
 
   // The task's dates must stay within the parent event's time range.
   const selEvent = events.find(e => e.event_id === selectedEvent)
@@ -333,13 +367,122 @@ function TasksContent() {
     }
   }
 
-  // Filter predicate (status + priority).
+  // Is the current user an assignee of this task? Used to mark linked-but-not-mine
+  // tasks read-only for staff (the backend already scopes their visible set).
+  const isMine = useCallback(
+    (tk: Task) => (tk.assignees ?? []).some(a => a.user_id === user?.user_id),
+    [user],
+  )
+  // Staff may only edit tasks they're assigned to (or created); managers/admins
+  // may edit any task they can manage. Linked tasks a staffer doesn't own are
+  // therefore read-only in the list.
+  const canEditTask = useCallback(
+    (tk: Task) => isManager || isMine(tk) || tk.created_by === user?.user_id,
+    [isManager, isMine, user],
+  )
+
+  // Filter predicate (status + priority + custom progress label + linked-only).
   const matches = (tk: Task) => {
     if (taskStatus !== 'all' && tk.status !== taskStatus) return false
     if (taskPriority !== 'all' && tk.priority_label !== taskPriority) return false
+    if (customFilter === 'none' && tk.custom_status_id) return false
+    if (customFilter !== 'all' && customFilter !== 'none' && tk.custom_status_id !== customFilter) return false
+    // "Linked to my tasks": tasks visible to a staffer that aren't assigned to
+    // them are, by the backend's scoping, linked to one of their own tasks.
+    if (linkedOnly && isMine(tk)) return false
     return true
   }
-  const resetTaskFilters = () => { setTaskStatus('all'); setTaskPriority('all') }
+  const resetTaskFilters = () => {
+    setTaskStatus('all'); setTaskPriority('all'); setCustomFilter('all'); setLinkedOnly(false)
+  }
+
+  // List view: filtered then sorted (priority → priority_score; dates by time).
+  const visibleTasks = (() => {
+    const arr = tasks.filter(matches)
+    const dir = sortDir === 'asc' ? 1 : -1
+    const val = (tk: Task): number | string => {
+      switch (sortKey) {
+        case 'priority': return tk.priority_score ?? 0
+        case 'deadline': return tk.deadline ? new Date(tk.deadline).getTime() : 0
+        case 'start':    return tk.start_time ? new Date(tk.start_time).getTime() : 0
+        case 'name':     return tk.task_name.toLowerCase()
+      }
+    }
+    return [...arr].sort((a, b) => {
+      const va = val(a), vb = val(b)
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  })()
+  const onSort = (key: SortKey) => {
+    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc') }
+  }
+
+  // Set or clear a task's custom progress label (rides the normal update path).
+  const setTaskCustomStatus = async (id: string, statusId: string | null) => {
+    const before = tasks
+    setTasks(p => p.map(t => t.task_id === id ? { ...t, custom_status_id: statusId } : t))
+    try {
+      await tasksApi.update(id, { custom_status_id: statusId })
+    } catch (e) {
+      setTasks(before)
+      showToast(tError(getErrorMessage(e, 'Could not update progress / Không thể cập nhật tiến độ')))
+    }
+  }
+
+  // Manage the event's custom progress statuses.
+  const handleCreateStatus = async () => {
+    const name = newStatusName.trim()
+    if (!selectedEvent || !name) return
+    try {
+      await tasksApi.createCustomStatus(selectedEvent, { name, color: newStatusColor })
+      setNewStatusName('')
+      loadCustomStatuses()
+    } catch (e) {
+      showToast(tError(getErrorMessage(e, 'Could not create the status / Không thể tạo trạng thái')))
+    }
+  }
+  const handleDeleteStatus = async (statusId: string) => {
+    try {
+      await tasksApi.deleteCustomStatus(statusId)
+      loadCustomStatuses()
+      if (selectedEvent) setTasks(await tasksApi.getByEvent(selectedEvent))
+      if (customFilter === statusId) setCustomFilter('all')
+    } catch (e) {
+      showToast(tError(getErrorMessage(e, 'Could not delete the status / Không thể xóa trạng thái')))
+    }
+  }
+
+  // Task links (symmetric "related" relationship).
+  const openLinks = async (task: Task) => {
+    setEditingLinks(task)
+    setLinkTargetId('')
+    try { setLinks(await tasksApi.getLinks(task.task_id)) }
+    catch { setLinks([]) }
+  }
+  const handleLink = async () => {
+    if (!editingLinks || !linkTargetId) return
+    try {
+      await tasksApi.linkTask(editingLinks.task_id, linkTargetId)
+      setLinks(await tasksApi.getLinks(editingLinks.task_id))
+      setLinkTargetId('')
+      await reloadTasks()
+    } catch (e) {
+      showToast(tError(getErrorMessage(e, 'Could not link the tasks / Không thể liên kết công việc')))
+    }
+  }
+  const handleUnlink = async (targetId: string) => {
+    if (!editingLinks) return
+    try {
+      await tasksApi.unlinkTask(editingLinks.task_id, targetId)
+      setLinks(await tasksApi.getLinks(editingLinks.task_id))
+      await reloadTasks()
+    } catch (e) {
+      showToast(tError(getErrorMessage(e, 'Could not unlink the tasks / Không thể gỡ liên kết')))
+    }
+  }
 
   // Merge / group actions — refetch after each so the timeline reflects the
   // new spans and grouping immediately (the live socket also broadcasts).
@@ -466,6 +609,34 @@ function TasksContent() {
               <RotateCcw size={15} /> {t('Undo', 'Hoàn tác')}{changes.length ? ` (${changes.length})` : ''}
             </button>
           )}
+          {selectedEvent && (
+            <button
+              onClick={() => setViewMode(m => (m === 'timeline' ? 'list' : 'timeline'))}
+              title={t('Switch view', 'Đổi chế độ xem')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '7px',
+                background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: '9px',
+                padding: '10px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+              }}>
+              {viewMode === 'timeline'
+                ? <><List size={15} /> {t('List', 'Danh sách')}</>
+                : <><GanttChartSquare size={15} /> {t('Timeline', 'Dòng thời gian')}</>}
+            </button>
+          )}
+          {selectedEvent && (
+            <button
+              onClick={() => setShowStatusMgr(true)}
+              title={t('Manage progress statuses', 'Quản lý trạng thái tiến độ')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '7px',
+                background: 'var(--bg-hover)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: '9px',
+                padding: '10px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+              }}>
+              <Tags size={15} /> {t('Statuses', 'Trạng thái')}
+            </button>
+          )}
         </div>
 
         {/* Milestone tracker for the selected event — uses the event's
@@ -496,6 +667,19 @@ function TasksContent() {
                 { value: 'medium', label: t('Medium', 'Trung bình'), color: 'var(--accent-amber)' },
                 { value: 'low', label: t('Low', 'Thấp'), color: 'var(--accent-green)' },
               ]} />
+            <Dropdown size="sm" value={customFilter} onChange={setCustomFilter}
+              ariaLabel={t('Filter by progress', 'Lọc theo tiến độ')}
+              options={[
+                { value: 'all', label: t('All progress', 'Mọi tiến độ') },
+                { value: 'none', label: t('No label', 'Chưa có nhãn') },
+                ...customStatuses.map(s => ({ value: s.status_id, label: s.name, color: s.color ?? undefined })),
+              ]} />
+            {!isManager && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={linkedOnly} onChange={e => setLinkedOnly(e.target.checked)} style={{ width: 'auto', margin: 0 }} />
+                {t('Linked to my tasks', 'Liên kết với việc của tôi')}
+              </label>
+            )}
           </div>
         )}
 
@@ -513,6 +697,21 @@ function TasksContent() {
           </div>
         ) : loading || !selEvent ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('Loading tasks...', 'Đang tải công việc...')}</p>
+        ) : viewMode === 'list' ? (
+          <TaskList
+            tasks={visibleTasks}
+            customStatuses={customStatuses}
+            canManage={isManager}
+            canEdit={canEditTask}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={onSort}
+            onStatusChange={handleStatusChange}
+            onSetCustomStatus={setTaskCustomStatus}
+            onEditAssignees={openAssignees}
+            onOpenLinks={openLinks}
+            onDelete={setPendingTaskDelete}
+          />
         ) : (
           <TaskTimeline
             event={selEvent}
@@ -690,6 +889,93 @@ function TasksContent() {
         onConfirm={() => { if (pendingTaskDelete) void doDeleteTask(pendingTaskDelete); setPendingTaskDelete(null) }}
         onCancel={() => setPendingTaskDelete(null)}
       />
+
+      {/* Manage the event's reusable custom progress statuses. */}
+      {showStatusMgr && (
+        <Modal title={t('Progress statuses', 'Trạng thái tiến độ')} onClose={() => setShowStatusMgr(false)}>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            {t('Custom labels for tracking progress. They do not change the task lifecycle.',
+               'Nhãn tùy chỉnh để theo dõi tiến độ. Chúng không thay đổi vòng đời công việc.')}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '240px', overflowY: 'auto', marginBottom: '14px' }}>
+            {customStatuses.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px' }}>
+                {t('No custom statuses yet', 'Chưa có trạng thái tùy chỉnh')}
+              </span>
+            ) : customStatuses.map(s => (
+              <div key={s.status_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)',
+              }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                  <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: s.color ?? 'var(--text-muted)' }} />
+                  {s.name}
+                </span>
+                <button onClick={() => handleDeleteStatus(s.status_id)} title={t('Delete', 'Xóa')}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-red)', padding: '2px' }}>
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input value={newStatusName} onChange={e => setNewStatusName(e.target.value)}
+              placeholder={t('New status name...', 'Tên trạng thái mới...')} style={{ flex: 1 }} />
+            <input type="color" value={newStatusColor} onChange={e => setNewStatusColor(e.target.value)}
+              style={{ width: '40px', height: '36px', padding: '2px', cursor: 'pointer' }} />
+            <button onClick={handleCreateStatus} disabled={!newStatusName.trim()}
+              style={{
+                background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px',
+                padding: '9px 16px', fontSize: '13px', fontWeight: 600, opacity: newStatusName.trim() ? 1 : 0.6,
+              }}>{t('Add', 'Thêm')}</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* View / add / remove a task's links (related tasks in the same event). */}
+      {editingLinks && (
+        <Modal title={t('Linked tasks', 'Công việc liên kết') + ' — ' + editingLinks.task_name} onClose={() => setEditingLinks(null)}>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            {t('Link related tasks in this event. Linked tasks become visible to each task’s assignees.',
+               'Liên kết các công việc liên quan trong sự kiện. Công việc liên kết sẽ hiển thị cho người được giao của mỗi công việc.')}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '240px', overflowY: 'auto', marginBottom: '14px' }}>
+            {links.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px' }}>
+                {t('No linked tasks', 'Chưa có công việc liên kết')}
+              </span>
+            ) : links.map(l => (
+              <div key={l.task_id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{l.task_name}</span>
+                {canEditTask(editingLinks) && (
+                  <button onClick={() => handleUnlink(l.task_id)} title={t('Unlink', 'Gỡ liên kết')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-red)', padding: '2px' }}>
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {canEditTask(editingLinks) && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <select value={linkTargetId} onChange={e => setLinkTargetId(e.target.value)} style={{ flex: 1 }}>
+                <option value="">{t('Select a task to link...', 'Chọn công việc để liên kết...')}</option>
+                {tasks
+                  .filter(tk => tk.task_id !== editingLinks.task_id && !links.some(l => l.task_id === tk.task_id))
+                  .map(tk => <option key={tk.task_id} value={tk.task_id}>{tk.task_name}</option>)}
+              </select>
+              <button onClick={handleLink} disabled={!linkTargetId}
+                style={{
+                  background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px',
+                  padding: '9px 16px', fontSize: '13px', fontWeight: 600, opacity: linkTargetId ? 1 : 0.6,
+                }}>{t('Link', 'Liên kết')}</button>
+            </div>
+          )}
+        </Modal>
+      )}
 
       <Toast data={toast} onClose={dismissToast} />
     </div>
