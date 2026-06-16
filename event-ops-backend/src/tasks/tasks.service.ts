@@ -34,7 +34,11 @@ export interface UndoOp {
   created: string[];
   deleted: { task: Record<string, unknown>; assignees: string[] }[];
   edited: { task_id: string; fields: Record<string, unknown> }[];
-  ungrouped: { task_id: string; group_id: string | null; group_title?: string }[];
+  ungrouped: {
+    task_id: string;
+    group_id: string | null;
+    group_title?: string;
+  }[];
 }
 
 @Injectable()
@@ -199,8 +203,7 @@ export class TasksService {
     const event = await this.eventRepo.findOne({
       where: { event_id: data.event_id },
     });
-    if (event)
-      assertWithinEventWindow(event, data.start_time, data.deadline);
+    if (event) assertWithinEventWindow(event, data.start_time, data.deadline);
     // A new task can't be scheduled in the past.
     assertNotInPast(data.start_time, data.deadline);
     const task = await this.taskRepo.save(this.taskRepo.create(data));
@@ -525,7 +528,9 @@ export class TasksService {
           opts.undoOp.edited.push({ task_id: id, fields });
         } else {
           const labels = [
-            ...new Set(changedKeys.map((k) => TasksService.FIELD_LABELS[k] ?? k)),
+            ...new Set(
+              changedKeys.map((k) => TasksService.FIELD_LABELS[k] ?? k),
+            ),
           ].join(', ');
           const op = this.newUndoOp();
           op.edited.push({ task_id: id, fields });
@@ -724,7 +729,11 @@ export class TasksService {
   // re-create it (with its old title) and re-attach the members.
   private async restoreGroups(
     eventId: string,
-    ungrouped: { task_id: string; group_id: string | null; group_title?: string }[],
+    ungrouped: {
+      task_id: string;
+      group_id: string | null;
+      group_title?: string;
+    }[],
   ) {
     const byGroup = new Map<string, { title?: string; ids: string[] }>();
     for (const u of ungrouped) {
@@ -748,7 +757,10 @@ export class TasksService {
   }
 
   // The event's recent operations (newest first) for the Undo button. Manager/admin.
-  async getEventChanges(eventId: string, actor?: { sub: string; role: string }) {
+  async getEventChanges(
+    eventId: string,
+    actor?: { sub: string; role: string },
+  ) {
     if (actor) await this.events.assertCanManageEvent(actor, eventId);
     const rows = await this.changeLogRepo.find({
       where: { event_id: eventId },
@@ -1015,6 +1027,16 @@ export class TasksService {
     return saved;
   }
 
+  // Resolve a custom-status name to its row within an event (case-insensitive).
+  // Used by the AI to turn a model-supplied status name into an id. Null if none.
+  findCustomStatusByName(eventId: string, name: string) {
+    return this.customStatusRepo
+      .createQueryBuilder('s')
+      .where('s.event_id = :eventId', { eventId })
+      .andWhere('lower(s.name) = lower(:name)', { name: (name ?? '').trim() })
+      .getOne();
+  }
+
   async deleteCustomStatus(
     statusId: string,
     actor: { sub: string; role: string },
@@ -1092,6 +1114,14 @@ export class TasksService {
         'Tasks must be in the same event / Công việc phải cùng một sự kiện',
       );
     }
+    // Authorize on the SOURCE task only (by design): a staffer anchors a link
+    // from a task they own/are assigned to, to any other task in the SAME event
+    // — that is exactly the intended way they surface a teammate's task into
+    // their read-only view (see the linked-task visibility rule in
+    // findAllByEvent). Requiring ownership of the target too would make the
+    // feature useless for staff. Same-event is already enforced above, and a
+    // manager actor's assertCanManageEvent(a.event_id) covers B as well since
+    // both share the event.
     await this.assertCanLink(a, actor);
     // Symmetric: only create when no link exists in either direction.
     const existing = await this.depRepo
@@ -1351,7 +1381,9 @@ export class TasksService {
     if (!groupId) return { ok: true };
     // Capture the membership so undo can put the task back (with the group's title
     // in case removing it dissolves the group).
-    const group = await this.groupRepo.findOne({ where: { group_id: groupId } });
+    const group = await this.groupRepo.findOne({
+      where: { group_id: groupId },
+    });
     const entry = {
       task_id: taskId,
       group_id: groupId,

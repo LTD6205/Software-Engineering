@@ -95,13 +95,19 @@ describe('TasksService', () => {
           edited: [
             {
               task_id: 't1',
-              fields: { task_name: 'Old', deadline: '2026-06-01T09:00:00.000Z' },
+              fields: {
+                task_name: 'Old',
+                deadline: '2026-06-01T09:00:00.000Z',
+              },
             },
           ],
         },
       });
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
@@ -136,7 +142,10 @@ describe('TasksService', () => {
           ],
         },
       });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
       // taskRepo.save returns the re-created task (makeRepo's save echoes input).
 
@@ -158,7 +167,10 @@ describe('TasksService', () => {
         change_type: 'create',
         snapshot: { created: ['a', 'b', 'c'] },
       });
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.undoLastChange('e1', { sub: 'm1', role: 'manager' });
@@ -188,7 +200,10 @@ describe('TasksService', () => {
         group_id: null,
       });
       assignRepo.find.mockResolvedValue([]);
-      eventRepo.findOne.mockResolvedValue({ event_id: 'e1', status: 'pending' });
+      eventRepo.findOne.mockResolvedValue({
+        event_id: 'e1',
+        status: 'pending',
+      });
       taskRepo.find.mockResolvedValue([]);
 
       await service.removeMany(['t1', 't2'], { sub: 'm1', role: 'manager' });
@@ -801,7 +816,9 @@ describe('TasksService', () => {
     it('creates a custom status for an event member', async () => {
       const { service, customStatusRepo } = build();
       customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
-        where: () => ({ andWhere: () => ({ getOne: async () => null }) }),
+        where: () => ({
+          andWhere: () => ({ getOne: () => Promise.resolve(null) }),
+        }),
       });
       const made = await service.createCustomStatus(
         'e1',
@@ -816,7 +833,9 @@ describe('TasksService', () => {
       const { service, customStatusRepo } = build();
       customStatusRepo.createQueryBuilder = jest.fn().mockReturnValue({
         where: () => ({
-          andWhere: () => ({ getOne: async () => ({ status_id: 'x' }) }),
+          andWhere: () => ({
+            getOne: () => Promise.resolve({ status_id: 'x' }),
+          }),
         }),
       });
       await expect(
@@ -848,8 +867,16 @@ describe('TasksService', () => {
     it('rejects linking tasks from different events', async () => {
       const { service, taskRepo } = build();
       taskRepo.findOne
-        .mockResolvedValueOnce({ task_id: 'a', event_id: 'e1', created_by: 'u1' })
-        .mockResolvedValueOnce({ task_id: 'b', event_id: 'e2', created_by: 'u1' });
+        .mockResolvedValueOnce({
+          task_id: 'a',
+          event_id: 'e1',
+          created_by: 'u1',
+        })
+        .mockResolvedValueOnce({
+          task_id: 'b',
+          event_id: 'e2',
+          created_by: 'u1',
+        });
       await expect(
         service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' }),
       ).rejects.toThrow(/same event/);
@@ -865,10 +892,18 @@ describe('TasksService', () => {
     it('creates a symmetric link when none exists', async () => {
       const { service, taskRepo, depRepo } = build();
       taskRepo.findOne
-        .mockResolvedValueOnce({ task_id: 'a', event_id: 'e1', created_by: 'u1' })
-        .mockResolvedValueOnce({ task_id: 'b', event_id: 'e1', created_by: 'u1' });
+        .mockResolvedValueOnce({
+          task_id: 'a',
+          event_id: 'e1',
+          created_by: 'u1',
+        })
+        .mockResolvedValueOnce({
+          task_id: 'b',
+          event_id: 'e1',
+          created_by: 'u1',
+        });
       depRepo.createQueryBuilder = jest.fn().mockReturnValue({
-        where: () => ({ getOne: async () => null }),
+        where: () => ({ getOne: () => Promise.resolve(null) }),
       });
       await service.linkTasks('a', 'b', { sub: 'u1', role: 'manager' });
       expect(depRepo.save).toHaveBeenCalledWith(

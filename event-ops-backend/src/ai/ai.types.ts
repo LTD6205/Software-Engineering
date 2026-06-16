@@ -24,7 +24,10 @@ export type AiActionKind =
   | 'accept_reassign'
   | 'reject_reassign'
   | 'cancel_reassign'
-  | 'remove_from_team';
+  | 'remove_from_team'
+  | 'create_custom_status'
+  | 'link_tasks'
+  | 'unlink_tasks';
 
 // Core task action shapes. For backward compatibility an item with no `action`
 // field is treated as a `create` (the original array-of-tasks behaviour).
@@ -50,6 +53,8 @@ export interface UpdateAction {
   start_time?: string; // move the task's start time
   deadline?: string;
   status?: 'in_progress' | 'completed' | 'overdue';
+  // A custom progress label (by name, resolved to an id within the task's event).
+  custom_status?: string;
 }
 export interface ReassignAction {
   action: 'reassign';
@@ -175,6 +180,27 @@ export interface RemoveFromTeamAction {
   staff_ref: string;
 }
 
+// Custom-status and task-link action shapes (manager/admin). create_custom_status
+// routes to TasksService.createCustomStatus; link/unlink route to linkTasks/
+// unlinkTasks. Setting a task's custom status is done via the `update` action's
+// custom_status field, not a separate action.
+export interface CreateCustomStatusAction {
+  action: 'create_custom_status';
+  name: string;
+  color?: string;
+  event_ref?: string;
+}
+export interface LinkTasksAction {
+  action: 'link_tasks';
+  task_ref: string;
+  target_ref: string;
+}
+export interface UnlinkTasksAction {
+  action: 'unlink_tasks';
+  task_ref: string;
+  target_ref: string;
+}
+
 // The full set of actions the model may emit. An item with no `action` field is
 // treated as a `create` (see validateActions in ai.validate.ts).
 export type AiAction =
@@ -200,7 +226,10 @@ export type AiAction =
   | AcceptReassignAction
   | RejectReassignAction
   | CancelReassignAction
-  | RemoveFromTeamAction;
+  | RemoveFromTeamAction
+  | CreateCustomStatusAction
+  | LinkTasksAction
+  | UnlinkTasksAction;
 
 // A task as listed for the model (and for resolving a task_ref to a real row).
 // `assignees` lets the model scope commands like "reassign all of Bob's tasks"

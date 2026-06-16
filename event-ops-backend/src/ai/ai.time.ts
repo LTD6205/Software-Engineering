@@ -13,7 +13,9 @@ export function fmtVN(value: Date | string | null | undefined): string {
   if (!value) return 'unspecified';
   const t = new Date(value).getTime();
   if (isNaN(t)) return 'unspecified';
-  return new Date(t + VN_OFFSET_MS).toISOString().replace(/\.\d{3}Z$/, '+07:00');
+  return new Date(t + VN_OFFSET_MS)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, '+07:00');
 }
 
 // Parse a model time string into a UTC Date. A bare wall-clock the model emits
