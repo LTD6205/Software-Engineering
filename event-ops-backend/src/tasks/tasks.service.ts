@@ -945,8 +945,9 @@ export class TasksService {
     );
   }
 
-  // A task may only be assigned to staff members. A manager may only assign
-  // their own staff; admins/organizers may assign any staff member.
+  // A task may only be assigned to staff members, with one exception: a
+  // manager/admin may assign a task to *themselves*. A manager may otherwise only
+  // assign their own staff; admins/organizers may assign any staff member.
   private async assertAssignable(
     userId: string,
     actor?: { sub: string; role: string },
@@ -955,12 +956,24 @@ export class TasksService {
     if (!u) {
       throw new NotFoundException('User not found / Không tìm thấy người dùng');
     }
-    if (u.role !== 'staff') {
+    // Self-assignment: a manager/admin can put a task on their own plate even
+    // though their role is not 'staff'.
+    const isSelf =
+      !!actor &&
+      actor.sub === userId &&
+      (actor.role === 'manager' || actor.role === 'admin');
+    if (!isSelf && u.role !== 'staff') {
       throw new BadRequestException(
         'Tasks can only be assigned to staff members / Chỉ có thể giao công việc cho nhân viên',
       );
     }
-    if (actor && actor.role === 'manager' && u.manager_id !== actor.sub) {
+    // A manager may only assign their *own* staff (self-assignment already passed).
+    if (
+      actor &&
+      actor.role === 'manager' &&
+      u.role === 'staff' &&
+      u.manager_id !== actor.sub
+    ) {
       throw new BadRequestException(
         'You can only assign your own staff / Bạn chỉ có thể giao cho nhân viên của mình',
       );

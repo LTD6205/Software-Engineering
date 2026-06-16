@@ -671,6 +671,33 @@ describe('TasksService', () => {
       ).rejects.toThrow(/only assign your own staff/);
     });
 
+    it('allows a manager to assign a task to themselves', async () => {
+      const { service, taskRepo, userRepo, assignRepo } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      // The actor (a manager) is not a 'staff' user, but self-assignment is OK.
+      userRepo.findOne.mockResolvedValue({
+        user_id: 'mgr1',
+        role: 'manager',
+        manager_id: null,
+      });
+      assignRepo.find.mockResolvedValue([]);
+      assignRepo.manager.query.mockResolvedValue([]);
+
+      await expect(
+        service.setAssignees('t1', ['mgr1'], { sub: 'mgr1', role: 'manager' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('still rejects a manager assigning a different non-staff user', async () => {
+      const { service, taskRepo, userRepo } = build();
+      taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
+      userRepo.findOne.mockResolvedValue({ user_id: 'other', role: 'manager' });
+
+      await expect(
+        service.setAssignees('t1', ['other'], { sub: 'mgr1', role: 'manager' }),
+      ).rejects.toThrow(/only be assigned to staff/);
+    });
+
     it('throws NotFound when the assignee does not exist', async () => {
       const { service, taskRepo, userRepo } = build();
       taskRepo.findOne.mockResolvedValue({ task_id: 't1', event_id: 'e1' });
